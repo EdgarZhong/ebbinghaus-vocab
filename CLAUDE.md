@@ -53,8 +53,8 @@
 
 ### 任务看板（第一轮）
 
-- [ ] 首次 Git 提交（文档基线）
-- [ ] 设置同步口径 triage + `docs/V2首轮自主判断与口径收敛.md` 成稿
+- [x] 首次 Git 提交（文档基线）
+- [x] 设置同步口径 triage + `docs/V2首轮自主判断与口径收敛.md` 成稿（2026-09-19 夜完成初稿：A1 十四项逐项判定、A2 Space 级设置走 settings KV、B1 LWW 以 deviceId 字典序 tie-break 等，待晨审）
 - [ ] Phase 0：仓库脚手架（pnpm workspace、TypeScript 6.0.2、Vitest 5.0.0、精确版本锁定）
 - [ ] Phase 0：事件/settings/API schema 与排序规则定稿（settings 体现 triage 结果）
 - [ ] Phase 1：Fastify 服务器骨架 + push/pull/settings/health + 云端权威库 schema
@@ -65,6 +65,12 @@
 - [ ] 客户端持久化集成：repository/outbox/sync engine + SQLite 适配 + 双适配器接线（集成测试全绿）
 - [ ] 双端联调：本地真实 server 双客户端收敛、幂等、断线恢复、settings 收敛
 - [ ] Stretch：Tauri 工程骨架与插件接线冒烟（占位页面，无 UI 开发）
+
+### 第一轮执行状态（2026-09-19 夜间）
+
+- 环境已就绪：mise 装 Node 24.21.0；pnpm 12.3.4 经 npm -g（npmmirror 镜像）安装；项目 `.npmrc` 固定 npmmirror registry（GitHub API 限流绕行，详见判断文件 C1）。
+- 口径收敛：`docs/V2首轮自主判断与口径收敛.md` 已成稿，A1 设置 triage 已定稿并作为 protocol settings schema 的直接输入。
+- 执行结构：M1 脚手架+protocol → M2 server ∥ M3 domain → M4 application → M5 persistence → M6 双端联调；每个里程碑单独 commit，主会话亲自 review 每个 subagent 分支的 diff 与测试证据。
 
 ### 闸门测试清单（Phase 4，来自技术决策第七章）
 
