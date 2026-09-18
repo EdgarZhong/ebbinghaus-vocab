@@ -1,0 +1,50 @@
+.archive/
+
+# Python 与 uv 生成的本机环境和缓存。
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# 构建、覆盖率和打包产物均可由源码重新生成。
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
+
+# 编辑器与 macOS 生成的本机元数据。
+.DS_Store
+.idea/
+.vscode/
+
+# 本机密钥和环境覆盖不得进入版本控制。
+.env
+.env.*
+
+# data 目录只跟踪用途说明；正式数据库、SQLite 边车文件、备份、日志、
+# 网络缓存和本机配置都属于用户运行时数据，绝对不能提交到仓库。
+data/*
+!data/README.md
+.worktrees/
+
+# 会话工具产物目录，不进入版本控制。
+.grill/
+.kimi-code/
+.mimosa/
+docs/superpowers/
+
+# Node / pnpm 依赖与构建产物可由锁文件重建。
+node_modules/
+*.tsbuildinfo/
+
+# Vite 前端构建产物。
+app/dist/
+
+# Tauri 平台壳：Rust 构建产物与生成的工程文件。
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# 同步服务器运行时：数据库、备份与日志不得进入版本控制。
+server/var/
