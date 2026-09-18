@@ -1,0 +1,7 @@
+# pnpm workspace 成员声明。
+# server/ 与 app/ 目录在本任务（protocol 包）时尚未创建；glob 声明后
+# pnpm 会忽略不存在的目录，为后续 server（Phase 1）与 app（Phase 3+）任务铺路。
+packages:
+  - packages/*
+  - server
+  - app

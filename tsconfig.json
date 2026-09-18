@@ -1,0 +1,8 @@
+{
+  "$comment": "仓库根 TS 配置：只负责根级 TS 文件（vitest.config.ts）的类型检查。刻意不使用 tsc -b（build 模式要求被引用项目 composite，而内部包采用 noEmit 直接消费 TS 源码的策略，二者冲突，且 -b 对非 composite 引用会静默跳过检查造成假绿）；typecheck 脚本改为对每个包 tsconfig 逐个 tsc --noEmit -p 检查。新增 workspace 包时：在根 package.json 的 typecheck 脚本追加一次 -p 调用，并为本包新建 tsconfig.json。",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["vitest.config.ts"]
+}

@@ -50,16 +50,24 @@ React + TypeScript + Vite
 Ebbinghaus-v2/
 ├── README.md / AGENTS.md / CLAUDE.md   # 三份核心文档
 ├── docs/                               # 规格与技术决策（见文档索引）
+├── package.json / pnpm-workspace.yaml  # pnpm workspace 根（依赖精确版本，lock 文件随源提交）
+├── tsconfig.base.json / tsconfig.json  # 共享 TS 基线（NodeNext + 全严格）与根级配置
+├── vitest.config.ts                    # Vitest 根聚合（projects 模式，各包自带配置）
 ├── packages/
-│   ├── protocol/                       # Phase 0：同步协议、事件 schema、Zod 定义（双端共享）
+│   ├── protocol/                       # 已落地（2026-09-19）：同步协议、事件 schema、Zod 定义（双端共享）
 │   ├── domain/                         # 纯 TS 领域层：状态机、FSRS、容量预测（禁 DOM/Node/Tauri 依赖）
-│   └── application/                    # 用例编排与端口定义（Repository、SyncEngine、LLM、词典）
+│   ├── application/                    # 用例编排与端口定义（Repository、SyncEngine、LLM、词典）
+│   └── persistence/                    # Repository/Outbox/SyncEngine 的 Node 适配实现（2026-09-19 C2 判断新增）
 ├── app/
 │   ├── src/                            # React UI（Vite 浏览器模式可独立运行）
 │   └── src-tauri/                      # Tauri 平台壳（macOS / Android）
 ├── server/                             # Node + Fastify + better-sqlite3 同步服务器
 └── .archive/                           # 废弃文件归档（不进版本控制）
 ```
+
+> workspace 成员声明为 `packages/*`、`server`、`app`（`server`/`app` 目录落地前被 pnpm 忽略）。
+> 内部包策略：各包 `exports` 直接指向 `src/*.ts` 源码，不预编译、不引入 bundler，Vitest 与
+> Node 24（type stripping）直接消费 TS 源码；`typecheck` 对各包 tsconfig 逐个 `tsc --noEmit` 检查。
 
 随仓库复制带入的 V1 Python 工程副本（`src/`、`tests/`、`packaging/`、`scripts/`、`pyproject.toml`、`uv.lock`、`img/`）已于 2026-09-19 确认移入 `.archive/`，不参与 V2 工程与版本控制；行为规格、算法参考和迁移源码一律以 V1 仓库（`/Users/edgar/code/Ebbinghaus`）为准。
 
@@ -71,9 +79,12 @@ Ebbinghaus-v2/
 
 ## 运行环境与开发命令
 
-- Node.js 24.21.0 LTS（mise 管理）、pnpm 12.3.4、Rust 1.98.1（rustup 固定）。
+- Node.js 24.21.0 LTS（mise 管理）、pnpm 12.3.4（根 `package.json` 的 `packageManager` 锁定）、Rust 1.98.1（rustup 固定）。
+- 依赖安装：`rtk pnpm install`（镜像源已在 `.npmrc` 固定为 npmmirror；依赖一律精确版本，`pnpm-lock.yaml` 随源码提交）。
+- 测试：`rtk pnpm test`（根 Vitest 以 projects 模式聚合各包 `vitest.config.ts`）。
+- 类型检查：`rtk pnpm typecheck`（根级与各包 tsconfig 逐个 `tsc --noEmit` 检查；新增包时在根 `package.json` 的 typecheck 脚本追加）。
 - Shell 命令统一加 `rtk` 前缀；长输出 Git 命令用 `git --no-pager`。
-- 开发命令（安装、测试、浏览器开发服务、Tauri 构建、服务器启动）将在 Phase 0/1 脚手架落地后回写本节；在此之前以 `docs/V2迁移技术决策.md` 第六章的开发顺序为准。
+- 浏览器开发服务、Tauri 构建、服务器启动命令将在 app/server 落地后回写本节；开发顺序以 `docs/V2迁移技术决策.md` 第六章为准。
 
 ## 重要文档索引
 

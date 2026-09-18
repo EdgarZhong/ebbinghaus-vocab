@@ -1,0 +1,8 @@
+{
+  "$comment": "@ebbinghaus/protocol 包配置：继承仓库基线；src 供双端消费、tests 供 Vitest、vitest.config.ts 一并纳入类型检查。",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}

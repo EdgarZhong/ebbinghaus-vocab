@@ -1,0 +1,36 @@
+{
+  "$comment": "全仓库共享的 TypeScript 编译基线。module/moduleResolution 选择 NodeNext 的理由：内部包的 exports 直接指向 src/*.ts 源码（不预编译、不引入 bundler），Node 24 已默认启用 TypeScript type stripping 可直接运行 .ts 源码，NodeNext 让类型检查按真实 Node ESM 语义执行（相对导入必须带 .ts 扩展名，配合 allowImportingTsExtensions + noEmit），运行时行为与类型检查完全一致，避免 bundler 解析模式掩盖运行时问题。strict 全家桶显式逐项开列以表意：本仓库禁止任何 any 逃逸口子。",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "useUnknownInCatchVariables": true,
+
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  }
+}
