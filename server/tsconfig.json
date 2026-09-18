@@ -1,0 +1,8 @@
+{
+  "$comment": "@ebbinghaus/server 包配置：继承仓库基线（NodeNext + strict 全家桶）；src 为主服务源码，scripts 为运维脚本（备份），tests 与 vitest.config.ts 一并纳入类型检查。与根 typecheck 的衔接由本包 typecheck 脚本承担（根 package.json 的修改权限不在本任务白名单内，见晨间报告）。",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}

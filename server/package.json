@@ -1,0 +1,27 @@
+{
+  "name": "@ebbinghaus/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ebbinghaus V2 哑同步服务器：仅做鉴权、协议校验、event_id 去重、server_seq 分配、存储、增量查询、settings KV 与备份，零业务逻辑",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "backup": "tsx scripts/backup.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ebbinghaus/protocol": "workspace:*",
+    "@fastify/compress": "9.2.0",
+    "better-sqlite3": "13.0.3",
+    "fastify": "5.12.3",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.9.2",
+    "tsx": "4.23.13",
+    "typescript": "6.0.2",
+    "vitest": "5.0.0"
+  }
+}

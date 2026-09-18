@@ -8,7 +8,9 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/protocol"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/protocol && tsc --noEmit -p packages/domain && tsc --noEmit -p server",
+    "server:start": "pnpm --filter @ebbinghaus/server start",
+    "server:backup": "pnpm --filter @ebbinghaus/server backup"
   },
   "devDependencies": {
     "@types/node": "24.9.2",
