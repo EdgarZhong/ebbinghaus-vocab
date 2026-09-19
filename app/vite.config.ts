@@ -20,6 +20,12 @@ const persistenceSrc = fileURLToPath(new URL("../packages/persistence/src", impo
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    // Tauri 壳的 devUrl 固定指向 http://localhost:5173（见 src-tauri/tauri.conf.json）：
+    // 开启 strictPort 后，若 5173 被占用 Vite 将直接报错退出，而不是静默漂移到
+    // 5174 导致 Tauri 窗口白屏。这是 Tauri 官方模板的标准约束，属最小改动。
+    strictPort: true,
+  },
   resolve: {
     alias: {
       "@ebbinghaus/persistence/src": persistenceSrc,

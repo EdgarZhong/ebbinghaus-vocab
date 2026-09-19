@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "默认窗口最小权限集：仅授予 core:default（窗口管理、事件监听等 Tauri 内建核心能力），不含任何网络、文件系统、数据库或通知插件权限。Phase 4 插件接线时按闸门清单逐项追加权限域并在此更新说明。",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

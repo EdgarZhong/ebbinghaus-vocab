@@ -4,6 +4,7 @@
  * - chromium-compact：800×600 收窄视口（列表收窄与布局压缩回归）；
  * - webkit-desktop：1100×760 的 WebKit 内核（macOS 真实内核代理）。
  *
+ * 视口含 chromium mobile（Pixel 7 形态，Android 布局回归）。
  * 冒烟运行在真实的 `vite preview` 服务上（构建产物，而非 dev server）；
  * 每个核心页面输出全窗口 PNG 到 e2e/__screenshots__/ 供视觉复核。
  * 浏览器二进制下载走国内镜像（环境变量由安装命令注入，见 README 记录）。
@@ -40,6 +41,11 @@ export default defineConfig({
     {
       name: "webkit-desktop",
       use: { ...devices["Desktop Safari"], viewport: { width: 1100, height: 760 } },
+    },
+    {
+      // Chromium mobile 视口（AGENTS.md 测试矩阵要求；Android 形态的布局与触达回归）。
+      name: "chromium-mobile",
+      use: { ...devices["Pixel 7"] },
     },
   ],
   webServer: {

@@ -1,0 +1,11 @@
+# Rust 构建产物可由 cargo 重建，不入版本控制。
+/target/
+
+# tauri-build 编译期生成的 capabilities JSON Schema（gen/ 其余生成工程
+# 如 android/、ios/ 由 cargo-tauri 生成，Phase 4 移动端闸门时再定入库口径）。
+/gen/schemas/
+
+# icons/android 与 icons/ios 是 `pnpm tauri icon` 的派生产物，Phase 4 移动端
+# 工程创建时会重新生成；本轮桌面冒烟只需桌面图标，不入库。
+/icons/android/
+/icons/ios/

@@ -1,0 +1,33 @@
+[package]
+name = "ebbinghaus-v2"
+version = "0.1.0"
+description = "Ebbinghaus V2 Tauri 2 平台壳：桌面（macOS/Windows/Linux）与移动（Android/iOS）共享同一套启动逻辑"
+edition = "2021"
+
+# Tauri 2 的移动端约定：Android/iOS 不执行二进制 main，而是通过 FFI 加载动态库并
+# 调用 lib 中带 mobile_entry_point 的入口。因此逻辑统一放在 lib（名字独立于包名），
+# 桌面 main.rs 只做转发；三种 crate-type 分别服务 iOS（staticlib）、Android（cdylib）
+# 与桌面二进制链接（rlib）。
+[lib]
+name = "ebbinghaus_v2_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# 版本锁定依据（2026-09-20 实查 crates.io 版本与发布日期）：
+# - tauri =2.11.5：tauri 2.x 线最高稳定版（2026-07-01 发布），与技术决策锁定的
+#   @tauri-apps/api 2.11.1 / @tauri-apps/cli 2.11.4 同代（npm 侧 2.11.x 对应 Rust 侧 2.11.x）。
+# - tauri-build =2.6.3：与 tauri 2.11.x 同一发布列车——2.6.3 与 tauri 2.11.3 同日发布
+#   （2026-06-17），tauri 2.11.4 / 2.11.5 为 tauri 单包补丁，未伴随更新的 tauri-build，
+#   因此 2.6.3 就是 2.11.5 的精确配套版（优于任务书提示的旧版 2.5.3）。
+# 两者均用 "=" 精确锁定，保证可复现构建；crates 下载走 ~/.cargo/config.toml 的 rsproxy 镜像。
+[build-dependencies]
+tauri-build = { version = "=2.6.3" }
+
+[dependencies]
+tauri = { version = "=2.11.5" }
+
+# 插件接线占位（Phase 4 闸门测试时启用，本轮骨架只留计划、不接依赖）：
+# 接入顺序与验收闸门见 CLAUDE.md「闸门测试清单（Phase 4）」与 docs/V2迁移技术决策.md。
+#   tauri-plugin-sql = "2"          # 客户端 SQLite 权威本地库（TauriProductionAdapter 存储后端）
+#   tauri-plugin-http = "2"         # 同步引擎的 HTTP 出口（经权限域收敛，仅放行服务器地址）
+#   tauri-plugin-stronghold = "2"   # 密钥存储（LLM 设备本地配置的密钥透传；或评估 keyring 插件）
+#   tauri-plugin-notification = "2" # 复习提醒通知
