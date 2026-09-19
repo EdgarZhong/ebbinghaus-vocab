@@ -265,10 +265,10 @@ const taskDeferredMetadataSchema = z.record(z.string(), z.unknown());
 // ---------------------------------------------------------------------------
 
 /** 单类事件 object schema 的工厂：信封字段全协议一致，仅 eventType 与 metadata 按类型变化。 */
-function defineEventSchema(
-  eventType: LearningEventType,
-  metadataSchema: z.ZodType,
-): z.ZodObject {
+function defineEventSchema(eventType: LearningEventType, metadataSchema: z.ZodType) {
+  // 刻意不写返回类型标注：若标注为裸 `z.ZodObject`（无泛型参数），所有派生 schema
+  // 的输出类型会整体退化为索引签名记录，调用方属性访问全部变 unknown（M2/M3 两个
+  // 实现分支独立踩中同一问题）；让 TS 从 z.strictObject 字面量精确推断即可。
   return z.strictObject({
     eventId: uuidV4Schema,
     eventType: z.literal(eventType),
