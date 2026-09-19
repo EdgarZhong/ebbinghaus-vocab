@@ -64,8 +64,10 @@
 - [x] 客户端后端移植 application（src 13 模块 + 部分测试已交付 2482fad；剩余测试模块后台分支进行中：scheduling/capacityPlanning/regularLearning/entryOrganizing/bookReview/dashboard/架构守卫）
 - [x] 客户端持久化集成：repository/outbox/sync engine + SQLite/内存双运行时（a5ecdf6；仓储单元 + 真实服务器集成 13 项）
 - [x] 双端联调：`packages/persistence/tests/sync.integration.test.ts` 覆盖双客户端收敛、幂等、断线恢复、游标推进、settings LWW 收敛、gzip、备份（进程内双实例形态）
-- [ ] UI 层（新增范围，C8）：UI-1 脚手架/外壳/Space 管理页/设置页/Testing Library/Playwright 冒烟（后台分支进行中）→ UI-2 剩余页面接线 → Playwright 三视口截图 + 视觉复核闭环 → 浏览器用户级验收（16.1 八项核心任务）
-- [ ] Stretch：Tauri 工程骨架与插件接线冒烟（Rust 1.98.1 已经 rsproxy 装好，待 UI 稳定后执行）
+- [x] UI 层（C8 新增范围，全部交付）：UI-1 外壳/Space 管理/设置 + UI-2 五页功能接线（今日两段式容量/测试会话闭环/纸质复习/首过两步流/词汇详情筛选）；app Testing Library 56 项、全仓 493 项全绿；Playwright 四视口（desktop/compact/webkit/**mobile**）smoke+acceptance 56 项全过
+- [x] 视觉复核闭环：主会话逐张审查关键截图对照第 15/16 章（visual-judge 供应商不可用时的亲自执行，结论 PASS 记录于验收文件）；发现并修复窄屏 Space 行零宽缺陷
+- [x] 浏览器用户级验收：`app/e2e/acceptance.spec.ts` 走查 16.1 八项核心任务，三视口 24/24 过；验收记录 `docs/autonomous-runs/20260920-0130-第一轮自主实现用户级验收记录.md`
+- [ ] Stretch：Tauri 骨架与 cargo check（后台分支进行中，Rust 1.98.1 + rsproxy 已就绪）
 
 ### 第一轮执行状态（2026-09-19 夜间 → 2026-09-20 凌晨）
 
