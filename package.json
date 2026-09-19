@@ -8,7 +8,9 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:app": "vitest run --project app",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/protocol && tsc --noEmit -p packages/domain && tsc --noEmit -p server",
+    "typecheck:app": "tsc --noEmit -p app",
     "server:start": "pnpm --filter @ebbinghaus/server start",
     "server:backup": "pnpm --filter @ebbinghaus/server backup"
   },

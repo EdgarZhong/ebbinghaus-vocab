@@ -1,0 +1,36 @@
+{
+  "name": "@ebbinghaus/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ebbinghaus V2 React 应用（浏览器模式一等公民）：应用外壳、设计令牌、Space 管理页与设置页",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "e2e": "vite build && playwright test"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@ebbinghaus/application": "workspace:*",
+    "@ebbinghaus/domain": "workspace:*",
+    "@ebbinghaus/persistence": "workspace:*",
+    "@ebbinghaus/protocol": "workspace:*",
+    "@playwright/test": "1.63.0",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "jsdom": "30.1.0",
+    "typescript": "6.0.2",
+    "vite": "8.2.2",
+    "vitest": "5.0.0"
+  }
+}

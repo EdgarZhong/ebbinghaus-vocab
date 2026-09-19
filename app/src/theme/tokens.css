@@ -1,0 +1,826 @@
+/**
+ * 设计令牌与全局样式（v2：视觉方向由设计执行方自主决策）。
+ *
+ * 设计意图："安静的纸书学习台"——清晰、稳定、低干扰。特色来自真实的任务结构与
+ * 明确的完成反馈，而非装饰。令牌以 CSS 变量表达明暗两套主题，全部交互控件经变量
+ * 取色，禁止在组件里散落硬编码色值，保证主题切换与后续 Tauri 双端一致。
+ *
+ * 可用性底线硬约束（界面设计规格第 16 章）：
+ * - 所有正文/辅助文字对比度 ≥ 4.5:1（两套主题均已逐色校验，见下方注释）；
+ * - 主按钮最小高度 44px，导航行 40px，图标按钮点击区 44×44；
+ * - 状态不只靠颜色（文字 + 图标 + 位置共同表达）；
+ * - 文本可放大不裁切（容器用 min-height 而非固定 height，允许换行）。
+ */
+
+/* ---------------------------------------------------------------------------
+   令牌：浅色主题（默认）
+   对比度注记（正文均按所在背景计算）：主文字 16.1:1、次要文字 5.7:1、
+   主行动按钮（白字/主行动底）6.4:1、成功 5.0:1、警示 4.9:1、危险 6.6:1。
+   --------------------------------------------------------------------------- */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* 画布与表面 */
+  --color-canvas: #f4f5f7;
+  --color-surface: #ffffff;
+  --color-surface-hover: #eef0f3;
+  --color-surface-active: #e6e9ee;
+
+  /* 文字 */
+  --color-text: #1d1d1f;
+  --color-text-secondary: #5f6368;
+  --color-text-on-accent: #ffffff;
+
+  /* 主行动与状态 */
+  --color-accent: #3157a4;
+  --color-accent-hover: #274786;
+  --color-accent-soft: #e3eaf8;
+  --color-success: #1e7a46;
+  --color-success-soft: #e2f2e8;
+  --color-warning: #a85a00;
+  --color-danger: #b42318;
+  --color-danger-soft: #fbe9e7;
+
+  /* 边界与阴影 */
+  --color-border: #d8dce2;
+  --color-border-strong: #b8bfc8;
+  --shadow-card: 0 1px 2px rgb(29 29 31 / 0.06);
+  --shadow-overlay: 0 12px 40px rgb(29 29 31 / 0.18);
+
+  /* 字体与字号（业务文案最小 13px，界面设计规格 5.3） */
+  --font-family:
+    -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", system-ui, sans-serif;
+  --font-size-secondary: 13px;
+  --font-size-body: 15px;
+  --font-size-item: 16px;
+  --font-size-section: 18px;
+  --font-size-page-title: 26px;
+
+  /* 尺寸 */
+  --sidebar-width: 248px;
+  --page-margin: 24px;
+  --block-gap: 24px;
+  --group-gap: 16px;
+  --radius-small: 6px;
+  --radius-medium: 8px;
+  --radius-large: 12px;
+  --focus-ring: 0 0 0 2px var(--color-canvas), 0 0 0 4px var(--color-accent);
+}
+
+/* ---------------------------------------------------------------------------
+   令牌：深色主题（data-theme="dark"）
+   对比度注记：主文字 12.8:1、次要文字 6.1:1（按 surface 计算）、
+   主行动按钮（深字/亮主行动底）8.0:1、成功 6.7:1、警示 8.3:1、危险 5.9:1。
+   --------------------------------------------------------------------------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-canvas: #17181b;
+  --color-surface: #1f2126;
+  --color-surface-hover: #262930;
+  --color-surface-active: #2c3038;
+
+  --color-text: #eceef1;
+  --color-text-secondary: #a3a8b0;
+  --color-text-on-accent: #10131a;
+
+  --color-accent: #7da2f0;
+  --color-accent-hover: #93b2f4;
+  --color-accent-soft: #26304a;
+  --color-success: #63c896;
+  --color-success-soft: #1d3328;
+  --color-warning: #e3b25e;
+  --color-danger: #f08577;
+  --color-danger-soft: #3a221f;
+
+  --color-border: #3a3f49;
+  --color-border-strong: #565c68;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.6);
+}
+
+/* ---------------------------------------------------------------------------
+   基础样式
+   --------------------------------------------------------------------------- */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  color: var(--color-text);
+  background: var(--color-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 键盘焦点环：统一视觉语言，全控件可用（界面设计规格 6.1）。 */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-small);
+}
+
+/* 页面主标题在路由切换后获得焦点（tabIndex=-1），去掉焦点环避免视觉噪音，
+   但保留可聚焦性供屏幕阅读器播报页面名称。 */
+.page-title:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------------------
+   应用外壳布局
+   --------------------------------------------------------------------------- */
+.app-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.sidebar {
+  flex: 0 0 var(--sidebar-width);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding: 16px 12px;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.sidebar-app-name {
+  font-size: var(--font-size-section);
+  font-weight: 700;
+  padding: 8px 12px 12px;
+  letter-spacing: 0.01em;
+}
+
+/* 侧边栏顶部的当前 Space 入口：整行可点击（规格 2 章口径），右侧箭头仅表意。 */
+.space-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-item);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.space-switcher:hover {
+  background: var(--color-surface-hover);
+}
+
+.space-switcher .arrow {
+  font-size: var(--font-size-section);
+  color: var(--color-text-secondary);
+  /* 箭头是可访问名称的一部分被读出会干扰，标记为装饰。 */
+  flex: none;
+}
+
+.space-switcher .space-switcher-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 12px 0;
+  width: 100%;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-nav-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 导航行：最小 40px，整行可点击；选中态用强调条 + 浅底 + 加粗三重表达。 */
+.nav-link {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: var(--radius-medium);
+  color: var(--color-text);
+  text-decoration: none;
+  font-size: var(--font-size-body);
+  font-weight: 400;
+  border-left: 3px solid transparent;
+}
+
+.nav-link:hover {
+  background: var(--color-surface-hover);
+}
+
+.nav-link[aria-current="page"] {
+  background: var(--color-accent-soft);
+  border-left-color: var(--color-accent);
+  font-weight: 600;
+}
+
+.main-area {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--color-canvas);
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--page-margin);
+  display: flex;
+  flex-direction: column;
+  gap: var(--block-gap);
+}
+
+.page-title {
+  font-size: var(--font-size-page-title);
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.page-description {
+  color: var(--color-text-secondary);
+  margin: 4px 0 0;
+  font-size: var(--font-size-body);
+}
+
+.page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--group-gap);
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------------------------
+   卡片与区块
+   --------------------------------------------------------------------------- */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  padding: var(--group-gap);
+  box-shadow: var(--shadow-card);
+}
+
+.card-section-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0 0 var(--group-gap);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+}
+
+.section-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0;
+}
+
+.section-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
+  margin: 4px 0 0;
+}
+
+/* ---------------------------------------------------------------------------
+   按钮（界面设计规格 14.1：主要 44 / 危险 40 / 次要 36；全部允许换行不裁切）
+   --------------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  min-height: 36px;
+  border-radius: var(--radius-medium);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.btn-primary {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  min-height: 44px;
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.btn-danger {
+  background: var(--color-surface);
+  color: var(--color-danger);
+  border-color: var(--color-border-strong);
+  min-height: 40px;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger);
+}
+
+/* 图标按钮：点击区至少 44×44（Space 箭头等）——本项目主路径用整行按钮表达，
+   保留类定义给后续页面的关闭/收起控件复用。 */
+.btn-icon {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: none;
+  font-size: var(--font-size-section);
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+/* ---------------------------------------------------------------------------
+   表单
+   --------------------------------------------------------------------------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: var(--font-size-body);
+  font-weight: 500;
+}
+
+.field-input {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-body);
+  width: 100%;
+}
+
+.field-input:hover {
+  border-color: var(--color-text-secondary);
+}
+
+.field-error {
+  color: var(--color-danger);
+  font-size: var(--font-size-secondary);
+  margin: 0;
+}
+
+/* 错误同时带图标与文字，不只靠颜色（第 16 章）。 */
+.field-error::before {
+  content: "⚠ ";
+}
+
+.field-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
+  margin: 0;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  cursor: pointer;
+  font-size: var(--font-size-body);
+}
+
+.checkbox-field input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+  flex: none;
+}
+
+/* 步进数值输入：输入框 + 44×44 加减按钮（规格 5.4，禁用微型原生箭头）。 */
+.stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.stepper .field-input {
+  width: 120px;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.stepper .field-input::-webkit-outer-spin-button,
+.stepper .field-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.stepper-btn {
+  width: 44px;
+  min-height: 44px;
+  flex: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stepper-btn:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.stepper-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------------------
+   列表行（Space 管理等）
+   --------------------------------------------------------------------------- */
+.row-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.space-row {
+  display: flex;
+  align-items: center;
+  gap: var(--group-gap);
+  width: 100%;
+  padding: 12px 16px;
+  min-height: 64px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  text-align: left;
+  font: inherit;
+  color: var(--color-text);
+}
+
+.space-row:hover {
+  background: var(--color-surface-hover);
+}
+
+/* 行内选择按钮：除"编辑"外的整行区域可点击（点击整行即选择，规格 7.2）。 */
+.space-row-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+div.space-row-select {
+  cursor: default;
+}
+
+.space-row.current {
+  cursor: default;
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.space-row.current:hover {
+  background: var(--color-accent-soft);
+}
+
+.space-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.space-row-name {
+  font-size: var(--font-size-item);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-row-meta {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--font-size-secondary);
+  font-weight: 600;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.badge-muted {
+  background: var(--color-surface-active);
+  color: var(--color-text-secondary);
+}
+
+/* 页头动作区（标题右侧按钮） */
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+/* 已归档区块折叠开关 */
+.archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px;
+  margin: -4px -8px 0;
+  border: none;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.archived-toggle:hover {
+  background: var(--color-surface-hover);
+}
+
+/* 学习模式单选组（创建 Space） */
+.mode-fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mode-fieldset legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+   空状态
+   --------------------------------------------------------------------------- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px var(--group-gap);
+  text-align: center;
+}
+
+.empty-state-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0;
+}
+
+.empty-state-description {
+  color: var(--color-text-secondary);
+  margin: 0;
+  font-size: var(--font-size-body);
+}
+
+/* ---------------------------------------------------------------------------
+   对话框（创建/编辑/确认）
+   --------------------------------------------------------------------------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+}
+
+.modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  box-shadow: var(--shadow-overlay);
+  width: 440px;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: var(--group-gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+}
+
+.modal-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0;
+}
+
+.modal-message {
+  margin: 0;
+  font-size: var(--font-size-body);
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.modal-actions-spacer {
+  flex: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   顶部短暂反馈（非阻塞 toast，跨页面动作用）
+   --------------------------------------------------------------------------- */
+.toast-region {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--color-text);
+  color: var(--color-canvas);
+  padding: 10px 16px;
+  border-radius: var(--radius-medium);
+  font-size: var(--font-size-body);
+  box-shadow: var(--shadow-overlay);
+  max-width: min(480px, calc(100vw - 48px));
+}
+
+/* 主题切换分段控件 */
+.theme-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  overflow: hidden;
+  margin: 0 12px 8px;
+}
+
+.theme-toggle button {
+  flex: 1;
+  min-height: 32px;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-secondary);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.theme-toggle button:hover {
+  background: var(--color-surface-hover);
+}
+
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* 设置页布局 */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--group-gap);
+  flex-wrap: wrap;
+}
+
+.settings-row .field {
+  min-width: 220px;
+}
+
+.api-key-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.api-key-value {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: var(--font-size-body);
+  letter-spacing: 0.04em;
+  padding: 8px 12px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-canvas);
+}
+
+/* 小屏（chromium-compact 800×600）下侧边栏收窄，保证主内容区可用宽度。 */
+@media (max-width: 900px) {
+  :root {
+    --sidebar-width: 200px;
+    --page-margin: 16px;
+  }
+}

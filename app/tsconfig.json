@@ -1,0 +1,13 @@
+{
+  "$comment": "app 编译基线：继承仓库共享基线（strict 全家桶 + NodeNext + 显式 .ts 扩展导入）。覆盖点：追加 DOM 运行库与 JSX（React 19 自动运行时）、注入 Vite 客户端类型；paths 把 @ebbinghaus/persistence 的浏览器安全子模块映射到源码——包根 exports 只暴露 index.ts（含 better-sqlite3 的 SQLite 实现），浏览器包必须按模块深路径引入内存运行时，避免把原生模块拉进浏览器构建。",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "paths": {
+      "@ebbinghaus/persistence/src/*": ["../packages/persistence/src/*"]
+    }
+  },
+  "include": ["src", "test", "e2e", "vite.config.ts", "playwright.config.ts"]
+}
