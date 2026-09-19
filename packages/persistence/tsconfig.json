@@ -1,0 +1,8 @@
+{
+  "$comment": "@ebbinghaus/persistence 包配置：继承仓库基线（NodeNext + strict 全家桶）。src 为持久化与同步实现，tests 为单元与集成测试（含真实 server 集成）。类型检查由 `pnpm --filter @ebbinghaus/persistence exec tsc --noEmit -p tsconfig.json` 承担。",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}

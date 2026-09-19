@@ -143,6 +143,8 @@ export function validateSpaceLearningSettings(raw: unknown): SpaceLearningSettin
   return {
     dailyTarget,
     regularGroupSize,
-    fsrsParameters: validateFsrsParameterSettings(input["fsrsParameters"] ?? {}),
+    // 缺省键直接传 undefined，由 validateFsrsParameterSettings 回退领域默认值；
+    // 刻意不用 `?? {}`：空对象是"显式但缺字段"的非法输入，必须报错而不是静默补默认。
+    fsrsParameters: validateFsrsParameterSettings(input["fsrsParameters"]),
   };
 }

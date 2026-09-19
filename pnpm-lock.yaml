@@ -119,6 +119,15 @@ importers:
         specifier: 5.0.0
         version: 5.0.0(@types/node@24.9.2)(vite@8.3.0(@types/node@24.9.2)(esbuild@0.28.2)(tsx@4.23.13))
 
+  packages/application:
+    dependencies:
+      '@ebbinghaus/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@ebbinghaus/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
   packages/domain:
     dependencies:
       '@ebbinghaus/protocol':
@@ -127,6 +136,25 @@ importers:
       ts-fsrs:
         specifier: 5.4.2
         version: 5.4.2
+
+  packages/persistence:
+    dependencies:
+      '@ebbinghaus/application':
+        specifier: workspace:*
+        version: link:../application
+      '@ebbinghaus/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@ebbinghaus/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      better-sqlite3:
+        specifier: 13.0.3
+        version: 13.0.3
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: 9.6.0
+        version: 9.6.0
 
   packages/protocol:
     dependencies:
