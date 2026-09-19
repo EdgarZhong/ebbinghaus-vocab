@@ -23,7 +23,9 @@
 
 当前顺序原则：**服务器优先**；"真实数据先托管在云端"比"先把新 UI 画完"优先。
 
-## 当前阶段：Phase 0 + Phase 1 + 客户端后端迁移（第一轮自主实现，2026-09-19 夜间执行）
+## 当前阶段：Phase 0 + Phase 1 + 客户端后端迁移 + UI 层（第一轮自主实现，2026-09-19 夜间连续执行）
+
+- **Goal 已由用户中途重置（2026-09-20 凌晨）**：UI 层纳入本轮交付；唯一不做的是 Computer Use 用户验收与云端实际部署；其余完成一切能完成的。UI 表现层验收用 Playwright 内置浏览器 + 视觉复核闭环，用户级验收以浏览器走查第 16.1 节核心任务替代 Computer Use（详见判断文件 C8）。
 
 - 启动条件：用户已在 V2 工作区发起第一轮自主实现；本仓库为独立 Git 仓库（`main`，尚未产生首次提交）。**本轮无 grill-me 环节**：agent 自主收敛口径并执行，全部判断写入 `docs/V2首轮自主判断与口径收敛.md` 供用户晨审；晨审前不得把新口径改写进三份继承规格。
 - 首轮任务优先级：
@@ -54,25 +56,24 @@
 ### 任务看板（第一轮）
 
 - [x] 首次 Git 提交（文档基线）
-- [x] 设置同步口径 triage + `docs/V2首轮自主判断与口径收敛.md` 成稿（2026-09-19 夜完成初稿：A1 十四项逐项判定、A2 Space 级设置走 settings KV、B1 LWW 以 deviceId 字典序 tie-break 等，待晨审）
-- [x] Phase 0：仓库脚手架（pnpm workspace、TypeScript 6.0.2、Vitest 5.0.0、精确版本锁定）
-- [x] Phase 0：事件/settings/API schema 与排序规则定稿（settings 体现 triage 结果；M1 64 测试全绿，已提交 c6e71f1；类型退化缺陷已修复 08393de）
-- [x] Phase 1：Fastify 服务器骨架 + push/pull/settings/health + 云端权威库 schema
-- [x] Phase 1：去重、server_seq、增量查询、gzip、备份
-- [x] Phase 1：服务器专项测试全绿（46 项，已提交 d531b4e；含真实 listen、备份恢复、架构守卫）
-- [ ] Phase 1：服务端本地运行 + localhost 系统测试（健康检查、备份、断线恢复冒烟）；部署脚本仅本地留档，不上云（并入 M6 双端联调与 Stretch）
-- [x] 客户端后端移植 domain（V1 152 项映射全绿，已提交 a7b3969；含事件重放器与架构守卫）
-- [ ] 客户端后端移植 application（src 13 模块已完成且 typecheck 通过；测试由后台分支续作中——额度中断后主会话接手编排，见判断文件 C6）
-- [ ] 客户端持久化集成：repository/outbox/sync engine + SQLite 适配 + 双适配器接线（集成测试全绿）（M5 后台分支进行中）
-- [ ] 双端联调：本地真实 server 双客户端收敛、幂等、断线恢复、settings 收敛（依赖 M5 交付）
-- [ ] Stretch：Tauri 工程骨架与插件接线冒烟（占位页面，无 UI 开发）（阻塞：本机无 Rust 工具链，见判断文件 C7）
+- [x] 设置同步口径 triage + `docs/V2首轮自主判断与口径收敛.md` 成稿（A1 十四项判定、A2 Space 级设置走 settings KV、B1 LWW、C6 额度中断绕行、C8 Goal 重置等，待晨审）
+- [x] Phase 0：仓库脚手架 + `packages/protocol`（c6e71f1；类型退化缺陷修复 08393de）
+- [x] Phase 1：`server/` 哑服务器全项（d531b4e；46 测试含幂等/游标/gzip/备份/架构守卫）
+- [x] Phase 1：服务端本地运行 + localhost 系统测试（并入 M5 集成套件：真实 listen、健康、备份、断线恢复；部署留档见 `docs/服务器部署留档.md`）
+- [x] 客户端后端移植 domain（a7b3969；V1 152 项映射全绿）
+- [x] 客户端后端移植 application（src 13 模块 + 部分测试已交付 2482fad；剩余测试模块后台分支进行中：scheduling/capacityPlanning/regularLearning/entryOrganizing/bookReview/dashboard/架构守卫）
+- [x] 客户端持久化集成：repository/outbox/sync engine + SQLite/内存双运行时（a5ecdf6；仓储单元 + 真实服务器集成 13 项）
+- [x] 双端联调：`packages/persistence/tests/sync.integration.test.ts` 覆盖双客户端收敛、幂等、断线恢复、游标推进、settings LWW 收敛、gzip、备份（进程内双实例形态）
+- [ ] UI 层（新增范围，C8）：UI-1 脚手架/外壳/Space 管理页/设置页/Testing Library/Playwright 冒烟（后台分支进行中）→ UI-2 剩余页面接线 → Playwright 三视口截图 + 视觉复核闭环 → 浏览器用户级验收（16.1 八项核心任务）
+- [ ] Stretch：Tauri 工程骨架与插件接线冒烟（Rust 1.98.1 已经 rsproxy 装好，待 UI 稳定后执行）
 
-### 第一轮执行状态（2026-09-19 夜间）
+### 第一轮执行状态（2026-09-19 夜间 → 2026-09-20 凌晨）
 
-- 环境已就绪：mise 装 Node 24.21.0；pnpm 12.3.4 经 npm -g（npmmirror 镜像）安装；项目 `.npmrc` 固定 npmmirror registry（GitHub API 限流绕行，详见判断文件 C1）；better-sqlite3 原生编译依赖 node-gyp（已全局安装 13.0.2）。
-- 口径收敛：`docs/V2首轮自主判断与口径收敛.md` 已成稿，A1 设置 triage 已定稿并作为 protocol settings schema 的直接输入；B8/B9 为 M1 实现中发现的规格-V1 不一致点，待晨审。
-- 执行结构（夜间并行形态）：M1 protocol（已交付）→ M2 server ∥ M3 domain（已交付）→ M4 application 测试续作 ∥ M5 persistence（后台进行中）→ M6 双端联调 → Stretch。主会话负责 review、集成、文档与提交，与后台分支并行不互相等待；子 agent 额度中断时主会话接手编排（判断文件 C6）。
-- 提交记录：eee20df（triage 基线）→ c6e71f1（M1）→ d531b4e（M2）→ a7b3969（M3）→ 08393de（protocol 类型修复）。累计测试：protocol 64 + domain 152 + server 46 = 262 全绿。
+- 环境：mise Node 24.21.0；pnpm 12.3.4（npm -g，npmmirror）；`.npmrc` 固定 npmmirror；node-gyp 13.0.2（better-sqlite3 本地编译）；Rust 1.98.1（rustup + rsproxy 镜像）。
+- 提交链：eee20df → c6e71f1（M1）→ d531b4e（M2）→ a7b3969（M3）→ 08393de（protocol 类型修复）→ e8ef21a / 962c418（文档与部署留档）→ 2482fad（M4 部分 + 集成修复）→ a5ecdf6（M5 持久化与同步引擎）。
+- 测试基线：protocol 64 + domain 152 + server 46 + application 84（4 模块）+ persistence 19 = 全仓 365 项全绿（另有 application 后台分支新增测试持续并入，见 2482fad 后续提交）。
+- 集成修复（主会话）：设置写入单调时钟护栏（同毫秒 LWW 值序反转缺陷）、Space 级设置缺省回退校验、默认 Space id 改确定性 UUIDv4、SqliteOutbox 时钟注入、applyPulledEvents 幂等落地。
+- 协作形态：额度中断后主会话亲自补齐 M5；恢复后以"主会话 + ≤2 后台分支"并行推进（用户约束：同时不超过 3 个 agent）。
 
 ### 闸门测试清单（Phase 4，来自技术决策第七章）
 
