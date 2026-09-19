@@ -20,10 +20,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 #   因此 2.6.3 就是 2.11.5 的精确配套版（优于任务书提示的旧版 2.5.3）。
 # 两者均用 "=" 精确锁定，保证可复现构建；crates 下载走 ~/.cargo/config.toml 的 rsproxy 镜像。
 [build-dependencies]
-tauri-build = { version = "=2.6.3" }
+tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "=2.11.5" }
+tauri = { version = "=2.11.5", features = [] }
 
 # 插件接线占位（Phase 4 闸门测试时启用，本轮骨架只留计划、不接依赖）：
 # 接入顺序与验收闸门见 CLAUDE.md「闸门测试清单（Phase 4）」与 docs/V2迁移技术决策.md。
