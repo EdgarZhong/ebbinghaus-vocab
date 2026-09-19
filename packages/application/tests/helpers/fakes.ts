@@ -103,8 +103,11 @@ export class FixedClock implements Clock {
 /** 内存事件存储：按 ports.ts 合同实现 append-only 与 eventId 重复拒绝。 */
 export class InMemoryEventStore implements LearningEventStore {
   private readonly events = new Map<string, ApplicationEvent>();
+  /** appendEvents 调用次数：作为"多笔事件是否同批（同一事务语义）写入"的观测探针。 */
+  public appendCallCount = 0;
 
   appendEvents(events: readonly ApplicationEvent[]): void {
+    this.appendCallCount += 1;
     for (const event of events) {
       if (this.events.has(event.eventId)) {
         // 合同原文：eventId 重复追加必须抛错（本地写入口径下重复属于编程错误）。

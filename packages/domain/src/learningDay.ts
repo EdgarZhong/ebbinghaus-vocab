@@ -119,6 +119,38 @@ export function addLearningDays(day: LearningDay, days: number): LearningDay {
   return `${shifted.getUTCFullYear()}-${month}-${dayOfMonth}`;
 }
 
+/**
+ * 学习日起始绝对时刻：该学习日对应的日历日本地墙上时间到达换日时间的那一刻。
+ *
+ * 语义与 resolveLearningDay 严格互逆：resolveLearningDay(learningDayStartInstant(D)) === D
+ * （换日时刻的 wallMinutes == rolloverMinutes，恰好归入当日）。用途：把"某学习日起才
+ * 生效"的规则（如常规模式新条目自录入次日起参与测试，规格 11.7）转换为可与事件
+ * occurredAt 直接比较的绝对时刻，避免调用方自建逆投影造成两处时区口径分叉。
+ *
+ * 实现用两遍法做本地墙上时刻 → UTC 的逆投影（先猜 UTC，再用 Intl 投影差收敛，
+ * 两轮足以处理常规 DST 边界；本产品主时区无 DST）。无夏令时参与时精确无误。
+ */
+export function learningDayStartInstant(day: LearningDay, settings: LearningDaySettings): Date {
+  requireLearningDay(day, "学习日");
+  const rolloverMinutes = parseRolloverTime(settings.rolloverTime);
+  const pad2 = (value: number): string => String(value).padStart(2, "0");
+  const hour = Math.floor(rolloverMinutes / 60);
+  const minute = rolloverMinutes % 60;
+  const targetWallMs = Date.parse(`${day}T${pad2(hour)}:${pad2(minute)}:00Z`);
+  if (Number.isNaN(targetWallMs)) {
+    throw new Error(`学习日标签无法解析：${day}`);
+  }
+  let guessMs = targetWallMs;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const wall = zonedWallTime(new Date(guessMs), settings.timezoneName);
+    const wallMs = Date.parse(
+      `${String(wall.year).padStart(4, "0")}-${pad2(wall.month)}-${pad2(wall.day)}T${pad2(wall.hour)}:${pad2(wall.minute)}:00Z`,
+    );
+    guessMs += targetWallMs - wallMs;
+  }
+  return new Date(guessMs);
+}
+
 /** 计算两个学习日之间相差的自然日数（to - from；负值表示 to 更早）。 */
 export function daysBetweenLearningDays(from: LearningDay, to: LearningDay): number {
   requireLearningDay(from, "起始学习日");

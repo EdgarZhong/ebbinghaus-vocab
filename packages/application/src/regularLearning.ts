@@ -26,6 +26,7 @@
 
 import {
   addLearningDays,
+  learningDayStartInstant,
   dedupeMeanings,
   deriveRegularMasteryAfterReview,
   formatStructuredMeanings,
@@ -318,12 +319,23 @@ export class RegularLearningService {
         continue;
       }
       // 到期过滤：FSRS 卡片到期时间不晚于当前时刻。
-      if (state.regularDueAt === null || Date.parse(state.regularDueAt) > Date.parse(nowIso)) {
+      //
+      // regularDueAt 只由 testAnswered 的 afterState.dueAt 派生（事件承载的到期事实）；
+      // 从未测试的新条目该字段为 null——但 FSRS 新卡（New 态）本身就处于"到期可测"，
+      // 且规格 11.7 的资格过滤（录入次日 + 1）已在上面完成。若在此把 null 一律过滤，
+      // 新条目将永远进不了首次测试队列（2026-09-20 集成修复的产品缺陷）。
+      // 处理：null 视为到期，排序键取资格日（下一学习日）起始时刻——与 domain
+      // RegularDueWord 注释"新条目为下一学习日"的设计意图一致，自然排在逾期条目之后。
+      const isNewCard = state.regularDueAt === null;
+      if (!isNewCard && Date.parse(state.regularDueAt) > Date.parse(nowIso)) {
         continue;
       }
+      const dueAt = isNewCard
+        ? learningDayStartInstant(eligibleFromDay, settings).toISOString()
+        : state.regularDueAt;
       dueWords.push({
         wordId: content.wordId,
-        dueAt: state.regularDueAt,
+        dueAt,
         hasHistory: state.lastJudgement !== null,
         lastJudgement: state.lastJudgement,
         cumulativeRecognizedCount: state.cumulativeRecognizedCount,
