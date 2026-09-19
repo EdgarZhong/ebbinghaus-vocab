@@ -23,5 +23,15 @@
     "tsx": "4.23.13",
     "typescript": "6.0.2",
     "vitest": "5.0.0"
+  },
+  "exports": {
+    "./app": {
+      "types": "./src/app.ts",
+      "default": "./src/app.ts"
+    },
+    "./db": {
+      "types": "./src/db.ts",
+      "default": "./src/db.ts"
+    }
   }
 }

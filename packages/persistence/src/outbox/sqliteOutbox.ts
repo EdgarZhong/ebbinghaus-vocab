@@ -38,9 +38,11 @@ export class SqliteOutbox implements OutboxStore {
   constructor(
     db: Database.Database,
     options: Partial<OutboxBackoffOptions> = {},
+    clock: { now(): Date } = { now: () => new Date() },
   ) {
     this.db = db;
     this.backoff = { ...DEFAULT_OUTBOX_BACKOFF, ...options };
+    this.clock = clock;
 
     this.enqueueStmt = db.prepare(`
       INSERT INTO outbox (entry_type, payload_json, event_id, created_at, attempts, next_attempt_at, last_error)
@@ -121,8 +123,8 @@ export class SqliteOutbox implements OutboxStore {
     return this.clock.now().toISOString();
   }
 
-  /** 时钟由组合根注入（默认系统时钟）；延迟字段赋值避免构造参数顺序耦合。 */
-  private clock: { now(): Date } = { now: () => new Date() };
+  /** 时钟由构造注入（默认系统时钟仅供独立试用；运行时装配必须显式传入）。 */
+  private clock: { now(): Date };
 
   /** 组合根在构造后注入时钟（createNodeClientRuntime / createInMemoryRuntime）。 */
   setClock(clock: { now(): Date }): void {

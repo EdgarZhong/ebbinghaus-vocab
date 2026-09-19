@@ -46,7 +46,7 @@ import { dirname } from "node:path";
  * - outbox.entry_type 用 CHECK 收紧为两类（事件推送 / settings 推送），
  *   拒绝未来误加的第三类条目静默入库。
  */
-const CLIENT_MIGRATIONS: readonly string[] = [
+export const CLIENT_MIGRATIONS: readonly string[] = [
   `
   CREATE TABLE IF NOT EXISTS learning_events (
     event_id TEXT PRIMARY KEY,
