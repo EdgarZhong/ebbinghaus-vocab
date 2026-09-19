@@ -67,7 +67,7 @@
 - [x] UI 层（C8 新增范围，全部交付）：UI-1 外壳/Space 管理/设置 + UI-2 五页功能接线（今日两段式容量/测试会话闭环/纸质复习/首过两步流/词汇详情筛选）；app Testing Library 56 项、全仓 493 项全绿；Playwright 四视口（desktop/compact/webkit/**mobile**）smoke+acceptance 56 项全过
 - [x] 视觉复核闭环：主会话逐张审查关键截图对照第 15/16 章（visual-judge 供应商不可用时的亲自执行，结论 PASS 记录于验收文件）；发现并修复窄屏 Space 行零宽缺陷
 - [x] 浏览器用户级验收：`app/e2e/acceptance.spec.ts` 走查 16.1 八项核心任务，三视口 24/24 过；验收记录 `docs/autonomous-runs/20260920-0130-第一轮自主实现用户级验收记录.md`
-- [ ] Stretch：Tauri 骨架与 cargo check（后台分支进行中，Rust 1.98.1 + rsproxy 已就绪）
+- [x] Stretch：Tauri 2 骨架（src-tauri 三件套 + conf/capabilities/icons，tauri 2.11.5 精确锁定）——cargo check 通过、cargo build 产出 28.7MB 二进制、tauri dev 真实启动成功（Vite→cargo run→HTTP 200）；插件接入留 Phase 4
 
 ### 第一轮执行状态（2026-09-19 夜间 → 2026-09-20 凌晨）
 
