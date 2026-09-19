@@ -824,3 +824,507 @@ div.space-row-select {
     --page-margin: 16px;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   UI-2 学习页面：今日看板 / 任务行 / 逐词测试 / 录入表单 / 词汇卡与详情
+   复用上方全部令牌；不新增色值，保证主题切换一致。
+   --------------------------------------------------------------------------- */
+
+/* 今日页：下一步卡片（页面唯一视觉最强操作区）。 */
+.next-step-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--group-gap);
+  flex-wrap: wrap;
+  border-left: 4px solid var(--color-accent);
+}
+
+.next-step-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 240px;
+}
+
+.next-step-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0;
+}
+
+.next-step-description {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+/* 今日页：学习顺序行。 */
+.order-row {
+  display: flex;
+  align-items: center;
+  gap: var(--group-gap);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.order-row:last-child {
+  border-bottom: none;
+}
+
+.order-row-name {
+  font-size: var(--font-size-item);
+  font-weight: 600;
+  min-width: 48px;
+}
+
+.order-row-meta {
+  flex: 1;
+  color: var(--color-text-secondary);
+}
+
+/* 任务行（测试列表 / 复习列表共用）。 */
+.task-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+/* 逾期任务的左侧强调线 + 徽章：不只依靠颜色表达（规格 9.2）。 */
+.task-row.overdue {
+  border-left: 4px solid var(--color-danger);
+}
+
+.task-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--group-gap);
+  flex-wrap: wrap;
+}
+
+.task-row-title {
+  font-size: var(--font-size-item);
+  font-weight: 600;
+}
+
+.task-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  flex-wrap: wrap;
+}
+
+.task-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.badge-overdue {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+/* 词书复习：展开的翻书提示清单（只读，不提供勾选）。 */
+.word-hint-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.word-hint-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.word-hint-list li:last-child {
+  border-bottom: none;
+}
+
+.word-hint-term {
+  font-size: var(--font-size-item);
+  font-weight: 600;
+}
+
+.word-hint-meaning {
+  color: var(--color-text-secondary);
+}
+
+/* 常规模式复习组：刚刚忘记置顶（警示色 + "!" 前缀，不只靠颜色）。 */
+.word-hint-forgotten .word-hint-marker {
+  color: var(--color-warning);
+  font-weight: 700;
+}
+
+.review-reading-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.review-reading-title {
+  margin: 0;
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+/* 逐词测试会话。 */
+.test-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+  align-items: center;
+  padding: var(--block-gap) 0;
+}
+
+.test-session-remaining {
+  align-self: flex-end;
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.test-session-word {
+  font-size: 40px;
+  font-weight: 700;
+  margin: 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.test-session-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--group-gap);
+  width: 100%;
+}
+
+.test-session-answer {
+  width: 100%;
+  max-width: 560px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.test-session-meaning {
+  margin: 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.test-session-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.test-completed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+/* 首过录入（常规模式两步流）。 */
+.firstpass-textarea {
+  min-height: 160px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.firstpass-steps {
+  margin: 0;
+  font-size: var(--font-size-item);
+  font-weight: 600;
+}
+
+.firstpass-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+}
+
+.entry-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.entry-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.meaning-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.meaning-pos {
+  width: 110px;
+  flex: none;
+}
+
+.meaning-definition {
+  flex: 1;
+  min-width: 180px;
+}
+
+.meaning-usage {
+  flex: 1;
+  min-width: 180px;
+}
+
+.firstpass-save-bar {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0;
+  background: var(--color-canvas);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 冲突处理行。 */
+.conflict-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.conflict-row:last-child {
+  border-bottom: none;
+}
+
+/* 词汇页：全宽单列卡片 + 右侧滑出详情。 */
+.vocab-layout {
+  display: block;
+}
+
+.vocab-layout.with-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: var(--group-gap);
+  align-items: start;
+}
+
+.vocab-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vocab-card {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  padding: 14px 16px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vocab-card:hover {
+  background: var(--color-surface-hover);
+}
+
+.vocab-card.selected {
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+/* 已掌握：整卡置灰一档（规格 12.1），对勾 + 可访问名称承担状态语义。 */
+.vocab-card.mastered {
+  background: var(--color-surface-active);
+  color: var(--color-text-secondary);
+}
+
+.vocab-card-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.vocab-card-row.meta {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
+  gap: 16px;
+}
+
+.vocab-card-term {
+  font-size: var(--font-size-item);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vocab-card-meaning {
+  flex: 1;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 详情打开后列表收窄：每卡重排为三行（英文 / 释义 / 位置与状态，规格 12.2）。 */
+.vocab-list.narrow .vocab-card-row {
+  flex-wrap: wrap;
+}
+
+.vocab-list.narrow .vocab-card-meaning,
+.vocab-list.narrow .vocab-card-arrow {
+  display: none;
+}
+
+.vocab-list.narrow .vocab-card-row.meta {
+  display: flex;
+}
+
+.vocab-card-arrow {
+  color: var(--color-text-secondary);
+  font-size: 18px;
+}
+
+.mastered-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-success);
+  color: #ffffff;
+  font-size: 12px;
+  flex: none;
+}
+
+.vocab-detail {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+  animation: vocab-detail-in 160ms ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+  min-width: 0;
+}
+
+@keyframes vocab-detail-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.vocab-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vocab-detail-title {
+  margin: 0;
+  font-size: var(--font-size-section);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.vocab-detail-meta {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.vocab-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vocab-meaning-line {
+  margin: 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.meaning-pos-text {
+  color: var(--color-text-secondary);
+}
+
+.meaning-usage-text {
+  color: var(--color-text-secondary);
+}
+
+.vocab-progress-line {
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+/* 筛选面板：标题区下方、列表上方（规格 12.1）。 */
+.filter-panel {
+  display: flex;
+  gap: var(--group-gap);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.filter-panel .field {
+  min-width: 180px;
+}
+
+.filter-search {
+  flex: 1;
+}
+
+/* 窄视口：详情改为铺满整行，避免横向滚动（规格 11.5 表单画布约束同理）。 */
+@media (max-width: 900px) {
+  .vocab-layout.with-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

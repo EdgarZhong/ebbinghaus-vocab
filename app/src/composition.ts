@@ -24,18 +24,27 @@
  */
 
 import {
+  BookReviewCompletionService,
+  CapacityPlanningService,
+  DashboardService,
+  EntryOrganizerService,
   initializeDefaultApplicationData,
+  LearningEventRecorder,
   LlmConfigurationService,
+  RegularLearningService,
+  SchedulingService,
   SettingsService,
   SpaceManagementService,
+  type BookTaskItemsProvider,
   type Clock,
   type DeviceLocalStore,
   type IdGenerator,
 } from "@ebbinghaus/application";
-import { isSpaceArchived, type Space } from "@ebbinghaus/domain";
+import { FsrsRegularScheduler, isSpaceArchived, type Space } from "@ebbinghaus/domain";
 import { createInMemoryRuntime, type InMemoryRuntime } from "@ebbinghaus/persistence/src/adapters/inMemoryRuntime.ts";
 import { SystemClock } from "@ebbinghaus/persistence/src/clock.ts";
 import { TransparentSecretCipher } from "@ebbinghaus/persistence/src/repositories/settings.ts";
+import { createLearningViews, type LearningViews } from "./services/learningViews.ts";
 
 // ---------------------------------------------------------------------------
 // 浏览器基础设施（端口实现）
@@ -114,6 +123,22 @@ export interface AppServices {
   readonly deviceLocal: DeviceLocalStore;
   /** 内存运行时（供测试断言与后续同步引擎接线；界面组件不得直接使用）。 */
   readonly runtime: InMemoryRuntime;
+  /** 常规模式学习用例：录入、到期分组、测试会话与朗读分组（UI-2 接线）。 */
+  readonly regularLearning: RegularLearningService;
+  /** 词书模式调度派生：从事件重放即时派生计划任务（无写副作用）。 */
+  readonly scheduling: SchedulingService;
+  /** 两段式容量规划：读侧纯缓存视图 + 后台刷新（今日页固定交互语义）。 */
+  readonly capacityPlanning: CapacityPlanningService;
+  /** 词书纸质复习完成的事件产出口径（复习页确认入口）。 */
+  readonly bookReview: BookReviewCompletionService;
+  /** 今日看板门面：模式分发的任务汇总 + 容量视图 + 每日目标保存。 */
+  readonly dashboard: DashboardService;
+  /** 智能整理用例；浏览器模式未装配整理端口，调用按"未配置"失败（如实降级）。 */
+  readonly entryOrganizer: EntryOrganizerService;
+  /** 学习事件工厂（事件唯一产生入口）；仅供测试种子与审计，组件不得直接使用。 */
+  readonly eventRecorder: LearningEventRecorder;
+  /** 组合根侧界面只读视图（词汇/复习组/词书任务），页面统一经此处消费。 */
+  readonly learningViews: LearningViews;
   /** Space 管理页行视图。 */
   listSpaceSummaries(): SpaceSummary[];
   /** 单个 Space 摘要；不存在时返回 null。 */
@@ -174,6 +199,83 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
   // LLM 设置页的读写与脱敏快照仍然完整可用。
   const llm = new LlmConfigurationService({ configurationStore: runtime.llmConfigurationStore });
 
+  // ---- UI-2 学习用例装配（全部只组合既有应用层用例，不实现业务规则） ----
+
+  // 事件工厂：全部学习事件的唯一产生入口，信封字段（时间/ID/设备序号）经端口注入。
+  const eventRecorder = new LearningEventRecorder({
+    clock,
+    idGenerator,
+    deviceIdentity: runtime.deviceIdentity,
+    deviceSeqAllocator: runtime.deviceSeqAllocator,
+    readLearningDaySettings: () => settings.getLearningDaySettings(),
+  });
+
+  // 常规模式固定策略 FSRS 调度器（纯领域计算封装；目标保持率按 Space 读取）。
+  const fsrsScheduler = new FsrsRegularScheduler();
+
+  // 常规模式学习用例：自由录入、当日到期分组、逐词测试会话与当日朗读分组。
+  const regularLearning = new RegularLearningService({
+    clock,
+    idGenerator,
+    eventRecorder,
+    eventStore: runtime.eventStore,
+    wordContentStore: runtime.wordContentStore,
+    spaceStore: runtime.spaceStore,
+    sessionStore: runtime.testSessionStore,
+    fsrsCardStore: runtime.fsrsCardStore,
+    settings,
+    scheduler: fsrsScheduler,
+  });
+
+  // 词书模式调度派生：任务从事件重放即时派生（派生状态不同步、不落库）。
+  const scheduling = new SchedulingService({
+    clock,
+    eventStore: runtime.eventStore,
+    wordContentStore: runtime.wordContentStore,
+    bookCatalogStore: runtime.bookCatalogStore,
+  });
+
+  // 两段式容量规划：getTodaysCapacityView 纯缓存读，refreshTodaysPlan 才可能模拟。
+  const capacityPlanning = new CapacityPlanningService({
+    clock,
+    eventStore: runtime.eventStore,
+    wordContentStore: runtime.wordContentStore,
+    bookCatalogStore: runtime.bookCatalogStore,
+    dailyPlanStore: runtime.dailyPlanStore,
+    scheduling,
+  });
+
+  // 词书纸质复习完成：确认"仅复习/测试后复习"并按口径产出完成事件。
+  const bookReview = new BookReviewCompletionService({
+    eventRecorder,
+    eventStore: runtime.eventStore,
+    wordContentStore: runtime.wordContentStore,
+    bookCatalogStore: runtime.bookCatalogStore,
+    sessionStore: runtime.testSessionStore,
+  });
+
+  // 组合根侧界面只读视图（词汇/常规复习组/词书任务转换）。
+  const learningViews = createLearningViews({ runtime, settings, scheduling, clock });
+
+  // 词书任务提供者（组合根侧视图转换）：把调度派生任务拼装为界面任务快照。
+  // 词书逐词测试会话用例尚未在应用层交付（bookReview.ts 模块头如实记录），
+  // 这里只提供任务列表数据，不伪造会话能力。
+  const bookTasks: BookTaskItemsProvider = {
+    bookTaskItems: (spaceId: string) => learningViews.bookTaskItems(spaceId),
+  };
+
+  const dashboard = new DashboardService({
+    spaceStore: runtime.spaceStore,
+    settings,
+    capacity: capacityPlanning,
+    regularTasks: regularLearning,
+    bookTasks,
+  });
+
+  // 智能整理用例：浏览器模式不装配 HTTP 整理端口（无密钥安全边界），organize
+  // 会以"未配置智能整理服务"失败，界面按规格 6.9 如实降级为"改为手动填写"。
+  const entryOrganizer = new EntryOrganizerService(null);
+
   // ---- 变化通知（简单版本号 + 订阅者集合） ----
   let version = 0;
   const listeners = new Set<() => void>();
@@ -206,6 +308,14 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     llm,
     deviceLocal,
     runtime,
+    regularLearning,
+    scheduling,
+    capacityPlanning,
+    bookReview,
+    dashboard,
+    entryOrganizer,
+    eventRecorder,
+    learningViews,
     listSpaceSummaries(): SpaceSummary[] {
       return runtime.spaceStore.listSpaces().map((space) => ({
         space,

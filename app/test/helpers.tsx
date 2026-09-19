@@ -52,6 +52,23 @@ export interface TestServicesOptions {
   readonly deviceLocal?: DeviceLocalStore;
 }
 
+/**
+ * 可变确定性时钟：先"拨回过去"播种学习事实（录入、首过），再把时钟拨到固定
+ * 现在（FIXED_NOW），使"录入次日起参与测试"的资格过滤自然满足。全部服务共享
+ * 同一 clock 引用，setNow 对组合根内所有用例立即生效。
+ */
+export function createMutableClock(initial: Date): { clock: Clock; setNow(next: Date): void } {
+  let currentMs = initial.getTime();
+  return {
+    clock: {
+      now: () => new Date(currentMs),
+    },
+    setNow(next: Date): void {
+      currentMs = next.getTime();
+    },
+  };
+}
+
 export function createTestServices(options: TestServicesOptions = {}): AppServices {
   return createAppServices({
     clock: options.clock ?? fixedClock,
