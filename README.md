@@ -84,7 +84,13 @@ Ebbinghaus-v2/
 - 测试：`rtk pnpm test`（根 Vitest 以 projects 模式聚合各包 `vitest.config.ts`）。
 - 类型检查：`rtk pnpm typecheck`（根级与各包 tsconfig 逐个 `tsc --noEmit` 检查；新增包时在根 `package.json` 的 typecheck 脚本追加）。
 - Shell 命令统一加 `rtk` 前缀；长输出 Git 命令用 `git --no-pager`。
-- 浏览器开发服务、Tauri 构建、服务器启动命令将在 app/server 落地后回写本节；开发顺序以 `docs/V2迁移技术决策.md` 第六章为准。
+- React UI（浏览器模式一等公民）：
+  - 开发服务：`rtk pnpm --filter @ebbinghaus/app dev`（Vite，脱离 Tauri 壳完整运行）；
+  - 构建：`rtk pnpm --filter @ebbinghaus/app build`；
+  - Testing Library：`rtk pnpm test`（与各包一起由根 Vitest 聚合）；
+  - Playwright 浏览器矩阵（构建产物 + 三视口截图）：`rtk pnpm --filter @ebbinghaus/app e2e`。
+- 同步服务器（本地）：`rtk pnpm server:start`（CLI `--db= --token= --port=`，缺省 127.0.0.1:8787）、在线备份 `rtk pnpm server:backup`；部署口径见 `docs/服务器部署留档.md`。
+- Tauri 构建（Phase 4 起启用）以 `docs/V2迁移技术决策.md` 第六章为准。
 
 ## 重要文档索引
 
