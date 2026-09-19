@@ -55,22 +55,24 @@
 
 - [x] 首次 Git 提交（文档基线）
 - [x] 设置同步口径 triage + `docs/V2首轮自主判断与口径收敛.md` 成稿（2026-09-19 夜完成初稿：A1 十四项逐项判定、A2 Space 级设置走 settings KV、B1 LWW 以 deviceId 字典序 tie-break 等，待晨审）
-- [ ] Phase 0：仓库脚手架（pnpm workspace、TypeScript 6.0.2、Vitest 5.0.0、精确版本锁定）
-- [ ] Phase 0：事件/settings/API schema 与排序规则定稿（settings 体现 triage 结果）
-- [ ] Phase 1：Fastify 服务器骨架 + push/pull/settings/health + 云端权威库 schema
-- [ ] Phase 1：去重、server_seq、增量查询、gzip、备份
-- [ ] Phase 1：服务器专项测试全绿
-- [ ] Phase 1：服务端本地运行 + localhost 系统测试（健康检查、备份、断线恢复冒烟）；部署脚本仅本地留档，不上云
-- [ ] 客户端后端移植：domain/application（V1 测试映射，核心调度与事件模型优先）
-- [ ] 客户端持久化集成：repository/outbox/sync engine + SQLite 适配 + 双适配器接线（集成测试全绿）
-- [ ] 双端联调：本地真实 server 双客户端收敛、幂等、断线恢复、settings 收敛
-- [ ] Stretch：Tauri 工程骨架与插件接线冒烟（占位页面，无 UI 开发）
+- [x] Phase 0：仓库脚手架（pnpm workspace、TypeScript 6.0.2、Vitest 5.0.0、精确版本锁定）
+- [x] Phase 0：事件/settings/API schema 与排序规则定稿（settings 体现 triage 结果；M1 64 测试全绿，已提交 c6e71f1；类型退化缺陷已修复 08393de）
+- [x] Phase 1：Fastify 服务器骨架 + push/pull/settings/health + 云端权威库 schema
+- [x] Phase 1：去重、server_seq、增量查询、gzip、备份
+- [x] Phase 1：服务器专项测试全绿（46 项，已提交 d531b4e；含真实 listen、备份恢复、架构守卫）
+- [ ] Phase 1：服务端本地运行 + localhost 系统测试（健康检查、备份、断线恢复冒烟）；部署脚本仅本地留档，不上云（并入 M6 双端联调与 Stretch）
+- [x] 客户端后端移植 domain（V1 152 项映射全绿，已提交 a7b3969；含事件重放器与架构守卫）
+- [ ] 客户端后端移植 application（src 13 模块已完成且 typecheck 通过；测试由后台分支续作中——额度中断后主会话接手编排，见判断文件 C6）
+- [ ] 客户端持久化集成：repository/outbox/sync engine + SQLite 适配 + 双适配器接线（集成测试全绿）（M5 后台分支进行中）
+- [ ] 双端联调：本地真实 server 双客户端收敛、幂等、断线恢复、settings 收敛（依赖 M5 交付）
+- [ ] Stretch：Tauri 工程骨架与插件接线冒烟（占位页面，无 UI 开发）（阻塞：本机无 Rust 工具链，见判断文件 C7）
 
 ### 第一轮执行状态（2026-09-19 夜间）
 
-- 环境已就绪：mise 装 Node 24.21.0；pnpm 12.3.4 经 npm -g（npmmirror 镜像）安装；项目 `.npmrc` 固定 npmmirror registry（GitHub API 限流绕行，详见判断文件 C1）。
-- 口径收敛：`docs/V2首轮自主判断与口径收敛.md` 已成稿，A1 设置 triage 已定稿并作为 protocol settings schema 的直接输入。
-- 执行结构：M1 脚手架+protocol → M2 server ∥ M3 domain → M4 application → M5 persistence → M6 双端联调；每个里程碑单独 commit，主会话亲自 review 每个 subagent 分支的 diff 与测试证据。
+- 环境已就绪：mise 装 Node 24.21.0；pnpm 12.3.4 经 npm -g（npmmirror 镜像）安装；项目 `.npmrc` 固定 npmmirror registry（GitHub API 限流绕行，详见判断文件 C1）；better-sqlite3 原生编译依赖 node-gyp（已全局安装 13.0.2）。
+- 口径收敛：`docs/V2首轮自主判断与口径收敛.md` 已成稿，A1 设置 triage 已定稿并作为 protocol settings schema 的直接输入；B8/B9 为 M1 实现中发现的规格-V1 不一致点，待晨审。
+- 执行结构（夜间并行形态）：M1 protocol（已交付）→ M2 server ∥ M3 domain（已交付）→ M4 application 测试续作 ∥ M5 persistence（后台进行中）→ M6 双端联调 → Stretch。主会话负责 review、集成、文档与提交，与后台分支并行不互相等待；子 agent 额度中断时主会话接手编排（判断文件 C6）。
+- 提交记录：eee20df（triage 基线）→ c6e71f1（M1）→ d531b4e（M2）→ a7b3969（M3）→ 08393de（protocol 类型修复）。累计测试：protocol 64 + domain 152 + server 46 = 262 全绿。
 
 ### 闸门测试清单（Phase 4，来自技术决策第七章）
 
