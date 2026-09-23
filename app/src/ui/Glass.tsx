@@ -5,8 +5,8 @@
  * 1. 依赖唯一直引点：全项目只有本文件 import "liquid-glass-react"，后续升级、
  *    调参或换库只改这里，页面/外壳永远只面对 Glass 这一个原语。
  * 2. 统一降级点：jsdom（无 ResizeObserver，Vitest 组件测试环境）、
- *    WebKit（能力检测全过但 SVG 位移滤镜渲染失真，2026-09-24 实证）、
- *    非浏览器环境（无 window）一律降级为
+ *    WebKit/Firefox（库 README 明示仅部分支持、位移折射不可见；能力检测
+ *    全过但签名效果不成立）、非浏览器环境（无 window）一律降级为
  *    .glass-fallback 半透明毛玻璃 div——测试与旧环境绝不崩溃、功能等价
  *    （children/onClick/data-testid 全部透传）。
  * 3. 库行为怪癖的收口处（读 dist/index.esm.js 源码确认的事实）：
@@ -57,16 +57,14 @@ const LiquidGlass: ComponentType<Omit<GlassProps, "testId">> =
  * ResizeObserver 是 jsdom 的确定性缺席特征（jsdom 不提供），用它把测试环境
  * 稳定分流到降级路径；CSS.supports 检查带 -webkit 前缀兜底旧 WebKit。
  *
- * WebKit 一律走降级磨砂（2026-09-24 实证）：Playwright WebKit 26.6 三项能力
- * 检测（backdrop-filter / -webkit-backdrop-filter / filter:url()）全部通过，
- * 但深色主题下侧栏玻璃实际渲染成均匀奶灰亮板（headed 与 headless 一致，证据
- * 见 docs/autonomous-runs/ 第二轮验收记录）——SVG 位移滤镜与 backdrop-filter
- * 的组合在 WebKit 合成管线上失真，能力检测覆盖不了"渲染正确性"，只能按引擎
- * 降级。判定用 UA：Chromium 系 UA 必含 Chrome/Chromium/CriOS 等标记，剩余
- * AppleWebKit 即 WebKit（Safari 与 Tauri 的 WKWebView）；jsdom 已被上面的
- * ResizeObserver 检查先行拦截，不会误伤测试环境。代价如实接受：macOS 正式
- * App（WKWebView）将呈现磨砂而非液态玻璃，Phase 4/6 真实机验收时再评估是否
- * 换库或自研着色。
+ * WebKit 一律走降级磨砂：库 README 明示 Safari/Firefox 仅部分支持（位移折射
+ * 不可见），液态玻璃的签名效果在 WebKit 上本就不成立；能力检测
+ * （backdrop-filter / -webkit 前缀 / filter:url()）在 Playwright WebKit 26.6
+ * 上全部通过，但能力检测覆盖不了"渲染正确性"，只能按引擎降级。判定用 UA：
+ * Chromium 系 UA 必含 Chrome/Chromium/CriOS 等标记，剩余 AppleWebKit 即
+ * WebKit（Safari 与 Tauri 的 WKWebView）；jsdom 已被上面的 ResizeObserver
+ * 检查先行拦截，不会误伤测试环境。代价如实接受：macOS 正式 App（WKWebView）
+ * 将呈现磨砂而非液态玻璃，Phase 4/6 真实机验收时再评估是否换库或自研着色。
  */
 const canUseLiquidGlass: boolean = (() => {
   if (typeof window === "undefined") {
