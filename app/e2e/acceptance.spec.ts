@@ -14,7 +14,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
-import { expectActiveSpace, navTo, openSpaceManagement } from "./nav.ts";
+import { expectActiveSpace, navTo, openSpaceManagement, waitAnimationsSettled } from "./nav.ts";
 
 const screenshotsDir = join(dirname(fileURLToPath(import.meta.url)), "__screenshots__");
 
@@ -211,7 +211,9 @@ test("任务5：词汇卡片倒序找词，右侧详情可理解", async ({ page
   expect(firstCardY!.y).toBeLessThan(laterCardY!.y);
 
   // 打开右侧详情：自己的释义、当前状态、最近结果可理解（行为语言）。
+  // 详情面板有 160-200ms 入场动画（桌面滑入/移动 sheet 上滑），等沉淀再截图。
   await list.getByTestId("vocab-card-word5").click();
+  await waitAnimationsSettled(page, "vocabulary-detail");
   await expect(page.getByTestId("vocabulary-detail")).toBeVisible();
   await expect(page.getByTestId("vocabulary-detail")).toContainText("释义5");
   await screenshot(page, "task5-vocab-detail");

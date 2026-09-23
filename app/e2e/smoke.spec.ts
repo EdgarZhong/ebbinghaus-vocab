@@ -18,6 +18,7 @@ import {
   navTo,
   openSpaceManagement,
   setTheme,
+  waitAnimationsSettled,
 } from "./nav.ts";
 
 const screenshotsDir = join(dirname(fileURLToPath(import.meta.url)), "__screenshots__");
@@ -46,8 +47,10 @@ test("六个一级页面导航冒烟并输出全窗口截图", async ({ page }) 
   await expectActiveSpace(page, "必考词");
 
   // 移动端结构：先补一张抽屉打开态截图（本轮重构的签名交互，视觉验收证据）。
+  // 抽屉有 200ms 滑入动画，等动画沉淀后再截图（否则抓到半透明残影）。
   if (isMobileShell(page)) {
     await ensureNavVisible(page);
+    await waitAnimationsSettled(page, "nav-drawer");
     await screenshot(page, "nav-drawer");
     await page.keyboard.press("Escape");
   }

@@ -63,3 +63,30 @@ export async function setTheme(page: Page, themeTestId: string): Promise<void> {
   await ensureNavVisible(page);
   await page.getByTestId(themeTestId).click();
 }
+
+/**
+ * 等指定元素的入场动画全部结束（截图前调用）：入场动画期间截图会抓到半透明
+ * 残影（任务5 详情面板、移动端抽屉截图均实证）。动画 promise 被取消属正常
+ * 路径（元素卸载），吞掉即可；500ms 上限防止库内常驻动画（如玻璃高光）造成
+ * 永久等待——入场动画最长 200ms，上限留足余量。
+ */
+export async function waitAnimationsSettled(page: Page, testId: string): Promise<void> {
+  const target = page.getByTestId(testId);
+  await target.waitFor({ state: "visible" });
+  await target.evaluate((el) => {
+    const animations = el
+      .getAnimations({ subtree: true })
+      .filter((animation) => animation.playState === "running" || animation.playState === "pending");
+    if (animations.length === 0) {
+      return Promise.resolve();
+    }
+    return Promise.race([
+      Promise.all(animations.map((animation) => animation.finished.catch(() => undefined))).then(
+        () => undefined,
+      ),
+      new Promise((resolve) => {
+        setTimeout(resolve, 500);
+      }),
+    ]);
+  });
+}

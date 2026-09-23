@@ -560,6 +560,14 @@ div.space-row-select {
   min-width: 220px;
 }
 
+/* 换日内联行里的时间输入框：.field-input 全局 width:100% 在 flex 行内会占满整行、
+   把"开始"后缀挤到下一行（桌面与移动端截图均实证）；内联语义要求输入框占剩余
+   宽度、后缀贴右。 */
+.settings-inline-row .field-input {
+  width: auto;
+  flex: 1 1 140px;
+}
+
 /* 手机视口（缺陷 1 实证：412px 设置页横向溢出被截断）：设置行纵向堆叠、
    字段全宽、min-width 归零——从结构上保证任何控件都不超出视口宽度。
    今日页每日目标行复用本类，同样受益。 */
