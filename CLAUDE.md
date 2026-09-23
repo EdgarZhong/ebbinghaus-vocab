@@ -13,69 +13,78 @@
 
 | 阶段 | 状态 | 交付内容 | 质量门 |
 | --- | --- | --- | --- |
-| Phase 0 共享协议 | 未开始 | `packages/protocol`：事件 schema、settings schema、Zod 校验、同步错误语义、settings 冲突规则定稿 | 协议测试三端（协议包/客户端/服务器）消费通过 |
-| Phase 1 云端服务器 | 未开始 | Node + Fastify + better-sqlite3 哑服务器：push / pull / settings / health、去重、server_seq、备份 | 服务器专项测试 + 幂等/游标回归 |
-| Phase 2 同步落地 | 未开始 | 最小同步客户端/测试 Harness；**把真实学习数据真正送上云端**；push、pull、幂等、断线、恢复、cursor、backup 全验证 | 真实数据迁移闭环（`AGENTS.md`）+ 双端重放一致 |
-| Phase 3 新客户端基座 | 未开始 | 客户端 SQLite Repository、outbox、sync engine、Ports/Adapters 双适配器 | 断网/恢复回归；浏览器模式完整可用 |
-| Phase 4 Tauri Android 闸门 | 未开始 | 第九章闸门清单 9 项全过（见下） | 全部通过后正式锁死 Tauri 全端 |
-| Phase 5 React UI 全面迁移 | 未开始 | 按界面规格 v2 约束范围重建全部页面；领域/应用层移植 + V1 测试映射 | Vitest/Playwright 浏览器矩阵 + 移植行为对照 |
+| Phase 0 共享协议 | 已交付（第一轮） | `packages/protocol`：事件 schema、settings schema、Zod 校验、同步错误语义、settings LWW 冲突规则 | 协议测试三端消费通过 |
+| Phase 1 云端服务器 | 已交付（第一轮） | Node + Fastify + better-sqlite3 哑服务器：push / pull / settings / health、去重、server_seq、备份 | 服务器专项测试 + 幂等/游标回归 |
+| Phase 2 同步落地 | 部分（第一轮完成双端联调） | 最小同步客户端/测试 Harness；**把真实学习数据真正送上云端**（未做，需用户参与上云） | 真实数据迁移闭环（`AGENTS.md`）+ 双端重放一致 |
+| Phase 3 新客户端基座 | 已交付（第一轮） | 客户端 SQLite Repository、outbox、sync engine、Ports/Adapters 双适配器 | 断网/恢复回归；浏览器模式完整可用 |
+| Phase 4 Tauri Android 闸门 | 未开始（第一轮仅完成 macOS 骨架冒烟） | 第九章闸门清单 9 项全过（见下） | 全部通过后正式锁死 Tauri 全端 |
+| Phase 5 React UI 全面迁移 | 进行中 | 按界面规格 v2 约束范围重建全部页面；领域/应用层移植 + V1 测试映射；**第二轮：视觉重构 + 移动端重设计** | Vitest/Playwright 浏览器矩阵 + 移植行为对照 |
 | Phase 6 正式 App | 未开始 | macOS + Android 正式构建、真实数据切换、V1 退役评估 | 全链路验收 + 用户级验收 |
 
 当前顺序原则：**服务器优先**；"真实数据先托管在云端"比"先把新 UI 画完"优先。
 
-## 当前阶段：Phase 0 + Phase 1 + 客户端后端迁移 + UI 层（第一轮自主实现，2026-09-19 夜间连续执行）
+## 历史阶段记录
 
-- **Goal 已由用户中途重置（2026-09-20 凌晨）**：UI 层纳入本轮交付；唯一不做的是 Computer Use 用户验收与云端实际部署；其余完成一切能完成的。UI 表现层验收用 Playwright 内置浏览器 + 视觉复核闭环，用户级验收以浏览器走查第 16.1 节核心任务替代 Computer Use（详见判断文件 C8）。
+### 第一轮自主实现（2026-09-19 夜间 → 2026-09-20 凌晨，已完成）
 
-- 启动条件：用户已在 V2 工作区发起第一轮自主实现；本仓库为独立 Git 仓库（`main`，尚未产生首次提交）。**本轮无 grill-me 环节**：agent 自主收敛口径并执行，全部判断写入 `docs/V2首轮自主判断与口径收敛.md` 供用户晨审；晨审前不得把新口径改写进三份继承规格。
-- 首轮任务优先级：
-  1. **设置同步口径 triage（最先做）**：枚举 V1 全部设置项，逐项判定「跨端同步 / 设备本地」。用户已定调：大语言模型服务配置（Base URL/模型/API Key/思考开关）不同步、每设备各配；凡涉及学习调度的设置倾向同步；凡判定同步者以云端为唯一权威数据源。
-  2. Phase 0：`packages/protocol`（事件 + settings + push/pull/settings API 契约，Zod schema 与 TS 类型）。
-  3. Phase 1：`server/` 哑同步服务器 + 云端权威库 schema；服务端全程在本地 localhost 运行与系统测试。**本轮禁止任何上云部署与远端服务器操作**（部署脚本与说明可作为留档产出，但不得连接服务器）；上云部署与 Tunnel 暴露为后续轮次、需用户参与。
-  4. 客户端后端迁移：`packages/domain`、`packages/application` 以 V1 行为为规格移植（V1 387 项测试逐项映射改写 Vitest；调度状态机、List 聚合、FSRS 映射、容量预测、事件模型优先，整理器 v3 移植可后置）。
-  5. 客户端持久化与集成（必做）：repository、outbox、sync engine、SQLite 适配与 Ports/Adapters（`BrowserTestAdapter` / `TauriProductionAdapter`）完整接线；Node 侧以测试适配器完成集成测试。
-  6. 双端联调（必做）：本地真实 server + 双客户端实例验证 push/pull 收敛、幂等去重、断线恢复、游标推进、settings 收敛。
-  7. Stretch：Tauri 工程骨架与插件接线冒烟（占位页面，不做任何 UI 开发）。
-- 工程形态：**pnpm workspace monorepo**（`packages/protocol`、`packages/domain`、`packages/application`、`app/`、`server/`）。
-- 明确不做：React UI（位于最后阶段，本轮不要求完整用户验收）；除此之外的自动化测试必须完整做好并通过。不改继承规格口径；不创建远端仓库、不推送；不上云部署。
-- 技术栈与版本、同步语义、API 范围以 `docs/V2迁移技术决策.md` 为准，不得重新选型。
+- 交付：仓库脚手架与首次提交；`docs/V2首轮自主判断与口径收敛.md`（A1 设置同步十四项判定、B1 LWW、C8 Goal 重置等，**待用户晨审**）；Phase 0 `packages/protocol`；Phase 1 `server/` 哑服务器；domain/application 移植（V1 152 项映射）；persistence 双运行时 + 同步引擎 + 双端联调；UI 层（外壳/Space 管理/设置 + 今日/复习/测试/首过/词汇五页，常规模式主线闭环）；Tauri 2 骨架冒烟（cargo build 通过、tauri dev 真实启动成功，插件留 Phase 4）。
+- 验收记录：`docs/autonomous-runs/20260920-0130-第一轮自主实现用户级验收记录.md`。
+- 环境基线：mise Node 24.21.0；pnpm 12.3.4；node-gyp 13.0.2；Rust 1.98.1（rustup + rsproxy）。
+- **已知遗留（第一轮如实记录）**：词书模式逐词测试会话用例未移植，词书"测试→纸质复习确认"闭环不可达（任务行如实提示"后续更新提供"）；词书首过录入为引导占位；移动端为桌面压缩版、侧边栏恒驻。
+- **第二轮审计结论（2026-09-23，见当前阶段）**：① 493 项 Vitest 中 1 项已失败——`VocabularyPage.tsx` 用 `Date.now()` 判断"今天待测试"、`display.ts formatUserDate` 用 `new Date()` 判同年，绕过注入时钟（时间炸弹，2026-09-20 后爆发）；② Playwright 56 项重跑全过属实，但移动端视口实测主内容被恒驻侧栏挤压至约半屏、文案逐字换行不可用——"测试全绿 ≠ 可用"的实证；③ 词书模式缺口记录属实。
 
-### Phase 0 完成定义
+## 当前阶段：第二轮自主实现（2026-09-23）——第一轮审计 + 表现层视觉重构
 
-- `packages/protocol` 提供事件、settings、请求/响应的 Zod schema 与 TypeScript 类型，客户端与服务器共同消费。
-- 同步字段至少包含：`eventId`、`deviceId`、`deviceSeq`、`occurredAt`、`serverSeq`；明确 `serverSeq` 仅为同步游标。
-- settings 冲突规则定稿（建议 LWW：值 + `updated_at` + `device_id`，见"待确认口径"）。
-- 协议包自身测试通过，且被一个最小服务器桩和一个最小客户端桩双向消费验证。
+- 触发：用户明确"现在进行自主实现"，范围 = **验收第一轮真实可用性 + 重构表现层**。
+- 本轮边界（用户指定）：不使用 Computer Use、不启动真实 App/安卓模拟器；表现层验收与用户级验收以 Playwright 内置浏览器四视口 + 主会话亲手截图复核为顶。不实现词书模式逐词测试会话（属应用层新功能，列入后续轮次建议，由用户决策）。
+- 协作约束：同时不超过 3 个 agent；一切 review 由主会话亲自完成（独立 Review Agent 已废除）。
 
-### Phase 1 完成定义
+### 本轮设计定案（界面规格第 1 章授权设计执行方自主决策范围）
 
-- API 保持 `POST /sync/push`、`GET /sync/pull?after_seq=`、`GET/PUT /settings`、`GET /health` 范围内；Bearer access token 鉴权。
-- `event_id` 幂等去重、`server_seq` 分配、增量查询、gzip、备份脚本就绪；服务器零业务逻辑。
-- 服务器测试覆盖：重复 push 幂等、乱序上传、游标推进、schema 拒绝、备份恢复。
+- **主题**：简约森色系"雾林晨读"。浅色 = 雾苔画布 `#EEF3EC` / 松烟墨文字 `#1C251E` / 深松主行动 `#2E5C40` / 苔痕选中 `#DCE8DC`；深色 = 夜林 `#111713` / 浅苔主行动 `#98C9A6`。全部交互色经 CSS 变量，逐色校验对比度 ≥4.5:1（规格第 16 章底线）。
+- **签名元素**：液态玻璃（liquid-glass-react 1.1.1，精确版本）——桌面浮动侧栏、移动端抽屉、模态框、toast、吸底操作栏统一玻璃材质；画布层铺极轻的环境苔绿渐变，让玻璃有物可折。WebKit 降级为普通磨砂（库自身限制，如实接受）。
+- **排版**：界面正文保持系统无衬线；**英文词条**（逐词测试大词、词汇卡片词条、详情标题）改用衬线谱系（New York / ui-serif / Georgia），承担"纸质词典"的视觉身份。
+- **移动端重设计（不照搬桌面）**：≤900px 侧栏隐藏，顶栏 = 汉堡按钮（44×44）+ 当前 Space 胶囊；抽屉玻璃侧栏从左侧滑入，点导航/背景/Escape 关闭；词汇详情改全屏覆盖层；测试会话主操作拇指可达。
+- **React 重构口径**（vercel-react-best-practices）：60 词列表卡片 memo 化、详情选中态改渲染期派生（去 effect）、函数式 setState、长列表 content-visibility、依赖直引、useMediaQuery 带 jsdom 守卫。
 
-### 任务看板（第一轮）
+### 任务看板（第二轮）
 
-- [x] 首次 Git 提交（文档基线）
-- [x] 设置同步口径 triage + `docs/V2首轮自主判断与口径收敛.md` 成稿（A1 十四项判定、A2 Space 级设置走 settings KV、B1 LWW、C6 额度中断绕行、C8 Goal 重置等，待晨审）
-- [x] Phase 0：仓库脚手架 + `packages/protocol`（c6e71f1；类型退化缺陷修复 08393de）
-- [x] Phase 1：`server/` 哑服务器全项（d531b4e；46 测试含幂等/游标/gzip/备份/架构守卫）
-- [x] Phase 1：服务端本地运行 + localhost 系统测试（并入 M5 集成套件：真实 listen、健康、备份、断线恢复；部署留档见 `docs/服务器部署留档.md`）
-- [x] 客户端后端移植 domain（a7b3969；V1 152 项映射全绿）
-- [x] 客户端后端移植 application（src 13 模块 + 部分测试已交付 2482fad；剩余测试模块后台分支进行中：scheduling/capacityPlanning/regularLearning/entryOrganizing/bookReview/dashboard/架构守卫）
-- [x] 客户端持久化集成：repository/outbox/sync engine + SQLite/内存双运行时（a5ecdf6；仓储单元 + 真实服务器集成 13 项）
-- [x] 双端联调：`packages/persistence/tests/sync.integration.test.ts` 覆盖双客户端收敛、幂等、断线恢复、游标推进、settings LWW 收敛、gzip、备份（进程内双实例形态）
-- [x] UI 层（C8 新增范围，全部交付）：UI-1 外壳/Space 管理/设置 + UI-2 五页功能接线（今日两段式容量/测试会话闭环/纸质复习/首过两步流/词汇详情筛选）；app Testing Library 56 项、全仓 493 项全绿；Playwright 四视口（desktop/compact/webkit/**mobile**）smoke+acceptance 56 项全过
-- [x] 视觉复核闭环：主会话逐张审查关键截图对照第 15/16 章（visual-judge 供应商不可用时的亲自执行，结论 PASS 记录于验收文件）；发现并修复窄屏 Space 行零宽缺陷
-- [x] 浏览器用户级验收：`app/e2e/acceptance.spec.ts` 走查 16.1 八项核心任务，三视口 24/24 过；验收记录 `docs/autonomous-runs/20260920-0130-第一轮自主实现用户级验收记录.md`
-- [x] Stretch：Tauri 2 骨架（src-tauri 三件套 + conf/capabilities/icons，tauri 2.11.5 精确锁定）——cargo check 通过、cargo build 产出 28.7MB 二进制、tauri dev 真实启动成功（Vite→cargo run→HTTP 200）；插件接入留 Phase 4
+- [x] R2-0a 审计取证：typecheck 干净；Vitest 492/493（词汇页时钟泄漏实锤）；Playwright 56/56 属实；移动端截图复核确认不可用（侧栏占半屏、设置页横向溢出、测试大词折行）；词书模式缺口确认（逐词测试会话与首过录入为占位，第一轮记录属实）
+- [x] R2-0b 时钟泄漏修复（主会话，已验证 56/56 回绿）：`AppServices` 门面暴露注入 `clock`；`VocabularyPage`（到期判断）、`TodayPage`（今日标题）、`display.ts formatUserDate`（同年判断，签名加 `referenceNow` 参数）全部改用注入时钟
+- [x] R2-1 森系令牌 + 玻璃封装（子 agent A 交付，主会话复核通过）：CSS 拆分为 `theme/{index,tokens,base,components,shell,pages}.css`（main.tsx 改引 index.css）；森色系双主题 14 组对比度实测全 ≥4.5:1（数值注释在 tokens.css）；`ui/Glass.tsx` 封装（ResizeObserver/backdrop-filter 能力检测，jsdom/旧 WebKit 降级 `.glass-fallback`；库的锚点居中模型与内联样式复位怪癖已在文件头注释收口）；`liquid-glass-react@1.1.1` 精确版本入依赖（62KiB ESM）；验证四项全绿
+- [ ] R2-2 外壳重构（子 agent B = agent-2，**已交付待复核**，报告在会话任务输出）：桌面浮动玻璃侧栏 + 移动端（≤900px，JS `useMediaQuery("(max-width: 900px)")` 驱动、jsdom 无 matchMedia 时回桌面）顶栏 + 玻璃抽屉。约定 testid：`nav-drawer-open`（汉堡）、`nav-drawer`、`nav-drawer-backdrop`、`topbar-space`（顶栏 Space 胶囊直达 Space 管理）；关闭路径=点导航/背景罩/Escape；抽屉测试并入 `app/test/navigation.test.tsx`
+- [ ] R2-3 页面打磨 + React 最佳实践（子 agent C = agent-3，**已被用户叫停，文件可能处于半完成状态**）：续做时先 `git status`/`git diff` 审计 `app/src/pages/*`、`app/src/ui/{Modal,EmptyState,PageShell,StepperInput}.tsx`、`app/src/shell/ToastContext.tsx`、`app/src/theme/{pages,components}.css` 的实际改动，再决定 `Agent(resume="agent-3")` 恢复还是主会话补完。原定范围：VocabCard 提取 memo + 详情可见性改渲染期派生（删解耦 useEffect）+ 函数式 setState；Modal/Toast 玻璃化、`.firstpass-save-bar` 毛玻璃；移动端：设置页横向溢出修复、词汇详情改 fixed 覆盖层、测试会话按钮竖排、`.vocab-card` content-visibility
+- [ ] R2-4 测试适配（主会话）：e2e 两份 spec 适配——compact（800×600）与 mobile 项目点任何 `nav-*`/`space-switcher` 前先点 `nav-drawer-open` 开抽屉（或改用 `topbar-space`）；建议加 `navigateTo(page, testId)` 助手按 `nav-drawer-open` 可见性分流；补抽屉打开态截图键
+- [ ] R2-5 集成验证（主会话）：typecheck + 全仓 Vitest + build + e2e 四视口全绿；88 张截图重生成
+- [ ] R2-6 双端视觉验收（主会话）：逐张复核关键截图（桌面/移动 × 明/暗）+ Playwright 亲手走查 16.1 八项（常规模式口径，词书缺口维持如实记录）+ 验收记录落档 `docs/autonomous-runs/`
 
-### 第一轮执行状态（2026-09-19 夜间 → 2026-09-20 凌晨）
+### 续跑锚点（会话压缩/重启后从这里恢复）
 
-- 环境：mise Node 24.21.0；pnpm 12.3.4（npm -g，npmmirror）；`.npmrc` 固定 npmmirror；node-gyp 13.0.2（better-sqlite3 本地编译）；Rust 1.98.1（rustup + rsproxy 镜像）。
-- 提交链：eee20df → c6e71f1（M1）→ d531b4e（M2）→ a7b3969（M3）→ 08393de（protocol 类型修复）→ e8ef21a / 962c418（文档与部署留档）→ 2482fad（M4 部分 + 集成修复）→ a5ecdf6（M5 持久化与同步引擎）。
-- 测试基线：protocol 64 + domain 152 + server 46 + application 84（4 模块）+ persistence 19 = 全仓 365 项全绿（另有 application 后台分支新增测试持续并入，见 2482fad 后续提交）。
-- 集成修复（主会话）：设置写入单调时钟护栏（同毫秒 LWW 值序反转缺陷）、Space 级设置缺省回退校验、默认 Space id 改确定性 UUIDv4、SqliteOutbox 时钟注入、applyPulledEvents 幂等落地。
-- 协作形态：额度中断后主会话亲自补齐 M5；恢复后以"主会话 + ≤2 后台分支"并行推进（用户约束：同时不超过 3 个 agent）。
+1. 状态：R2-2 已交付（agent-2，报告已读：桌面浮动玻璃侧栏 + 移动顶栏/抽屉，`SidebarContent` 双端复用，60 项 vitest 含 4 个新增抽屉用例自证绿）；**尚未经主会话复核 diff**——先 `git diff app/src/shell/ app/src/ui/useMediaQuery.ts app/src/theme/shell.css app/test/navigation.test.tsx`。R2-3 已中止（agent-3 被 kill），其白名单文件可能半完成，必须先 `git status`/`git diff` 审计再决定 `Agent(resume="agent-3")` 恢复或主会话补完。
+2. **两个必须在续跑时处理的问题**（R2-2 报告暴露）：① 根 `pnpm typecheck` 只查根+protocol+domain+server，**不覆盖 app**——之前所有"typecheck 干净"结论对 app 无效，根 typecheck 脚本需补上 app；② `pnpm typecheck:app` 当前有 4 个错误，全部在 `app/src/ui/Glass.tsx`（62/63 行 `CSS.supports.call` 参数数、131 行 LiquidGlass JSX 类型），需修复。
+3. 子 agent 均被禁止跑 e2e/build（防端口与 dist 争抢）；其自证不替代主会话复核 diff 与重跑全部验证。
+4. R2-4 必须在 R2-2 落地后做：compact（800×600，≤900 也走移动结构）与 mobile 项目的 e2e 导航需先点 `nav-drawer-open`（或用恒在的 `topbar-space` 进 Space 管理），否则必红。
+5. 视觉待验收：玻璃侧栏/抽屉真实渲染、`.main-area` 透明后页面落在环境渐变上的可读性，需 R2-5/R2-6 截图目检。
+
+### 文件修改白名单（分工隔离）
+
+| 任务 | 独占文件 |
+| --- | --- |
+| R2-0b（主会话） | `app/src/composition.ts`、`app/src/pages/VocabularyPage.tsx`、`app/src/ui/display.ts` 及 formatUserDate 全部调用点、`app/test/vocabularyPage.test.tsx`（如需） |
+| R2-1（子 A） | `app/src/theme/*`（新建拆分）、`app/src/ui/Glass.tsx`、`app/package.json`、`pnpm-lock.yaml`、`app/src/main.tsx`、`app/index.html` |
+| R2-2（子 B） | `app/src/shell/*`、`app/src/ui/useMediaQuery.ts`、`app/src/theme/shell.css`、`app/test/navigation.test.tsx`、`app/src/App.tsx`（如需） |
+| R2-3（子 C） | `app/src/pages/*`（VocabularyPage 除外，与时钟修复串行）、`app/src/ui/{Modal,EmptyState,PageShell,StepperInput}.tsx`、`app/src/shell/ToastContext.tsx`、`app/src/theme/pages.css` |
+| R2-4 | `app/e2e/*`、`app/test/shellDrawer.test.tsx`（新增） |
+
+冲突仲裁：R2-1 先建 `shell.css`/`pages.css` 骨架并收口既有样式，R2-2/R2-3 随后各自独占改写对应文件；`VocabularyPage.tsx` 先由主会话修时钟，R2-3 在其上重构。
+
+### 本轮完成判据
+
+1. typecheck 零错误；全仓 Vitest 全绿（含词汇页时钟修复回归）。
+2. Playwright 四视口全绿；移动端全部核心路径经抽屉可达，无横向溢出。
+3. 截图证据重生成，主会话逐张复核：森色系双主题、玻璃材质、移动端布局可读性（无逐字换行）。
+4. 主会话亲手 Playwright 走查 16.1 八项核心任务（常规模式口径，词书缺口维持如实记录）。
+5. 验收记录写入 `docs/autonomous-runs/`，审计结论与剩余风险如实汇报用户。
 
 ### 闸门测试清单（Phase 4，来自技术决策第七章）
 
@@ -95,16 +104,14 @@
 | UI 架构 | 浏览器模式一等公民；Tauri 只是平台壳，页面禁直接调 Tauri API |
 | Android 逃生路线 | 仅当闸门测试持续失败才启用 macOS=Tauri + Android=Capacitor；React/Domain/Protocol/Sync 不重写 |
 
-## 待确认口径（本轮由自主实现先行收敛，晨审定稿）
-
-以下口径本轮不再走会话确认：agent 按用户给定倾向自主判断并写入 `docs/V2首轮自主判断与口径收敛.md`，用户晨审通过后才并入正式规格。
+## 待确认口径（第一轮自主收敛，仍待用户晨审）
 
 | 口径 | 用户已给的倾向 |
 | --- | --- |
 | 各设置项是否跨端同步 | 大语言模型服务配置不同步；学习调度相关设置倾向同步；同步项以云端为唯一权威 |
 | LLM API Key | 不同步、每设备各配 |
 | settings 冲突规则 | 建议默认 LWW（值 + `updated_at` + `device_id`） |
-| 服务器暴露方式 | 维持 Cloudflare Tunnel，代码只认 Base URL；线上 Tunnel/SSH 配置本轮禁改 |
+| 服务器暴露方式 | 维持 Cloudflare Tunnel，代码只认 Base URL；线上 Tunnel/SSH 配置未动 |
 
 ## 跨阶段风险
 
@@ -116,7 +123,7 @@
 
 ## 切换前状态记录（2026-09-19 会话完成事项）
 
-- 本仓库已解除与 V1 的 git worktree 关联并重新 `git init`（`main` 分支，无提交）。原 `v2` 分支与 V1 `main` 同指向（ab25c8e），无独立提交，分支名保留在 V1 仓库，无任何历史丢失。
+- 本仓库已解除与 V1 的 git worktree 关联并重新 `git init`（`main` 分支）。原 `v2` 分支与 V1 `main` 同指向（ab25c8e），无独立提交，分支名保留在 V1 仓库，无任何历史丢失。
 - 已归档：V1 仓库 `.mimosa/`（ZCode 会话工具残留）→ V1 `.archive/mimosa-hook-state`；本仓库 `.claude/plans/` 与两份 V1 历史验收报告（`正式启用前验收报告.md`、`用户验收报告.md`）→ 本仓库 `.archive/`。
 - `docs/V2迁移技术决策.md` 已按用户 2026-09-19 定稿落盘（含 2026-09-09 规划会话确认的同步工程要求附录）；`docs/需求规格.md` 与 `docs/界面设计规格.md` 中"v2 起设计执行方自主决策"的修订（2026-09-10 规划轮产物）保留为现状。
 - 三份核心文档已按 V2 重写；`data/README.md` 仍为 V1 口径，待 Phase 2 重写。
