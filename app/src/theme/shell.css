@@ -50,6 +50,18 @@
   height: 100%;
 }
 
+/* 抽屉玻璃用强底令牌：抽屉浮在压暗背景罩上，常规 0.55 玻璃底透罩显浑
+  （移动端浅色抽屉视觉复核实证）；桌面侧栏浮在亮画布上，仍用常规底。
+   与 components.css 的 .glass-surface .glass 同优先级，本文件后引入故覆盖生效。 */
+.drawer-glass .glass {
+  background: var(--glass-bg-strong);
+}
+
+/* 降级路径（.glass-fallback 毛玻璃 div）同样用强底，两条路径观感一致。 */
+.glass-fallback.drawer-glass {
+  background: var(--glass-bg-strong);
+}
+
 .sidebar-glass .glass > div,
 .drawer-glass .glass > div {
   width: 100%;
@@ -255,11 +267,13 @@
   z-index: 50;
 }
 
-/* 背景罩：半透明压暗主内容，点击即关闭（AppShell 挂 onClick）。 */
+/* 背景罩：染色压暗主内容，点击即关闭（AppShell 挂 onClick）。浅色主题是松烟墨
+   低透明度染色罩、深色主题是深罩（--scrim-bg 令牌），不再用纯黑——纯黑罩让
+   浅色玻璃抽屉发灰浑浊（移动端视觉复核实证）。 */
 .drawer-backdrop {
   position: absolute;
   inset: 0;
-  background: rgb(0 0 0 / 0.35);
+  background: var(--scrim-bg);
   animation: drawer-backdrop-fade-in 200ms ease-out;
 }
 
