@@ -106,6 +106,11 @@ test("主题：切换深色并跨刷新恢复", async ({ page }) => {
   await page.goto("/");
   await setTheme(page, "theme-dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  // 主题开关不是导航项，移动端点击后抽屉保持打开；截图"深色今日页"前先收起。
+  if (isMobileShell(page)) {
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("nav-drawer")).toHaveCount(0);
+  }
   await screenshot(page, "today-dark");
 
   // 主题选择存设备本地 KV（浏览器底座为 localStorage），刷新后保持。

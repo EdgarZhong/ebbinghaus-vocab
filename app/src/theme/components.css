@@ -529,7 +529,10 @@ div.space-row-select {
   font: inherit;
   font-size: var(--font-size-secondary);
   cursor: pointer;
-  padding: 4px 8px;
+  /* 侧栏 248px 内三等分约 66px/钮："跟随系统"四字在 8px 横向下会折成两行
+     （桌面截图实证）；收窄横向 padding 并禁止折行。 */
+  padding: 4px 4px;
+  white-space: nowrap;
 }
 
 .theme-toggle button:hover {
