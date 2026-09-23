@@ -14,6 +14,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import { expectActiveSpace, navTo, openSpaceManagement } from "./nav.ts";
 
 const screenshotsDir = join(dirname(fileURLToPath(import.meta.url)), "__screenshots__");
 
@@ -180,7 +181,7 @@ test("任务4：根据建议进入首过，完成输入、检查和保存", asyn
   });
 
   // 首过录入页：输入步 → 智能整理在浏览器模式如实降级（未配置提示）→ 改为手动填写。
-  await page.getByTestId("nav-first-pass").click();
+  await navTo(page, "nav-first-pass");
   await expect(page.getByRole("heading", { level: 1, name: "录入条目" })).toBeVisible();
   await page.getByTestId("firstpass-organize").click();
   await expect(page.getByTestId("firstpass-organize-error")).toBeVisible();
@@ -194,7 +195,7 @@ test("任务4：根据建议进入首过，完成输入、检查和保存", asyn
   await expect(page.getByText("录入完成")).toBeVisible();
 
   // 词汇页可查到新条目（录入事实已入库）。
-  await page.getByTestId("nav-vocabulary").click();
+  await navTo(page, "nav-vocabulary");
   await expect(page.getByTestId("vocab-card-serendipity")).toBeVisible();
 });
 
@@ -202,7 +203,7 @@ test("任务5：词汇卡片倒序找词，右侧详情可理解", async ({ page
   await page.goto("/");
   await seedRegularDueEntries(page, 6);
 
-  await page.getByTestId("nav-vocabulary").click();
+  await navTo(page, "nav-vocabulary");
   const list = page.getByTestId("vocabulary-list");
   // 录入倒序：最新在最上（word5 先于 word0）。
   const firstCardY = await list.getByTestId("vocab-card-word5").boundingBox();
@@ -218,18 +219,18 @@ test("任务5：词汇卡片倒序找词，右侧详情可理解", async ({ page
 
 test("任务6：侧边栏箭头进入 Space 管理，创建、切换并返回原页面", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("nav-settings").click();
+  await navTo(page, "nav-settings");
 
-  await page.getByTestId("space-switcher").click();
+  await openSpaceManagement(page);
   await expect(page.getByRole("heading", { level: 1, name: "Space 管理" })).toBeVisible();
   await page.getByTestId("create-space-button").click();
   await page.getByTestId("space-name-input").fill("验收新建");
   await page.getByTestId("space-create-submit").click();
 
   // 切换 Space 后返回进入管理页之前的页面（设置页），上下文立即切换。
-  await page.getByTestId("space-switcher").click();
+  await openSpaceManagement(page);
   await page.getByTestId("space-select-必考词").click();
-  await expect(page.getByTestId("space-switcher")).toContainText("必考词");
+  await expectActiveSpace(page, "必考词");
   await expect(page.getByRole("heading", { level: 1, name: "设置" })).toBeVisible();
   await screenshot(page, "task6-space-switch");
 });
@@ -237,9 +238,9 @@ test("任务6：侧边栏箭头进入 Space 管理，创建、切换并返回原
 test("任务7：重命名、归档、恢复 Space；非空 Space 不能删除", async ({ page }) => {
   await page.goto("/");
   await seedRegularDueEntries(page, 1); // "验收积累"从此为非空 Space
-  await page.getByTestId("space-switcher").click();
+  await openSpaceManagement(page);
   await page.getByTestId("space-select-必考词").click();
-  await page.getByTestId("space-switcher").click();
+  await openSpaceManagement(page);
 
   // 重命名常考词 → 归档 → 已归档折叠区出现。
   await page.getByTestId("space-edit-常考词").click();
@@ -271,11 +272,11 @@ test("任务8：今日看板修改每日目标；设置中修改换日时间", a
   await page.getByTestId("today-save-target").click();
 
   // 持久化验证：设置页的每日目标显示新值。
-  await page.getByTestId("nav-settings").click();
+  await navTo(page, "nav-settings");
   await expect(page.getByTestId("settings-daily-target")).toHaveValue("1");
 
   // 设置页修改换日时间并保存成功。
-  await page.getByTestId("nav-settings").click();
+  await navTo(page, "nav-settings");
   await page.getByTestId("settings-rollover").fill("05:30");
   await page.getByTestId("settings-save").click();
   await expect(page.getByTestId("settings-status")).toHaveText("设置已保存。");

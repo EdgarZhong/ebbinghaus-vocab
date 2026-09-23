@@ -11,6 +11,14 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import {
+  ensureNavVisible,
+  expectActiveSpace,
+  isMobileShell,
+  navTo,
+  openSpaceManagement,
+  setTheme,
+} from "./nav.ts";
 
 const screenshotsDir = join(dirname(fileURLToPath(import.meta.url)), "__screenshots__");
 
@@ -35,10 +43,17 @@ const NAV_PAGES: readonly { navTestId: string; heading: string | RegExp; key: st
 
 test("六个一级页面导航冒烟并输出全窗口截图", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByTestId("space-switcher")).toContainText("必考词");
+  await expectActiveSpace(page, "必考词");
+
+  // 移动端结构：先补一张抽屉打开态截图（本轮重构的签名交互，视觉验收证据）。
+  if (isMobileShell(page)) {
+    await ensureNavVisible(page);
+    await screenshot(page, "nav-drawer");
+    await page.keyboard.press("Escape");
+  }
 
   for (const item of NAV_PAGES) {
-    await page.getByTestId(item.navTestId).click();
+    await navTo(page, item.navTestId);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(item.heading);
     await screenshot(page, item.key);
   }
@@ -47,8 +62,8 @@ test("六个一级页面导航冒烟并输出全窗口截图", async ({ page }) 
 test("Space 管理：创建、切换并返回原页面", async ({ page }) => {
   await page.goto("/");
   // 从设置页进入 Space 管理，验证"返回进入前页面"的语义。
-  await page.getByTestId("nav-settings").click();
-  await page.getByTestId("space-switcher").click();
+  await navTo(page, "nav-settings");
+  await openSpaceManagement(page);
   await expect(page.getByRole("heading", { level: 1, name: "Space 管理" })).toBeVisible();
 
   await page.getByTestId("create-space-button").click();
@@ -58,22 +73,22 @@ test("Space 管理：创建、切换并返回原页面", async ({ page }) => {
 
   // 创建成功后返回设置页，侧边栏与短暂反馈同步更新。
   await expect(page.getByRole("heading", { level: 1, name: "设置" })).toBeVisible();
-  await expect(page.getByTestId("space-switcher")).toContainText("浏览器验收空间");
+  await expectActiveSpace(page, "浏览器验收空间");
   // Toast 会堆叠（产品语义），断言最新一条。
   await expect(page.getByTestId("toast").last()).toContainText("已创建并切换到浏览器验收空间");
 
   // 重新进入 Space 管理页并切换回必考词。
-  await page.getByTestId("space-switcher").click();
+  await openSpaceManagement(page);
   await screenshot(page, "space-management");
   await page.getByTestId("space-select-必考词").click();
   await expect(page.getByRole("heading", { level: 1, name: "设置" })).toBeVisible();
-  await expect(page.getByTestId("space-switcher")).toContainText("必考词");
+  await expectActiveSpace(page, "必考词");
   await expect(page.getByTestId("toast").last()).toContainText("已切换到必考词");
 });
 
 test("设置：修改换日时间并保存成功", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("nav-settings").click();
+  await navTo(page, "nav-settings");
   await expect(page.getByTestId("settings-timezone")).toHaveValue("Asia/Shanghai");
 
   await page.getByTestId("settings-rollover").fill("05:30");
@@ -86,7 +101,7 @@ test("设置：修改换日时间并保存成功", async ({ page }) => {
 
 test("主题：切换深色并跨刷新恢复", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("theme-dark").click();
+  await setTheme(page, "theme-dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await screenshot(page, "today-dark");
 
@@ -225,7 +240,7 @@ test("词汇页：60 词单列卡片倒序与滚动冒烟", async ({ page }) => 
   await seedRegularDueEntries(page, 60);
   // 内存运行时随页面刷新重建：播种后只能客户端导航，不得 reload。
 
-  await page.getByTestId("nav-vocabulary").click();
+  await navTo(page, "nav-vocabulary");
   const list = page.getByTestId("vocabulary-list");
 
   // 最新录入在最上方（同状态内按录入倒序），最旧词条在列表末尾。
