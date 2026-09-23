@@ -47,9 +47,12 @@ export async function navTo(page: Page, navTestId: string): Promise<void> {
 export async function openSpaceManagement(page: Page): Promise<void> {
   if (isMobileShell(page)) {
     await page.getByTestId("topbar-space").click();
-    return;
+  } else {
+    await page.getByTestId("space-switcher").click();
   }
-  await page.getByTestId("space-switcher").click();
+  // 等待路由切换到位：调用方常紧跟截图，点击即返会拍到进入前页面
+  // （space-management 截图曾实测拍到设置页 + 创建 toast 的竞态残影）。
+  await expect(page.getByRole("heading", { level: 1, name: "Space 管理" })).toBeVisible();
 }
 
 /** 断言当前活动 Space 名称：移动端读顶栏胶囊，桌面端读侧栏入口。 */
@@ -62,6 +65,28 @@ export async function expectActiveSpace(page: Page, name: string): Promise<void>
 export async function setTheme(page: Page, themeTestId: string): Promise<void> {
   await ensureNavVisible(page);
   await page.getByTestId(themeTestId).click();
+}
+
+/**
+ * 主题切到深色后，等侧栏玻璃底色完成过渡再截图（截图用例专用）。
+ * liquid-glass-react 给 .glass 内联了 transition: all 0.2s，主题翻转瞬间截图
+ * 会抓到浅色底 → 深色底过渡中途的奶灰（桌面 today-dark 截图在 headless 与
+ * headed 下都实证复现，时快时慢故呈"偶发"）。轮询计算底色直到等于深色令牌；
+ * WebKit 降级路径无过渡，首轮轮询即命中。移动端截图时抽屉已收起、页面无玻璃
+ * 元素，无此竞态。
+ */
+export async function waitDarkGlassSettled(page: Page): Promise<void> {
+  if (isMobileShell(page)) {
+    return;
+  }
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const el = document.querySelector(".sidebar-glass .glass, .sidebar-glass.glass-fallback");
+        return el === null ? null : getComputedStyle(el).backgroundColor;
+      }),
+    )
+    .toBe("rgba(24, 32, 25, 0.55)");
 }
 
 /**

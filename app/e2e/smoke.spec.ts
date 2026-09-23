@@ -19,6 +19,7 @@ import {
   openSpaceManagement,
   setTheme,
   waitAnimationsSettled,
+  waitDarkGlassSettled,
 } from "./nav.ts";
 
 const screenshotsDir = join(dirname(fileURLToPath(import.meta.url)), "__screenshots__");
@@ -111,6 +112,7 @@ test("主题：切换深色并跨刷新恢复", async ({ page }) => {
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("nav-drawer")).toHaveCount(0);
   }
+  await waitDarkGlassSettled(page);
   await screenshot(page, "today-dark");
 
   // 主题选择存设备本地 KV（浏览器底座为 localStorage），刷新后保持。
