@@ -178,7 +178,9 @@ export function SettingsPage(): ReactNode {
             <label className="field-label" htmlFor="settings-rollover">
               新的一天从
             </label>
-            <div className="settings-row">
+            {/* 内联行（输入框 + "开始"）：min-width:0 后 412px 视口可收缩，
+                移动端不随外层设置行竖排（否则"开始"孤立成行，语义断裂）。 */}
+            <div className="settings-row settings-inline-row">
               <input
                 id="settings-rollover"
                 className="field-input"

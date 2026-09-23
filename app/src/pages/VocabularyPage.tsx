@@ -1,19 +1,24 @@
 /**
- * 词汇页（功能完整）：全宽单列 Word 卡片 + 右侧滑出详情 + 查询过滤。
+ * 词汇页（功能完整）：全宽单列 Word 卡片 + 词条详情 + 查询过滤。
  *
  * 交互语义对应界面设计规格第 12 章与需求规格 6.6/6.8：
  * - 默认占满主内容区的单列卡片：未掌握固定排在已掌握前，同一状态内最新录入在
  *   最上方（排序在组合根视图完成）；第二行显示录入日期与当前状态。
- * - 点击整卡从主内容区右侧滑出详情（不新开窗口、不覆盖侧边栏、不改变导航选中）；
- *   详情打开时列表收窄为三行重排；只通过"收起"按钮或 Escape 关闭，点击详情外
- *   其他区域不收起。
+ * - 点击整卡打开详情（不新开窗口、不覆盖侧边栏、不改变导航选中）：桌面端从主
+ *   内容区右侧滑出并排面板（列表收窄为三行重排）；移动端（≤900px）改为底部
+ *   浮动 sheet 毛玻璃覆盖层（第二轮重构：旧版铺满整行会把列表顶出视口）。
+ *   两种形态都只通过"收起"按钮或 Escape 关闭，点击详情外其他区域不收起。
  * - 筛选面板位于标题区下方、列表上方；搜索框输入即实时搜索，同时匹配英文词条
  *   与中文释义，与掌握状态筛选组合生效；筛选与详情完全解耦（被过滤掉才收起）。
  * - 掌握标记与删除词条依赖的应用层用例（手动标记事件、软移除独立用例）尚未
  *   交付（协议枚举待晨审），本页如实不提供对应按钮，不伪造功能。
+ *
+ * 性能与渲染口径（第二轮 React 重构）：卡片提取为 memo 组件（稳定 props）；
+ * 详情可见性在渲染期派生（选中项被过滤掉即渲染期调整，不经 effect 同步）；
+ * 长列表用 content-visibility 跳过屏外渲染（DOM 保持挂载，不用虚拟列表）。
  */
 
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { MasteryStatus } from "@ebbinghaus/domain";
 import type { VocabularyEntryView } from "../services/learningViews.ts";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
@@ -34,6 +39,57 @@ function statusLabel(entry: VocabularyEntryView, nowMs: number): string {
   }
   return "学习中";
 }
+
+/**
+ * 单词卡片（rerender-memo）：60 词长列表中，筛选输入每敲一键都会重渲染整页；
+ * 卡片 props 全部是稳定值（entry 引用来自 useMemo 的 entries、label/录入日期
+ * 是纯字符串、selected 布尔、onSelect 是 useCallback 固定引用），memo 命中后
+ * 未变化的卡片跳过整段子树渲染。
+ */
+const VocabCard = memo(function VocabCard({
+  entry,
+  label,
+  recordedLabel,
+  selected,
+  onSelect,
+}: {
+  readonly entry: VocabularyEntryView;
+  /** 已算好的状态文案（已掌握 / 今天待测试 / 学习中）。 */
+  readonly label: string;
+  /** 已格式化的录入日期前缀（如"3 天前"），不含"录入"后缀。 */
+  readonly recordedLabel: string;
+  readonly selected: boolean;
+  readonly onSelect: (wordId: string) => void;
+}): ReactNode {
+  const mastered = label === "已掌握";
+  return (
+    <button
+      type="button"
+      className={`vocab-card${mastered ? " mastered" : ""}${selected ? " selected" : ""}`}
+      onClick={() => onSelect(entry.wordId)}
+      data-testid={`vocab-card-${entry.originalSpelling}`}
+    >
+      <span className="vocab-card-row">
+        <span className="vocab-card-term">
+          {entry.originalSpelling}
+          {mastered ? (
+            <span className="mastered-check" role="img" aria-label="已掌握">
+              ✓
+            </span>
+          ) : null}
+        </span>
+        <span className="vocab-card-meaning">{entry.manualMeaning}</span>
+        <span className="vocab-card-arrow" aria-hidden="true">
+          ›
+        </span>
+      </span>
+      <span className="vocab-card-row meta">
+        <span>{recordedLabel}录入</span>
+        <span>{label}</span>
+      </span>
+    </button>
+  );
+});
 
 export function VocabularyPage(): ReactNode {
   const services = useServices();
@@ -83,12 +139,14 @@ export function VocabularyPage(): ReactNode {
     });
   }, [entries, query, statusFilter, nowMs]);
 
-  // 详情与筛选解耦：仅当选中词条被过滤掉时才清除选中并收起详情（规格 12.1）。
-  useEffect(() => {
-    if (detailWordId !== null && !filtered.some((entry) => entry.wordId === detailWordId)) {
-      setDetailWordId(null);
-    }
-  }, [filtered, detailWordId]);
+  // 详情与筛选解耦（规格 12.1）：选中词条被过滤掉时详情收起。
+  // rerender-derived-state-no-effect：不做"effect 监听 filtered → 回写 state"的
+  // 同步回路，改为渲染期派生调整——渲染中发现选中项已不在筛选结果内，立即
+  // setState 清空选中；React 会丢弃本次渲染输出、携带新状态立刻重渲染，
+  // 详情不会闪出一帧。语义与原 effect 完全一致（选中永久清除，而非暂隐）。
+  if (detailWordId !== null && !filtered.some((entry) => entry.wordId === detailWordId)) {
+    setDetailWordId(null);
+  }
 
   // Escape 收起详情（规格 12.2）。
   useEffect(() => {
@@ -101,6 +159,12 @@ export function VocabularyPage(): ReactNode {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [detailWordId]);
+
+  // 卡片选中回调：setState 函数引用天然稳定，useCallback 空依赖保证 VocabCard
+  // 的 memo props 不因父级重渲染而失效。
+  const selectCard = useCallback((wordId: string): void => {
+    setDetailWordId(wordId);
+  }, []);
 
   if (activeSpace === null) {
     return (
@@ -124,7 +188,7 @@ export function VocabularyPage(): ReactNode {
           type="button"
           className="btn btn-secondary"
           aria-expanded={filterOpen}
-          onClick={() => setFilterOpen(!filterOpen)}
+          onClick={() => setFilterOpen((open) => !open)}
           data-testid="vocabulary-filter-toggle"
         >
           筛选
@@ -177,38 +241,16 @@ export function VocabularyPage(): ReactNode {
       ) : (
         <div className={`vocab-layout${detailEntry === null ? "" : " with-detail"}`}>
           <div className={`vocab-list${detailEntry === null ? "" : " narrow"}`} data-testid="vocabulary-list">
-            {filtered.map((entry) => {
-              const label = statusLabel(entry, nowMs);
-              const mastered = label === "已掌握";
-              return (
-                <button
-                  type="button"
-                  className={`vocab-card${mastered ? " mastered" : ""}${detailWordId === entry.wordId ? " selected" : ""}`}
-                  key={entry.wordId}
-                  onClick={() => setDetailWordId(entry.wordId)}
-                  data-testid={`vocab-card-${entry.originalSpelling}`}
-                >
-                  <span className="vocab-card-row">
-                    <span className="vocab-card-term">
-                      {entry.originalSpelling}
-                      {mastered ? (
-                        <span className="mastered-check" role="img" aria-label="已掌握">
-                          ✓
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="vocab-card-meaning">{entry.manualMeaning}</span>
-                    <span className="vocab-card-arrow" aria-hidden="true">
-                      ›
-                    </span>
-                  </span>
-                  <span className="vocab-card-row meta">
-                    <span>{formatUserDate(entry.recordedAt, referenceNow)}录入</span>
-                    <span>{label}</span>
-                  </span>
-                </button>
-              );
-            })}
+            {filtered.map((entry) => (
+              <VocabCard
+                key={entry.wordId}
+                entry={entry}
+                label={statusLabel(entry, nowMs)}
+                recordedLabel={formatUserDate(entry.recordedAt, referenceNow)}
+                selected={detailWordId === entry.wordId}
+                onSelect={selectCard}
+              />
+            ))}
           </div>
           {detailEntry === null ? null : (
             <aside className="vocab-detail" data-testid="vocabulary-detail">

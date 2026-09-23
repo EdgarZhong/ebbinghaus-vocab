@@ -15,7 +15,7 @@
  * - 保存成功显示"已录入 {N} 个条目。它们会从明天开始进入测试安排。"
  */
 
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import {
   ConfirmedEntry,
   SpaceEntryConflictError,
@@ -71,6 +71,35 @@ function emptyMeaning(): DraftMeaning {
 /** 新建一个空白条目草稿（自动带一条空义项）。 */
 function emptyEntry(): DraftEntry {
   return { key: nextDraftKey(), term: "", meanings: [emptyMeaning()], error: null };
+}
+
+/**
+ * 把表单草稿构造成应用层确认条目（纯函数）：校验失败时把错误逐条定位回卡片
+ * （nextEntries 携带 error 字段），返回 built=null 表示有错误、不得写入。
+ * 不触碰任何 state——状态回写由调用方（saveEntries）完成，便于测试推演与复査。
+ */
+function buildConfirmedEntries(
+  drafts: readonly DraftEntry[],
+): { nextEntries: DraftEntry[]; built: ConfirmedEntry[] | null } {
+  const built: ConfirmedEntry[] = [];
+  let hasError = false;
+  const nextEntries = drafts.map((entry) => {
+    try {
+      const meanings: StructuredMeaning[] = entry.meanings
+        .filter((meaning) => meaning.definition.trim().length > 0 || meaning.partOfSpeech !== "")
+        .map((meaning) => ({
+          partOfSpeech: meaning.partOfSpeech === "" ? null : meaning.partOfSpeech,
+          definition: meaning.definition.trim(),
+          usage: meaning.usage.trim() === "" ? null : meaning.usage.trim(),
+        }));
+      built.push(new ConfirmedEntry(entry.term.trim(), meanings));
+      return { ...entry, error: null };
+    } catch (cause) {
+      hasError = true;
+      return { ...entry, error: cause instanceof Error ? cause.message : String(cause) };
+    }
+  });
+  return { nextEntries, built: hasError ? null : built };
 }
 
 export function FirstPassPage(): ReactNode {
@@ -140,34 +169,26 @@ export function FirstPassPage(): ReactNode {
     setStep("form");
   };
 
-  /** 把表单草稿构造成应用层确认条目；校验错误逐条定位回卡片。返回 null 表示有错误。 */
-  function buildConfirmedEntries(drafts: readonly DraftEntry[]): ConfirmedEntry[] | null {
-    const built: ConfirmedEntry[] = [];
-    let hasError = false;
-    const nextEntries = drafts.map((entry) => {
-      try {
-        const meanings: StructuredMeaning[] = entry.meanings
-          .filter((meaning) => meaning.definition.trim().length > 0 || meaning.partOfSpeech !== "")
-          .map((meaning) => ({
-            partOfSpeech: meaning.partOfSpeech === "" ? null : meaning.partOfSpeech,
-            definition: meaning.definition.trim(),
-            usage: meaning.usage.trim() === "" ? null : meaning.usage.trim(),
-          }));
-        built.push(new ConfirmedEntry(entry.term.trim(), meanings));
-        return { ...entry, error: null };
-      } catch (cause) {
-        hasError = true;
-        return { ...entry, error: cause instanceof Error ? cause.message : String(cause) };
-      }
-    });
-    setEntries(nextEntries);
-    return hasError ? null : built;
-  }
+  // ---- 草稿编辑回调（rerender-functional-setstate：一律函数式更新，不读闭包旧值） ----
+  // useCallback 空依赖 ⇒ 引用恒定，传给条目卡片不会因父级重渲染造成无效 diff。
+  const updateEntry = useCallback((entryKey: number, updater: (entry: DraftEntry) => DraftEntry): void => {
+    setEntries((current) => current.map((item) => (item.key === entryKey ? updater(item) : item)));
+  }, []);
+
+  const removeEntry = useCallback((entryKey: number): void => {
+    setEntries((current) => current.filter((item) => item.key !== entryKey));
+  }, []);
+
+  const addEntry = useCallback((): void => {
+    setEntries((current) => [...current, emptyEntry()]);
+  }, []);
 
   /** 第二步：保存本次录入（可携带冲突决定），成功后进入完成反馈。 */
   const saveEntries = (resolutions?: readonly WordConflictResolution[]): void => {
     setSaveError(null);
-    const built = buildConfirmedEntries(entries);
+    const { nextEntries, built } = buildConfirmedEntries(entries);
+    // 校验结果（含逐条错误）回写表单；有错误时停在本步，不产生任何写入。
+    setEntries(nextEntries);
     if (built === null) {
       return;
     }
@@ -275,7 +296,7 @@ export function FirstPassPage(): ReactNode {
                 data-testid="firstpass-continue"
               >
                 继续录入
-              </button>{" "}
+              </button>
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -310,161 +331,20 @@ export function FirstPassPage(): ReactNode {
       <div className="firstpass-entry-list" data-testid="firstpass-entry-list">
         {entries.length === 0 ? <p className="field-hint">还没有条目。点击"添加条目"开始填写。</p> : null}
         {entries.map((entry, entryIndex) => (
-          <div className="card entry-card" key={entry.key} data-testid={`firstpass-entry-${entryIndex}`}>
-            <div className="entry-card-header">
-              <label className="field-label" htmlFor={`firstpass-term-${entryIndex}`}>
-                英文单词或短语
-              </label>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setEntries(entries.filter((item) => item.key !== entry.key))}
-                data-testid={`firstpass-remove-${entryIndex}`}
-              >
-                从本次录入移除
-              </button>
-            </div>
-            <input
-              id={`firstpass-term-${entryIndex}`}
-              className="field-input"
-              value={entry.term}
-              onChange={(event) =>
-                setEntries(
-                  entries.map((item) =>
-                    item.key === entry.key ? { ...item, term: event.target.value, error: null } : item,
-                  ),
-                )
-              }
-              data-testid={`firstpass-term-${entryIndex}`}
-            />
-            {entry.error === null ? null : (
-              <p className="field-error" role="alert" data-testid={`firstpass-entry-error-${entryIndex}`}>
-                {entry.error}
-              </p>
-            )}
-            {entry.meanings.map((meaning, meaningIndex) => (
-              <div className="meaning-row" key={meaning.key}>
-                <select
-                  className="field-input meaning-pos"
-                  value={meaning.partOfSpeech}
-                  aria-label={`第 ${meaningIndex + 1} 条义项词性`}
-                  onChange={(event) =>
-                    setEntries(
-                      entries.map((item) =>
-                        item.key === entry.key
-                          ? {
-                              ...item,
-                              meanings: item.meanings.map((itemMeaning) =>
-                                itemMeaning.key === meaning.key
-                                  ? { ...itemMeaning, partOfSpeech: event.target.value as PartOfSpeech | "" }
-                                  : itemMeaning,
-                              ),
-                            }
-                          : item,
-                      ),
-                    )
-                  }
-                  data-testid={`firstpass-pos-${entryIndex}-${meaningIndex}`}
-                >
-                  <option value="">（无词性）</option>
-                  {FORMAL_PARTS_OF_SPEECH.map((pos) => (
-                    <option key={pos} value={pos}>
-                      {pos}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="field-input meaning-definition"
-                  value={meaning.definition}
-                  placeholder="中文释义"
-                  aria-label={`第 ${meaningIndex + 1} 条义项释义`}
-                  onChange={(event) =>
-                    setEntries(
-                      entries.map((item) =>
-                        item.key === entry.key
-                          ? {
-                              ...item,
-                              meanings: item.meanings.map((itemMeaning) =>
-                                itemMeaning.key === meaning.key
-                                  ? { ...itemMeaning, definition: event.target.value }
-                                  : itemMeaning,
-                              ),
-                            }
-                          : item,
-                      ),
-                    )
-                  }
-                  data-testid={`firstpass-def-${entryIndex}-${meaningIndex}`}
-                />
-                <input
-                  className="field-input meaning-usage"
-                  value={meaning.usage}
-                  placeholder="例句/用法（可选）"
-                  aria-label={`第 ${meaningIndex + 1} 条义项用法`}
-                  onChange={(event) =>
-                    setEntries(
-                      entries.map((item) =>
-                        item.key === entry.key
-                          ? {
-                              ...item,
-                              meanings: item.meanings.map((itemMeaning) =>
-                                itemMeaning.key === meaning.key
-                                  ? { ...itemMeaning, usage: event.target.value }
-                                  : itemMeaning,
-                              ),
-                            }
-                          : item,
-                      ),
-                    )
-                  }
-                  data-testid={`firstpass-usage-${entryIndex}-${meaningIndex}`}
-                />
-                {entry.meanings.length > 1 ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    aria-label={`删除第 ${meaningIndex + 1} 条义项`}
-                    onClick={() =>
-                      setEntries(
-                        entries.map((item) =>
-                          item.key === entry.key
-                            ? {
-                                ...item,
-                                meanings: item.meanings.filter((itemMeaning) => itemMeaning.key !== meaning.key),
-                              }
-                            : item,
-                        ),
-                      )
-                    }
-                    data-testid={`firstpass-remove-meaning-${entryIndex}-${meaningIndex}`}
-                  >
-                    删除义项
-                  </button>
-                ) : null}
-              </div>
-            ))}
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() =>
-                setEntries(
-                  entries.map((item) =>
-                    item.key === entry.key ? { ...item, meanings: [...item.meanings, emptyMeaning()] } : item,
-                  ),
-                )
-              }
-              data-testid={`firstpass-add-meaning-${entryIndex}`}
-            >
-              新增义项
-            </button>
-          </div>
+          <EntryCard
+            key={entry.key}
+            entry={entry}
+            entryIndex={entryIndex}
+            onUpdateEntry={updateEntry}
+            onRemoveEntry={removeEntry}
+          />
         ))}
       </div>
       <div className="modal-actions">
         <button
           type="button"
           className="btn btn-secondary"
-          onClick={() => setEntries([...entries, emptyEntry()])}
+          onClick={addEntry}
           data-testid="firstpass-add-entry"
         >
           + 添加条目
@@ -526,5 +406,161 @@ export function FirstPassPage(): ReactNode {
         </Modal>
       )}
     </PageShell>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// 条目卡片与义项行（第二步表单）
+//
+// 提取为模块级组件的理由（rerender-no-inline-components 的反面应用）：原实现把
+// 整卡 JSX 内联在 entries.map 里，每条义项的更新都要在三层嵌套 map 闭包里定位
+// entry.key + meaning.key，可读性差且每个字段都重复同一段"找到并替换"逻辑。
+// 提取后更新语义收口在 onUpdateEntry 的函数式 updater 中；组件不在渲染期定义，
+// 不会因父组件重渲染而卸载重建（草稿焦点得以保留）。
+// ---------------------------------------------------------------------------
+
+interface EntryCardProps {
+  readonly entry: DraftEntry;
+  /** 展示序号（仅用于 testid 与 label 关联，与草稿 key 解耦）。 */
+  readonly entryIndex: number;
+  /** 函数式更新指定条目（FirstPassPage 中 useCallback 固定引用）。 */
+  readonly onUpdateEntry: (entryKey: number, updater: (entry: DraftEntry) => DraftEntry) => void;
+  readonly onRemoveEntry: (entryKey: number) => void;
+}
+
+function EntryCard({ entry, entryIndex, onUpdateEntry, onRemoveEntry }: EntryCardProps): ReactNode {
+  /** 本条目的函数式更新快捷入口。 */
+  const update = (updater: (entry: DraftEntry) => DraftEntry): void => {
+    onUpdateEntry(entry.key, updater);
+  };
+  return (
+    <div className="card entry-card" data-testid={`firstpass-entry-${entryIndex}`}>
+      <div className="entry-card-header">
+        <label className="field-label" htmlFor={`firstpass-term-${entryIndex}`}>
+          英文单词或短语
+        </label>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => onRemoveEntry(entry.key)}
+          data-testid={`firstpass-remove-${entryIndex}`}
+        >
+          从本次录入移除
+        </button>
+      </div>
+      <input
+        id={`firstpass-term-${entryIndex}`}
+        className="field-input"
+        value={entry.term}
+        onChange={(event) => update((item) => ({ ...item, term: event.target.value, error: null }))}
+        data-testid={`firstpass-term-${entryIndex}`}
+      />
+      {entry.error === null ? null : (
+        <p className="field-error" role="alert" data-testid={`firstpass-entry-error-${entryIndex}`}>
+          {entry.error}
+        </p>
+      )}
+      {entry.meanings.map((meaning, meaningIndex) => (
+        <MeaningRow
+          key={meaning.key}
+          entryKey={entry.key}
+          entryIndex={entryIndex}
+          meaning={meaning}
+          meaningIndex={meaningIndex}
+          allowRemove={entry.meanings.length > 1}
+          onUpdateEntry={onUpdateEntry}
+        />
+      ))}
+      <button
+        type="button"
+        className="btn btn-secondary"
+        onClick={() => update((item) => ({ ...item, meanings: [...item.meanings, emptyMeaning()] }))}
+        data-testid={`firstpass-add-meaning-${entryIndex}`}
+      >
+        新增义项
+      </button>
+    </div>
+  );
+}
+
+interface MeaningRowProps {
+  readonly entryKey: number;
+  readonly entryIndex: number;
+  readonly meaning: DraftMeaning;
+  readonly meaningIndex: number;
+  /** 最后一条义项不允许删除（条目至少保留一条义项表达位）。 */
+  readonly allowRemove: boolean;
+  readonly onUpdateEntry: (entryKey: number, updater: (entry: DraftEntry) => DraftEntry) => void;
+}
+
+function MeaningRow({
+  entryKey,
+  entryIndex,
+  meaning,
+  meaningIndex,
+  allowRemove,
+  onUpdateEntry,
+}: MeaningRowProps): ReactNode {
+  /** 义项字段更新：经条目的函数式 updater 只替换目标义项，其余义项原样保留。 */
+  const updateMeaning = (updater: (meaning: DraftMeaning) => DraftMeaning): void => {
+    onUpdateEntry(entryKey, (item) => ({
+      ...item,
+      meanings: item.meanings.map((itemMeaning) =>
+        itemMeaning.key === meaning.key ? updater(itemMeaning) : itemMeaning,
+      ),
+    }));
+  };
+  return (
+    <div className="meaning-row">
+      <select
+        className="field-input meaning-pos"
+        value={meaning.partOfSpeech}
+        aria-label={`第 ${meaningIndex + 1} 条义项词性`}
+        onChange={(event) =>
+          updateMeaning((itemMeaning) => ({ ...itemMeaning, partOfSpeech: event.target.value as PartOfSpeech | "" }))
+        }
+        data-testid={`firstpass-pos-${entryIndex}-${meaningIndex}`}
+      >
+        <option value="">（无词性）</option>
+        {FORMAL_PARTS_OF_SPEECH.map((pos) => (
+          <option key={pos} value={pos}>
+            {pos}
+          </option>
+        ))}
+      </select>
+      <input
+        className="field-input meaning-definition"
+        value={meaning.definition}
+        placeholder="中文释义"
+        aria-label={`第 ${meaningIndex + 1} 条义项释义`}
+        onChange={(event) => updateMeaning((itemMeaning) => ({ ...itemMeaning, definition: event.target.value }))}
+        data-testid={`firstpass-def-${entryIndex}-${meaningIndex}`}
+      />
+      <input
+        className="field-input meaning-usage"
+        value={meaning.usage}
+        placeholder="例句/用法（可选）"
+        aria-label={`第 ${meaningIndex + 1} 条义项用法`}
+        onChange={(event) => updateMeaning((itemMeaning) => ({ ...itemMeaning, usage: event.target.value }))}
+        data-testid={`firstpass-usage-${entryIndex}-${meaningIndex}`}
+      />
+      {allowRemove ? (
+        <button
+          type="button"
+          className="btn btn-secondary"
+          aria-label={`删除第 ${meaningIndex + 1} 条义项`}
+          onClick={() =>
+            onUpdateEntry(entryKey, (item) => ({
+              ...item,
+              meanings: item.meanings.filter((itemMeaning) => itemMeaning.key !== meaning.key),
+            }))
+          }
+          data-testid={`firstpass-remove-meaning-${entryIndex}-${meaningIndex}`}
+        >
+          删除义项
+        </button>
+      ) : null}
+    </div>
   );
 }

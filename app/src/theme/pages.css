@@ -5,7 +5,10 @@
  * 词典衬线族，中文自动回退，业务文案不受影响。
  */
 
-/* 今日页：下一步卡片（页面唯一视觉最强操作区）。 */
+/* 今日页：下一步卡片（页面唯一视觉最强操作区）。
+   签名处理：这张卡片回答"我现在先做什么"——加大留白（--block-gap 内边距）、
+   标题升一档字号、左侧 4px 松绿强调条 + 大圆角，与下方常规列表拉开层级；
+   材质仍是 surface（页面主体不用玻璃，玻璃只留给浮动层）。 */
 .next-step-card {
   display: flex;
   align-items: center;
@@ -13,24 +16,37 @@
   gap: var(--group-gap);
   flex-wrap: wrap;
   border-left: 4px solid var(--color-accent);
+  border-radius: var(--radius-xlarge);
+  padding: var(--block-gap);
 }
 
 .next-step-main {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 240px;
+  flex: 1;
 }
 
 .next-step-title {
-  font-size: var(--font-size-section);
-  font-weight: 600;
+  /* 比小节标题大 4px：页面内仅次于主标题的层级。 */
+  font-size: calc(var(--font-size-section) + 4px);
+  font-weight: 700;
   margin: 0;
+  line-height: 1.35;
 }
 
 .next-step-description {
   margin: 0;
   color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+/* 窄屏：主操作全宽（拇指可达），卡片纵向堆叠不横向挤压。 */
+@media (max-width: 560px) {
+  .next-step-card .btn-primary {
+    width: 100%;
+  }
 }
 
 /* 今日页：学习顺序行。 */
@@ -56,6 +72,24 @@
 .order-row-meta {
   flex: 1;
   color: var(--color-text-secondary);
+}
+
+/* 学习顺序的签名处理：衬线大号半透明序号（01/02/03）由 CSS 计数器生成——
+   装饰伪元素不进 DOM、不影响文案断言，把"顺序"语义从纯文字升为视觉节奏。 */
+.order-list {
+  counter-reset: order-step;
+}
+
+.order-list .order-row::before {
+  counter-increment: order-step;
+  content: counter(order-step, decimal-leading-zero);
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-section);
+  font-weight: 700;
+  color: var(--color-accent);
+  opacity: 0.5;
+  min-width: 32px;
+  text-align: center;
 }
 
 /* 任务行（测试列表 / 复习列表共用）。 */
@@ -130,6 +164,8 @@
 }
 
 .word-hint-term {
+  /* 复习清单的词条同样是词典条目身份：与词卡、详情标题同一衬线族。 */
+  font-family: var(--font-family-display);
   font-size: var(--font-size-item);
   font-weight: 600;
 }
@@ -164,7 +200,8 @@
   flex-direction: column;
   gap: var(--group-gap);
   align-items: center;
-  padding: var(--block-gap) 0;
+  /* 上方加倍留白：大字词条是会话的视觉中心，需要呼吸感。 */
+  padding: calc(var(--block-gap) * 2) 0 var(--block-gap);
 }
 
 .test-session-remaining {
@@ -174,10 +211,13 @@
 }
 
 .test-session-word {
-  /* 测试大字画是词条身份的最强展示位，用词典衬线族（中文回退不受影响）。 */
+  /* 测试大字画是词条身份的最强展示位，用词典衬线族（中文回退不受影响）。
+     字号 clamp：32px 保底可读、9vw 随视口缩放、48px 桌面仪式感——修复移动端
+     412px 视口下固定 40px 长词折行挤压的实证缺陷。 */
   font-family: var(--font-family-display);
-  font-size: 40px;
+  font-size: clamp(32px, 9vw, 48px);
   font-weight: 700;
+  letter-spacing: 0.01em;
   margin: 0;
   text-align: center;
   overflow-wrap: anywhere;
@@ -196,8 +236,8 @@
   max-width: 560px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-medium);
-  padding: 16px;
+  border-radius: var(--radius-large);
+  padding: var(--group-gap);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -216,6 +256,22 @@
   justify-content: center;
 }
 
+/* 窄屏（缺陷 3 实证）：会话操作改竖排全宽——认识/不认识两枚 44px+ 按钮并排
+   在 412px 视口会被文案撑出横向溢出；竖排后拇指可达且不裁切。 */
+@media (max-width: 560px) {
+  .test-session-actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  /* "暂停并返回"与主操作同宽同列，视觉节奏一致。 */
+  .test-session-body > .btn {
+    align-self: stretch;
+  }
+}
+
 .test-completed {
   display: flex;
   flex-direction: column;
@@ -232,8 +288,10 @@
 
 .firstpass-steps {
   margin: 0;
-  font-size: var(--font-size-item);
+  font-size: var(--font-size-body);
   font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
 }
 
 .firstpass-entry-list {
@@ -278,12 +336,36 @@
   min-width: 180px;
 }
 
+/* 窄屏：义项行改纵向堆叠、控件全宽——412px 视口下"词性+释义+用法"三栏
+   横排必然折行错位，竖排是录入表单的移动形态惯例。 */
+@media (max-width: 560px) {
+  .meaning-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .meaning-pos,
+  .meaning-definition,
+  .meaning-usage {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+  }
+}
+
+/* 保存条：浮动吸附的 CSS 毛玻璃条。不用 Glass 原语的原因：Glass 的契约是
+   "已定位祖先内绝对居中"，而保存条是文档流内 sticky 吸附——流内浮动层用
+   与玻璃降级路径同语言的毛玻璃令牌即可。bottom:12px 让条浮起，不贴底边。 */
 .firstpass-save-bar {
   position: sticky;
-  bottom: 0;
-  padding: 12px 0;
-  background: var(--color-canvas);
-  border-top: 1px solid var(--color-border);
+  bottom: 12px;
+  padding: 12px 16px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xlarge);
+  box-shadow: var(--glass-shadow);
   display: flex;
   justify-content: flex-end;
 }
@@ -333,6 +415,12 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* 60 词长列表性能（缺陷 4）：屏外卡片跳过渲染内部工作，DOM 保持挂载——
+     浏览器验收依赖"滚动前卡片已 attached"的断言，故禁用 JS 虚拟列表方案；
+     contain-intrinsic-size 的 76px ≈ 两行卡片实测高度，auto 让浏览器记住
+     已渲染真实高度，滚动条长度稳定不跳动。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 76px;
 }
 
 .vocab-card:hover {
@@ -381,18 +469,21 @@
   white-space: nowrap;
 }
 
-/* 详情打开后列表收窄：每卡重排为三行（英文 / 释义 / 位置与状态，规格 12.2）。 */
-.vocab-list.narrow .vocab-card-row {
-  flex-wrap: wrap;
-}
+/* 详情打开后列表收窄：每卡重排为三行（英文 / 释义 / 位置与状态，规格 12.2）。
+   仅桌面端生效——移动端详情是底部浮动 sheet，列表保持全宽卡片形态。 */
+@media (min-width: 901px) {
+  .vocab-list.narrow .vocab-card-row {
+    flex-wrap: wrap;
+  }
 
-.vocab-list.narrow .vocab-card-meaning,
-.vocab-list.narrow .vocab-card-arrow {
-  display: none;
-}
+  .vocab-list.narrow .vocab-card-meaning,
+  .vocab-list.narrow .vocab-card-arrow {
+    display: none;
+  }
 
-.vocab-list.narrow .vocab-card-row.meta {
-  display: flex;
+  .vocab-list.narrow .vocab-card-row.meta {
+    display: flex;
+  }
 }
 
 .vocab-card-arrow {
@@ -417,13 +508,24 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-large);
-  padding: 16px;
+  padding: var(--group-gap);
   box-shadow: var(--shadow-card);
   animation: vocab-detail-in 160ms ease-out;
   display: flex;
   flex-direction: column;
   gap: var(--group-gap);
   min-width: 0;
+}
+
+/* 桌面端：详情吸附在列表旁（sticky），长列表滚动时详情保持可见；
+   超高内容在详情内部滚动，不撑破页面。 */
+@media (min-width: 901px) {
+  .vocab-detail {
+    position: sticky;
+    top: var(--page-margin);
+    max-height: calc(100vh - 2 * var(--page-margin));
+    overflow-y: auto;
+  }
 }
 
 @keyframes vocab-detail-in {
@@ -434,6 +536,24 @@
   to {
     transform: translateX(0);
     opacity: 1;
+  }
+}
+
+@keyframes vocab-detail-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* 减少动态效果偏好：详情面板直接出现（与抽屉、toast 同口径）。 */
+@media (prefers-reduced-motion: reduce) {
+  .vocab-detail {
+    animation: none;
   }
 }
 
@@ -503,9 +623,37 @@
   flex: 1;
 }
 
-/* 窄视口：详情改为铺满整行，避免横向滚动（规格 11.5 表单画布约束同理）。 */
+/* 窄视口（≤900px，与外壳断点同口径）：列表保持单列全宽。
+   词条详情改底部浮动 sheet（缺陷 2 实证：旧版"铺满整行"把列表顶出视口，
+   412px 下详情与列表互相挤占不可读）。sheet 用 CSS 毛玻璃（浮动层签名语言），
+   四周 12px 外边距与抽屉同源；不设背景罩——规格 12.2 明确"点击详情外其他
+   区域不收起"，只经"收起"按钮或 Escape 关闭。 */
 @media (max-width: 900px) {
   .vocab-layout.with-detail {
     grid-template-columns: minmax(0, 1fr);
+    /* sheet 最大占 72dvh：容器底部留出同高等量留白，保证滚动到底时最后一张
+       卡片一定能完全滚出 sheet 遮挡区（sheet 无背景罩，列表全程可滚动）。 */
+    padding-bottom: calc(72vh + 12px);
+    padding-bottom: calc(72dvh + 12px);
+  }
+
+  .vocab-detail {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    /* 低于对话框(40)/抽屉(50)/toast(60)；高于页面内容即可。 */
+    z-index: 30;
+    /* dvh 前留 vh 回退：旧 WebKit 不识 dvh 时仍有可用高度上限。 */
+    max-height: 72vh;
+    max-height: 72dvh;
+    overflow-y: auto;
+    border-radius: var(--radius-xlarge);
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(20px) saturate(1.2);
+    backdrop-filter: blur(20px) saturate(1.2);
+    border-color: var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    animation: vocab-detail-sheet-in 200ms ease-out;
   }
 }

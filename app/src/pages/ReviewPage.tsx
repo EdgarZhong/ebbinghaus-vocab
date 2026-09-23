@@ -112,7 +112,7 @@ function BookReviewView({ tasks }: { tasks: readonly BookReviewTaskView[] }): Re
                     type="button"
                     className="btn btn-secondary"
                     aria-expanded={expanded}
-                    onClick={() => setExpandedId(expanded ? null : view.taskId)}
+                    onClick={() => setExpandedId((current) => (current === view.taskId ? null : view.taskId))}
                     data-testid={`review-expand-${view.title}`}
                   >
                     {expanded ? "收起词清单" : `查看这 ${view.words.length} 个词`}
@@ -183,7 +183,7 @@ function RegularReviewView({ groups }: { groups: readonly RegularReviewGroupView
                     type="button"
                     className="btn btn-secondary"
                     aria-expanded={expanded}
-                    onClick={() => setExpandedId(expanded ? null : group.ordinal)}
+                    onClick={() => setExpandedId((current) => (current === group.ordinal ? null : group.ordinal))}
                     data-testid={`review-group-expand-${group.ordinal}`}
                   >
                     {expanded ? "收起" : `查看这 ${group.testedCount} 个条目`}

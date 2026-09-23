@@ -232,7 +232,8 @@ export function TodayPage(): ReactNode {
 
       <section className="card section" aria-label="今天的学习顺序">
         <h2 className="card-section-title">{isRegularMode ? "今天的学习" : "今天的学习顺序"}</h2>
-        <div className="row-list">
+        {/* order-list：序号由 CSS 计数器以装饰伪元素生成（pages.css），DOM 与文案不变。 */}
+        <div className="row-list order-list">
           <div className="order-row" data-testid="today-order-test">
             <span className="order-row-name">测试</span>
             <span className="order-row-meta">

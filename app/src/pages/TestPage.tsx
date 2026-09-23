@@ -35,20 +35,32 @@ export function TestPage(): ReactNode {
   const activeSpace = useActiveSpace();
   const version = useSyncExternalStore(services.subscribeChanged, services.getVersion, services.getVersion);
 
-  // 切换 Space 时退出会话视图：会话属于 Space 上下文，跨 Space 继续是错误语义。
-  useEffect(() => {
-    setSession(null);
-    setRevealed(null);
-    setTaskError(null);
-  }, [activeSpace?.id]);
-
-  // 离开会话视图时无需清理：暂停是显式动作，直接关闭页面保留进行中的会话
-  //（会话是设备本地执行状态，下次进入经任务行"继续测试"恢复）。
-
-  const [session, setSession] = useState<TestSessionSnapshot | null>(null);
+  // 会话快照携带开启时的 Space id（rerender-derived-state-no-effect）：
+  // 切换 Space 后旧会话经渲染期派生直接不可见（会话属于 Space 上下文，跨 Space
+  // 继续是错误语义），无需"effect 监听 activeSpace → 清空 state"的同步回路。
+  const [sessionState, setSessionState] = useState<{
+    readonly spaceId: string;
+    readonly snapshot: TestSessionSnapshot;
+  } | null>(null);
   const [revealed, setRevealed] = useState<TestJudgementType | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [bookHint, setBookHint] = useState<string | null>(null);
+
+  /** 仅当会话属于当前活动 Space 时才进入会话视图；否则等价于无会话。 */
+  const session =
+    sessionState !== null && sessionState.spaceId === activeSpace?.id ? sessionState.snapshot : null;
+
+  // 列表态的行内提示属于旧 Space 的上下文：渲染期检测 Space 变化即清空
+  //（React 官方"渲染中调整状态"模式：丢弃本次输出立刻重渲染，不闪旧提示）。
+  const [prevSpaceId, setPrevSpaceId] = useState(activeSpace?.id);
+  if (activeSpace?.id !== prevSpaceId) {
+    setPrevSpaceId(activeSpace?.id);
+    setTaskError(null);
+    setBookHint(null);
+  }
+
+  // 离开会话视图时无需清理：暂停是显式动作，直接关闭页面保留进行中的会话
+  //（会话是设备本地执行状态，下次进入经任务行"继续测试"恢复）。
 
   const tasksPage = useMemo(() => {
     if (activeSpace === null) {
@@ -65,14 +77,23 @@ export function TestPage(): ReactNode {
   const startTask = (task: TaskItemSnapshot): void => {
     setTaskError(null);
     setBookHint(null);
+    if (activeSpace === null) {
+      return;
+    }
     try {
       const snapshot = services.regularLearning.startOrResumeRegularTest({ taskId: task.taskId });
-      setSession(snapshot);
+      setSessionState({ spaceId: activeSpace.id, snapshot });
       setRevealed(null);
     } catch (cause) {
       // 常规模式任务开始失败（如该组已无到期条目）就地展示原因。
       setTaskError(cause instanceof Error ? cause.message : String(cause));
     }
+  };
+
+  /** 退出会话视图（完成返回 / 暂停）：清空本地会话状态，会话实体保留在运行时。 */
+  const exitSession = (): void => {
+    setSessionState(null);
+    setRevealed(null);
   };
 
   if (activeSpace === null || tasksPage === null) {
@@ -110,10 +131,7 @@ export function TestPage(): ReactNode {
                 type="button"
                 className="btn btn-primary"
                 data-testid="test-continue-next-group"
-                onClick={() => {
-                  setSession(null);
-                  setRevealed(null);
-                }}
+                onClick={exitSession}
               >
                 继续下一组
               </button>
@@ -130,10 +148,7 @@ export function TestPage(): ReactNode {
               type="button"
               className="btn btn-secondary"
               data-testid="test-back-to-list"
-              onClick={() => {
-                setSession(null);
-                setRevealed(null);
-              }}
+              onClick={exitSession}
             >
               返回测试
             </button>
@@ -149,13 +164,12 @@ export function TestPage(): ReactNode {
       <RegularSessionView
         view={{ snapshot: session, revealed }}
         onChange={(next) => {
-          setSession(next.snapshot);
+          // 函数式更新（rerender-functional-setstate）：保留会话的 Space 归属标签，
+          // 只推进快照；会话已被并发清空时（理论不可达）不复活。
+          setSessionState((current) => (current === null ? null : { ...current, snapshot: next.snapshot }));
           setRevealed(next.revealed);
         }}
-        onExit={() => {
-          setSession(null);
-          setRevealed(null);
-        }}
+        onExit={exitSession}
       />
     );
   }

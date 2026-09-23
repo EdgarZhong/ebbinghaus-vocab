@@ -16,7 +16,8 @@ export function EmptyState({ title, description, action }: EmptyStateProps): Rea
     <div className="card empty-state" data-testid="empty-state">
       <p className="empty-state-title">{title}</p>
       <p className="empty-state-description">{description}</p>
-      {action === undefined ? null : <div style={{ marginTop: 8 }}>{action}</div>}
+      {/* 动作区用类而非内联样式：表现全部收口在 components.css，主题一致可复査。 */}
+      {action === undefined ? null : <div className="empty-state-action">{action}</div>}
     </div>
   );
 }

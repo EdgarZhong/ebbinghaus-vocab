@@ -139,6 +139,9 @@
   font: inherit;
   font-size: var(--font-size-body);
   width: 100%;
+  /* flex 行内的输入框默认 min-width:auto（内容最小宽）会顶住容器造成横向
+     溢出（412px 设置页实证缺陷的结构性根因之一）；归零允许收缩换行。 */
+  min-width: 0;
 }
 
 .field-input:hover {
@@ -381,15 +384,30 @@ div.space-row-select {
   color: var(--color-text-secondary);
   margin: 0;
   font-size: var(--font-size-body);
+  max-width: 52ch;
+  line-height: 1.7;
+}
+
+/* 空状态动作区：与说明文字拉开一拍，多按钮时允许换行居中。 */
+.empty-state-action {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 /* ---------------------------------------------------------------------------
-   对话框（创建/编辑/确认）
+   对话框（创建/编辑/确认）：浮动玻璃层。结构 = 整屏压暗背板（Glass 的已定位
+   祖先）→ Glass 居中 → .modal 内容列；表面材质（底色/描边/圆角/投影）由
+   玻璃提供，.modal 自身不再画背景，只负责尺寸约束与内容排布。
    --------------------------------------------------------------------------- */
 .modal-backdrop {
   position: fixed;
   inset: 0;
   background: rgb(0 0 0 / 0.4);
+  /* flex 居中服务降级路径（.glass-fallback 是文档流 div）；正常路径的玻璃由
+     库的锚点居中模型自行居中，二者结果一致。 */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -397,14 +415,19 @@ div.space-row-select {
   z-index: 40;
 }
 
-.modal {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-large);
-  box-shadow: var(--shadow-overlay);
-  width: 440px;
+/* 玻璃容器（正常路径落在库容器、降级路径落在 .glass-fallback）：内容超出
+   窄视口时允许玻璃自身收敛，宽度实际由 .modal 的 min() 决定。 */
+.modal-glass {
   max-width: 100%;
+}
+
+.modal {
+  /* 宽度自定（玻璃包裹内容，尺寸由内容决定）；440px 是规格对话框宽，
+     窄视口让位于视口宽 - 背板双侧 padding（24px × 2）。 */
+  width: min(440px, calc(100vw - 48px));
+  /* dvh 回退链：移动浏览器地址栏伸缩时对话框不被裁切。 */
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
   padding: var(--group-gap);
   display: flex;
@@ -451,14 +474,40 @@ div.space-row-select {
   pointer-events: none;
 }
 
+/* toast 是浮动层：与 Glass 降级路径同语言的 CSS 毛玻璃（不用 Glass 原语的
+   原因见 ToastContext.tsx 文件头）。文字用正文色——旧版反色深底在森系浅画布
+   上过重，毛玻璃与顶栏/保存条同属一套浮动层语言。 */
 .toast {
-  background: var(--color-text);
-  color: var(--color-canvas);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xlarge);
+  box-shadow: var(--glass-shadow);
+  color: var(--color-text);
   padding: 10px 16px;
-  border-radius: var(--radius-medium);
   font-size: var(--font-size-body);
-  box-shadow: var(--shadow-overlay);
   max-width: min(480px, calc(100vw - 48px));
+  animation: toast-in 180ms ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* 减少动态效果偏好：toast 直接出现（可访问性硬要求，与抽屉同口径）。 */
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
 }
 
 /* 主题切换分段控件 */
@@ -511,6 +560,26 @@ div.space-row-select {
   min-width: 220px;
 }
 
+/* 手机视口（缺陷 1 实证：412px 设置页横向溢出被截断）：设置行纵向堆叠、
+   字段全宽、min-width 归零——从结构上保证任何控件都不超出视口宽度。
+   今日页每日目标行复用本类，同样受益。 */
+@media (max-width: 560px) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-row .field {
+    min-width: 0;
+  }
+
+  /* 内联行（换日时间输入 + "开始"后缀）保持横排收缩，不随外层竖排。 */
+  .settings-row.settings-inline-row {
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
 .api-key-row {
   display: flex;
   align-items: center;
@@ -529,6 +598,9 @@ div.space-row-select {
   border: 1px dashed var(--color-border-strong);
   border-radius: var(--radius-medium);
   background: var(--color-canvas);
+  /* 脱敏密钥可能很长：允许任意位置折行 + 收缩，窄屏不溢出。 */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* 窄屏（手机视口）：Space 行改为两行布局——选择区整行、操作按钮次行。
