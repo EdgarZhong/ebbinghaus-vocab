@@ -54,8 +54,10 @@ export function VocabularyPage(): ReactNode {
   }, [services, version, activeSpace]);
 
   const isRegularMode = activeSpace?.learningMode === "常规模式";
-  // "今天待测试"按浏览器当前时刻判断到期（仅筛选用途；不显示任何时刻原文）。
-  const nowMs = useMemo(() => Date.now(), [version]);
+  // "今天待测试"到期判断与"录入日期"同年判断统一使用组合根注入时钟（测试为固定
+  // 时钟），禁止直读系统时间；version 变化时重取，保证事件写入后状态即时刷新。
+  const referenceNow = useMemo(() => services.clock.now(), [services, version]);
+  const nowMs = referenceNow.getTime();
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -201,7 +203,7 @@ export function VocabularyPage(): ReactNode {
                     </span>
                   </span>
                   <span className="vocab-card-row meta">
-                    <span>{formatUserDate(entry.recordedAt)}录入</span>
+                    <span>{formatUserDate(entry.recordedAt, referenceNow)}录入</span>
                     <span>{label}</span>
                   </span>
                 </button>
@@ -230,7 +232,7 @@ export function VocabularyPage(): ReactNode {
                 </button>
               </div>
               <p className="vocab-detail-meta" data-testid="vocabulary-detail-meta">
-                {formatUserDate(detailEntry.recordedAt)}录入 · {statusLabel(detailEntry, nowMs)}
+                {formatUserDate(detailEntry.recordedAt, referenceNow)}录入 · {statusLabel(detailEntry, nowMs)}
               </p>
               <section className="vocab-detail-section">
                 <h3 className="card-section-title">你的释义</h3>
@@ -249,7 +251,7 @@ export function VocabularyPage(): ReactNode {
                     ? "还没有测试记录。"
                     : `最近一次测试：${detailEntry.lastJudgement}。`}
                   {detailEntry.nextDueAt !== null
-                    ? ` 下次测试：${formatUserDate(detailEntry.nextDueAt)}。`
+                    ? ` 下次测试：${formatUserDate(detailEntry.nextDueAt, referenceNow)}。`
                     : null}
                 </p>
               </section>

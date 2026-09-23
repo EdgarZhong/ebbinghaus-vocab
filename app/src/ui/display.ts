@@ -5,14 +5,17 @@
  * 内部信息不得上屏；本模块是唯一的翻译点，禁止在页面里散落映射规则。
  */
 
-/** 用户可读日期：本年显示"9月18日"，跨年显示"2025年12月30日"。 */
-export function formatUserDate(iso: string): string {
+/**
+ * 用户可读日期：与本年（相对参考时刻）显示"9月18日"，跨年显示"2025年12月30日"。
+ * referenceNow 必须来自组合根注入时钟（services.clock.now()），禁止在展示层
+ * 直读系统时间——否则界面文案随真实日期漂移，固定时钟测试随之失效。
+ */
+export function formatUserDate(iso: string, referenceNow: Date): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
     return "";
   }
-  const now = new Date();
-  const sameYear = date.getFullYear() === now.getFullYear();
+  const sameYear = date.getFullYear() === referenceNow.getFullYear();
   const monthDay = `${date.getMonth() + 1}月${date.getDate()}日`;
   return sameYear ? monthDay : `${date.getFullYear()}年${monthDay}`;
 }

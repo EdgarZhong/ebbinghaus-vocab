@@ -121,6 +121,12 @@ export interface AppServices {
   readonly llm: LlmConfigurationService;
   /** 设备本地 KV（主题选择等纯界面偏好）。 */
   readonly deviceLocal: DeviceLocalStore;
+  /**
+   * 组合根注入的统一时钟（生产为系统时钟，测试为确定性时钟）。
+   * 界面一切"今天/到期/同年"判断必须经此取时，禁止散落 `new Date()`/`Date.now()`
+   * （2026-09-23 审计实锤：直读系统时钟会让界面随真实日期漂移并炸毁固定时钟测试）。
+   */
+  readonly clock: Clock;
   /** 内存运行时（供测试断言与后续同步引擎接线；界面组件不得直接使用）。 */
   readonly runtime: InMemoryRuntime;
   /** 常规模式学习用例：录入、到期分组、测试会话与朗读分组（UI-2 接线）。 */
@@ -307,6 +313,7 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     spaces,
     llm,
     deviceLocal,
+    clock,
     runtime,
     regularLearning,
     scheduling,

@@ -135,7 +135,7 @@ export function TodayPage(): ReactNode {
   const nextReview = reviewTasks[0];
   const noSample = snapshot.recentActualSampleCount === 0;
 
-  const todayTitle = formatTodayTitle(services.settings.getLearningScheduleSettings().timezoneName, new Date());
+  const todayTitle = formatTodayTitle(services.settings.getLearningScheduleSettings().timezoneName, services.clock.now());
 
   return (
     <PageShell
