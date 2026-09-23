@@ -52,19 +52,19 @@
 - [x] R2-0a 审计取证：typecheck 干净；Vitest 492/493（词汇页时钟泄漏实锤）；Playwright 56/56 属实；移动端截图复核确认不可用（侧栏占半屏、设置页横向溢出、测试大词折行）；词书模式缺口确认（逐词测试会话与首过录入为占位，第一轮记录属实）
 - [x] R2-0b 时钟泄漏修复（主会话，已验证 56/56 回绿）：`AppServices` 门面暴露注入 `clock`；`VocabularyPage`（到期判断）、`TodayPage`（今日标题）、`display.ts formatUserDate`（同年判断，签名加 `referenceNow` 参数）全部改用注入时钟
 - [x] R2-1 森系令牌 + 玻璃封装（子 agent A 交付，主会话复核通过）：CSS 拆分为 `theme/{index,tokens,base,components,shell,pages}.css`（main.tsx 改引 index.css）；森色系双主题 14 组对比度实测全 ≥4.5:1（数值注释在 tokens.css）；`ui/Glass.tsx` 封装（ResizeObserver/backdrop-filter 能力检测，jsdom/旧 WebKit 降级 `.glass-fallback`；库的锚点居中模型与内联样式复位怪癖已在文件头注释收口）；`liquid-glass-react@1.1.1` 精确版本入依赖（62KiB ESM）；验证四项全绿
-- [ ] R2-2 外壳重构（子 agent B = agent-2，**已交付待复核**，报告在会话任务输出）：桌面浮动玻璃侧栏 + 移动端（≤900px，JS `useMediaQuery("(max-width: 900px)")` 驱动、jsdom 无 matchMedia 时回桌面）顶栏 + 玻璃抽屉。约定 testid：`nav-drawer-open`（汉堡）、`nav-drawer`、`nav-drawer-backdrop`、`topbar-space`（顶栏 Space 胶囊直达 Space 管理）；关闭路径=点导航/背景罩/Escape；抽屉测试并入 `app/test/navigation.test.tsx`
-- [ ] R2-3 页面打磨 + React 最佳实践（子 agent C = agent-3，**已被用户叫停，文件可能处于半完成状态**）：续做时先 `git status`/`git diff` 审计 `app/src/pages/*`、`app/src/ui/{Modal,EmptyState,PageShell,StepperInput}.tsx`、`app/src/shell/ToastContext.tsx`、`app/src/theme/{pages,components}.css` 的实际改动，再决定 `Agent(resume="agent-3")` 恢复还是主会话补完。原定范围：VocabCard 提取 memo + 详情可见性改渲染期派生（删解耦 useEffect）+ 函数式 setState；Modal/Toast 玻璃化、`.firstpass-save-bar` 毛玻璃；移动端：设置页横向溢出修复、词汇详情改 fixed 覆盖层、测试会话按钮竖排、`.vocab-card` content-visibility
-- [ ] R2-4 测试适配（主会话）：e2e 两份 spec 适配——compact（800×600）与 mobile 项目点任何 `nav-*`/`space-switcher` 前先点 `nav-drawer-open` 开抽屉（或改用 `topbar-space`）；建议加 `navigateTo(page, testId)` 助手按 `nav-drawer-open` 可见性分流；补抽屉打开态截图键
-- [ ] R2-5 集成验证（主会话）：typecheck + 全仓 Vitest + build + e2e 四视口全绿；88 张截图重生成
+- [x] R2-2 外壳重构（子 agent B = agent-2 交付，**主会话已复核 diff 通过**）：桌面浮动玻璃侧栏 + 移动端（≤900px，JS `useMediaQuery("(max-width: 900px)")` 驱动、jsdom 无 matchMedia 时回桌面）顶栏 + 玻璃抽屉。约定 testid：`nav-drawer-open`（汉堡）、`nav-drawer`、`nav-drawer-backdrop`、`topbar-space`（顶栏 Space 胶囊直达 Space 管理）；关闭路径=点导航/背景罩/Escape；焦点进出管理、body 滚动锁、reduced-motion 关动画齐全；抽屉测试并入 `app/test/navigation.test.tsx`（4 用例，60/60 绿）
+- [ ] R2-3 页面打磨 + React 最佳实践（子 agent C：**agent-3 曾被叫停且未写入任何文件；用户睡前指示重派并给足审美授权，现以 agent-4 重跑中**）：VocabCard 提取 memo + 详情可见性改渲染期派生 + 函数式 setState 等最佳实践逐条落实；Modal/Toast/`.firstpass-save-bar` 玻璃化；移动端：设置页横向溢出修复、词汇详情改覆盖层、测试会话按钮竖排、`.vocab-card` content-visibility。**审美授权口径（用户原话）**：充分发挥审美、不被过往文档和视觉样式束缚，但用户路径（路由/testid/术语/交互流程）绝不魔改；测试文件不得修改
+- [x] R2-4 测试适配（主会话）：新增 `app/e2e/nav.ts` 导航助手（按视口宽度 ≤900px 判定移动结构，非项目名）；smoke/acceptance 全部 nav-*/space-switcher/theme-* 交互收口到 `navTo`/`openSpaceManagement`/`expectActiveSpace`/`setTheme`；移动端补抽屉打开态截图键 `nav-drawer`；typecheck 干净（e2e 在 app tsconfig 覆盖内）
+- [ ] R2-5 集成验证（主会话）：typecheck + 全仓 Vitest + build + e2e 四视口全绿；截图全量重生成
 - [ ] R2-6 双端视觉验收（主会话）：逐张复核关键截图（桌面/移动 × 明/暗）+ Playwright 亲手走查 16.1 八项（常规模式口径，词书缺口维持如实记录）+ 验收记录落档 `docs/autonomous-runs/`
 
 ### 续跑锚点（会话压缩/重启后从这里恢复）
 
-1. 状态：R2-2 已交付（agent-2，报告已读：桌面浮动玻璃侧栏 + 移动顶栏/抽屉，`SidebarContent` 双端复用，60 项 vitest 含 4 个新增抽屉用例自证绿）；**尚未经主会话复核 diff**——先 `git diff app/src/shell/ app/src/ui/useMediaQuery.ts app/src/theme/shell.css app/test/navigation.test.tsx`。R2-3 已中止（agent-3 被 kill），其白名单文件可能半完成，必须先 `git status`/`git diff` 审计再决定 `Agent(resume="agent-3")` 恢复或主会话补完。
-2. **两个必须在续跑时处理的问题**（R2-2 报告暴露）：① 根 `pnpm typecheck` 只查根+protocol+domain+server，**不覆盖 app**——之前所有"typecheck 干净"结论对 app 无效，根 typecheck 脚本需补上 app；② `pnpm typecheck:app` 当前有 4 个错误，全部在 `app/src/ui/Glass.tsx`（62/63 行 `CSS.supports.call` 参数数、131 行 LiquidGlass JSX 类型），需修复。
+1. 已提交快照（9568722→78043ce 共 6 个）：时钟修复 → typecheck 链条补齐（**根 typecheck 现已覆盖全部 7 个 tsconfig：根+protocol+domain+application+persistence+server+app**，此前 application/persistence/app 三处漏检）→ 主题令牌+Glass → 外壳重构 → docs → e2e 适配。Glass.tsx 的 4 个类型错误已修（CSS.supports 重载改直接调用；LiquidGlass 类型按 CJS 命名空间形态取 .default）。
+2. 当前在跑：agent-4（R2-3，后台），白名单 = pages/*、ui/{Modal,EmptyState,PageShell,StepperInput}、ToastContext、theme/{pages,components}.css（tokens.css 只许新增结构令牌）。完成后主会话复核 diff 再进 R2-5。
 3. 子 agent 均被禁止跑 e2e/build（防端口与 dist 争抢）；其自证不替代主会话复核 diff 与重跑全部验证。
-4. R2-4 必须在 R2-2 落地后做：compact（800×600，≤900 也走移动结构）与 mobile 项目的 e2e 导航需先点 `nav-drawer-open`（或用恒在的 `topbar-space` 进 Space 管理），否则必红。
-5. 视觉待验收：玻璃侧栏/抽屉真实渲染、`.main-area` 透明后页面落在环境渐变上的可读性，需 R2-5/R2-6 截图目检。
+4. R2-5 起 e2e 预期变化：compact（800×600，≤900 也走移动结构）与 mobile 项目全部导航经抽屉；截图全量重生成（旧截图已失效，工作区遗留的截图改动是审计期重跑残留，直接覆盖）。
+5. 视觉待验收：玻璃侧栏/抽屉真实渲染、`.main-area` 透明后页面落在环境渐变上的可读性、R2-3 页面级玻璃化效果，需 R2-5/R2-6 截图目检。
 
 ### 文件修改白名单（分工隔离）
 
