@@ -1,0 +1,353 @@
+/**
+ * 应用外壳布局：桌面浮动玻璃侧栏 / 移动端顶栏 + 抽屉，以及主区域与页头骨架。
+ *
+ * 结构分流由 AppShell.tsx 以 JS 驱动（useMediaQuery "(max-width: 900px)"），
+ * 本文件不再用媒体查询切换外壳结构，只提供两套结构各自的样式；
+ * 唯一保留的媒体查询是 prefers-reduced-motion（关闭抽屉滑入动画）。
+ *
+ * 玻璃填充约定（Glass.tsx 文件头布局契约）：.glass-host 绝对定位填满最近的
+ * 已定位祖先（.sidebar-frame / .drawer-frame），玻璃容器在其中居中；本文件把
+ * 玻璃容器、库内层 .glass 与内容包裹层依次撑到 100%，玻璃面板即填满框架，
+ * 两条渲染路径（正常 / .glass-fallback 降级）结果一致。
+ */
+
+.app-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 移动端结构：纵向堆叠——顶栏 + 主区域。 */
+.app-shell-mobile {
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------------------
+   桌面端：浮动玻璃侧栏（>900px）
+   --------------------------------------------------------------------------- */
+
+/* 侧栏框架：248px 栏宽、上下左各 12px 外边距，充当 Glass 的已定位祖先。
+   align-self 默认 stretch，外边距计入后玻璃面板上下各悬空 12px。 */
+.sidebar-frame {
+  flex: 0 0 var(--sidebar-width);
+  position: relative;
+  min-height: 0;
+  margin: 12px 0 12px 12px;
+}
+
+/* 让玻璃填满框架的三级撑满：容器（正常路径定位锚定在 .glass-host，降级路径
+   是文档流 div）→ 库内层 .glass（玻璃底色与描边所在，inline-flex 由内容撑开，
+   必须显式给 100%）→ 库内容包裹层。 */
+.sidebar-glass,
+.drawer-glass {
+  width: 100%;
+  height: 100%;
+}
+
+.sidebar-glass .glass,
+.drawer-glass .glass {
+  width: 100%;
+  height: 100%;
+}
+
+.sidebar-glass .glass > div,
+.drawer-glass .glass > div {
+  width: 100%;
+  height: 100%;
+}
+
+/* 侧栏内容列：玻璃本体提供表面材质，这里只做排布；padding 放在内容上而不是
+   Glass 的 padding prop，保证正常/降级两条路径的内边距一致。 */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 16px 12px;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.sidebar-app-name {
+  font-size: var(--font-size-section);
+  font-weight: 700;
+  padding: 8px 12px 12px;
+  letter-spacing: 0.01em;
+}
+
+/* 侧边栏顶部的当前 Space 入口：整行可点击（规格 2 章口径），右侧箭头仅表意。 */
+.space-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-item);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.space-switcher:hover {
+  background: var(--color-surface-hover);
+}
+
+.space-switcher .arrow {
+  font-size: var(--font-size-section);
+  color: var(--color-text-secondary);
+  /* 箭头是可访问名称的一部分被读出会干扰，标记为装饰。 */
+  flex: none;
+}
+
+.space-switcher .space-switcher-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 12px 0;
+  width: 100%;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-nav-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 导航行：最小 40px，整行可点击；选中态用强调条 + 浅底 + 加粗三重表达。 */
+.nav-link {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: var(--radius-medium);
+  color: var(--color-text);
+  text-decoration: none;
+  font-size: var(--font-size-body);
+  font-weight: 400;
+  border-left: 3px solid transparent;
+}
+
+.nav-link:hover {
+  background: var(--color-surface-hover);
+}
+
+.nav-link[aria-current="page"] {
+  background: var(--color-accent-soft);
+  border-left-color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   移动端：顶栏（≤900px，JS 分流渲染）
+   --------------------------------------------------------------------------- */
+
+/* 顶栏：CSS 毛玻璃（半透底 + backdrop-filter），高度取 --topbar-height 令牌；
+   主区域在其下滚动时内容从顶栏背后透出柔化。 */
+.topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--topbar-height);
+  padding: 0 8px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  backdrop-filter: blur(20px) saturate(1.2);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+/* 汉堡按钮：点击区 44×44（可用性底线），图标本身 20px。 */
+.topbar-menu-button {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.topbar-menu-button:hover {
+  background: var(--color-surface-hover);
+}
+
+/* 应用名占据顶栏中部（flex:1 + 居中；左右控件不等宽时是近似视觉居中）。 */
+.topbar-app-name {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: var(--font-size-section);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 当前 Space 胶囊：顶栏右侧，点击直达 Space 管理页（与侧栏 space-switcher
+   同一路径），名称过长时省略号截断。 */
+.topbar-space {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 40%;
+  min-height: 36px;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-secondary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.topbar-space:hover {
+  background: var(--color-surface-hover);
+}
+
+.topbar-space .topbar-space-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-space .arrow {
+  flex: none;
+  font-size: var(--font-size-item);
+  color: var(--color-text-secondary);
+}
+
+/* ---------------------------------------------------------------------------
+   移动端：导航抽屉（从左侧滑入的浮动玻璃面板）
+   --------------------------------------------------------------------------- */
+
+/* 抽屉层：整屏覆盖，高于内容与普通对话框（.modal-backdrop z-40），低于 toast。 */
+.drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+/* 背景罩：半透明压暗主内容，点击即关闭（AppShell 挂 onClick）。 */
+.drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.35);
+  animation: drawer-backdrop-fade-in 200ms ease-out;
+}
+
+/* 抽屉框架：Glass 的已定位祖先；浮动面板形态（上下左各 12px，与桌面侧栏同源），
+   宽度 min(300px, 视口宽 - 48px)——最窄 320px 视口下也给背景罩留可点区域。 */
+.drawer-frame {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 12px;
+  width: min(300px, calc(100vw - 48px));
+  animation: drawer-slide-in 200ms ease-out;
+}
+
+@keyframes drawer-slide-in {
+  from {
+    transform: translateX(calc(-100% - 12px));
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes drawer-backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* 减少动态效果偏好：关闭滑入/淡入动画，抽屉直接出现（可访问性硬要求）。 */
+@media (prefers-reduced-motion: reduce) {
+  .drawer-frame,
+  .drawer-backdrop {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   主区域与页头骨架（两种结构共用）
+   --------------------------------------------------------------------------- */
+
+/* 主区域背景透明：body 的环境苔绿渐变整屏透出，成为玻璃侧栏/抽屉的折光底。 */
+.main-area {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--page-margin);
+  display: flex;
+  flex-direction: column;
+  gap: var(--block-gap);
+}
+
+.page-title {
+  font-size: var(--font-size-page-title);
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.page-description {
+  color: var(--color-text-secondary);
+  margin: 4px 0 0;
+  font-size: var(--font-size-body);
+}
+
+.page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--group-gap);
+  flex-wrap: wrap;
+}
+
+/* 页头动作区（标题右侧按钮） */
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}

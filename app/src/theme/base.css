@@ -1,0 +1,46 @@
+/**
+ * 基础样式：reset、文档根、body 环境背景与全局焦点环。
+ * 令牌定义在 tokens.css；本文件不声明任何色值字面量。
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  color: var(--color-text);
+  /* 环境背景：画布底色 + 2~3 个大面积低对比 radial-gradient 色斑（fixed 附着，
+     滚动时色斑不动，营造"雾林晨读"的环境光）。色斑极克制——一眼看去仍像纯色，
+     细看有层次；它是玻璃材质（Glass 原语）的折光底，对比度过高会让玻璃显脏。
+     当前外壳（.main-area/.sidebar）仍为不透明面，色斑在外壳改造为半透明后透出。 */
+  background-color: var(--color-canvas);
+  background-image:
+    radial-gradient(62vmax 62vmax at 8% -12%, var(--ambient-blob-1), transparent 62%),
+    radial-gradient(52vmax 52vmax at 108% 18%, var(--ambient-blob-2), transparent 60%),
+    radial-gradient(72vmax 72vmax at 48% 118%, var(--ambient-blob-3), transparent 65%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 键盘焦点环：统一视觉语言，全控件可用（界面设计规格 6.1）。 */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-small);
+}
+
+/* 页面主标题在路由切换后获得焦点（tabIndex=-1），去掉焦点环避免视觉噪音，
+   但保留可聚焦性供屏幕阅读器播报页面名称。 */
+.page-title:focus {
+  outline: none;
+  box-shadow: none;
+}

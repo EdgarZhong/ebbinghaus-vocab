@@ -1,0 +1,592 @@
+/**
+ * 通用组件样式：卡片/区块、按钮、表单、列表行、空状态、对话框、toast、
+ * 主题切换、设置页布局、Space 行窄屏适配，以及玻璃原语（Glass.tsx）的
+ * 正常路径容器修饰与降级类。令牌全部来自 tokens.css。
+ */
+
+/* ---------------------------------------------------------------------------
+   卡片与区块
+   --------------------------------------------------------------------------- */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  padding: var(--group-gap);
+  box-shadow: var(--shadow-card);
+}
+
+.card-section-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0 0 var(--group-gap);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+}
+
+.section-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0;
+}
+
+.section-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
+  margin: 4px 0 0;
+}
+
+/* ---------------------------------------------------------------------------
+   按钮（界面设计规格 14.1：主要 44 / 危险 40 / 次要 36；全部允许换行不裁切）
+   --------------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  min-height: 36px;
+  border-radius: var(--radius-medium);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.btn-primary {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  min-height: 44px;
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.btn-danger {
+  background: var(--color-surface);
+  color: var(--color-danger);
+  border-color: var(--color-border-strong);
+  min-height: 40px;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger);
+}
+
+/* 图标按钮：点击区至少 44×44（Space 箭头等）——本项目主路径用整行按钮表达，
+   保留类定义给后续页面的关闭/收起控件复用。 */
+.btn-icon {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: none;
+  font-size: var(--font-size-section);
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+/* ---------------------------------------------------------------------------
+   表单
+   --------------------------------------------------------------------------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: var(--font-size-body);
+  font-weight: 500;
+}
+
+.field-input {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-body);
+  width: 100%;
+}
+
+.field-input:hover {
+  border-color: var(--color-text-secondary);
+}
+
+.field-error {
+  color: var(--color-danger);
+  font-size: var(--font-size-secondary);
+  margin: 0;
+}
+
+/* 错误同时带图标与文字，不只靠颜色（第 16 章）。 */
+.field-error::before {
+  content: "⚠ ";
+}
+
+.field-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
+  margin: 0;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  cursor: pointer;
+  font-size: var(--font-size-body);
+}
+
+.checkbox-field input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+  flex: none;
+}
+
+/* 步进数值输入：输入框 + 44×44 加减按钮（规格 5.4，禁用微型原生箭头）。 */
+.stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.stepper .field-input {
+  width: 120px;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.stepper .field-input::-webkit-outer-spin-button,
+.stepper .field-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.stepper-btn {
+  width: 44px;
+  min-height: 44px;
+  flex: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stepper-btn:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+}
+
+.stepper-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------------------
+   列表行（Space 管理等）
+   --------------------------------------------------------------------------- */
+.row-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.space-row {
+  display: flex;
+  align-items: center;
+  gap: var(--group-gap);
+  width: 100%;
+  padding: 12px 16px;
+  min-height: 64px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  text-align: left;
+  font: inherit;
+  color: var(--color-text);
+}
+
+.space-row:hover {
+  background: var(--color-surface-hover);
+}
+
+/* 行内选择按钮：除"编辑"外的整行区域可点击（点击整行即选择，规格 7.2）。 */
+.space-row-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+div.space-row-select {
+  cursor: default;
+}
+
+.space-row.current {
+  cursor: default;
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.space-row.current:hover {
+  background: var(--color-accent-soft);
+}
+
+.space-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.space-row-name {
+  font-size: var(--font-size-item);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-row-meta {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--font-size-secondary);
+  font-weight: 600;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.badge-muted {
+  background: var(--color-surface-active);
+  color: var(--color-text-secondary);
+}
+
+/* 已归档区块折叠开关 */
+.archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px;
+  margin: -4px -8px 0;
+  border: none;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.archived-toggle:hover {
+  background: var(--color-surface-hover);
+}
+
+/* 学习模式单选组（创建 Space） */
+.mode-fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mode-fieldset legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+   空状态
+   --------------------------------------------------------------------------- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px var(--group-gap);
+  text-align: center;
+}
+
+.empty-state-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0;
+}
+
+.empty-state-description {
+  color: var(--color-text-secondary);
+  margin: 0;
+  font-size: var(--font-size-body);
+}
+
+/* ---------------------------------------------------------------------------
+   对话框（创建/编辑/确认）
+   --------------------------------------------------------------------------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+}
+
+.modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  box-shadow: var(--shadow-overlay);
+  width: 440px;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: var(--group-gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--group-gap);
+}
+
+.modal-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  margin: 0;
+}
+
+.modal-message {
+  margin: 0;
+  font-size: var(--font-size-body);
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.modal-actions-spacer {
+  flex: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   顶部短暂反馈（非阻塞 toast，跨页面动作用）
+   --------------------------------------------------------------------------- */
+.toast-region {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--color-text);
+  color: var(--color-canvas);
+  padding: 10px 16px;
+  border-radius: var(--radius-medium);
+  font-size: var(--font-size-body);
+  box-shadow: var(--shadow-overlay);
+  max-width: min(480px, calc(100vw - 48px));
+}
+
+/* 主题切换分段控件 */
+.theme-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  overflow: hidden;
+  margin: 0 12px 8px;
+}
+
+.theme-toggle button {
+  flex: 1;
+  min-height: 32px;
+  border: none;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-secondary);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.theme-toggle button:hover {
+  background: var(--color-surface-hover);
+}
+
+.theme-toggle button[aria-pressed="true"] {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* 设置页布局 */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--group-gap);
+  flex-wrap: wrap;
+}
+
+.settings-row .field {
+  min-width: 220px;
+}
+
+.api-key-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.api-key-value {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: var(--font-size-body);
+  letter-spacing: 0.04em;
+  padding: 8px 12px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-canvas);
+}
+
+/* 窄屏（手机视口）：Space 行改为两行布局——选择区整行、操作按钮次行。
+   根因：默认单行 flex 里选择区 flex:1 + min-width:0，在 412px 视口被"编辑"
+   按钮挤压到近零宽，Space 名称不可见（mobile 视口回归发现的真实缺陷）。 */
+@media (max-width: 560px) {
+  .space-row {
+    flex-wrap: wrap;
+  }
+
+  .space-row-select {
+    flex: 1 1 100%;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   玻璃原语（app/src/ui/Glass.tsx 的配套样式）
+   --------------------------------------------------------------------------- */
+
+/* 正常路径的宿主层：填满最近的已定位祖先（Glass 是浮动层原语），自身不拦截
+   指针事件，避免盖住宿主内的其他控件；玻璃容器自身重新打开指针事件。 */
+.glass-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 正常路径的玻璃容器（liquid-glass-react 的最外层 div，className 直达）：
+   库只提供折射与高光，容器圆角与投影由设计令牌给出；玻璃底色与描边在
+   内层 .glass 上（见下），保证 backdrop-filter 把底色与背景一起柔化。 */
+.glass-surface {
+  pointer-events: auto;
+  border-radius: var(--radius-xlarge);
+  box-shadow: var(--glass-shadow);
+}
+
+/* 库内层 .glass 的演示默认值（深投影）复位，底色/描边接管为设计令牌。
+   库把这些值写为内联样式，覆盖必须加 !important（仅此处允许）。 */
+.glass-surface .glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: none !important;
+}
+
+/* 库给内容包裹 div 硬编码了 font: 500 20px/1 system-ui 与 text-shadow（演示用），
+   不复位会压过设计令牌的字体体系；同理内联样式需 !important。 */
+.glass-surface .glass > div {
+  font: inherit !important;
+  text-shadow: none !important;
+}
+
+/* 降级路径（jsdom/旧 WebKit/无 backdrop-filter）：普通半透明毛玻璃 div，
+   视觉语言与正常路径一致，只是没有 SVG 折射与高光。 */
+.glass-fallback {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xlarge);
+  box-shadow: var(--glass-shadow);
+}

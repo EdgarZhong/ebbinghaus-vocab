@@ -1,0 +1,10 @@
+/**
+ * 主题样式聚合入口：main.tsx 唯一引入的 CSS 文件。
+ * 顺序即级联次序：令牌 → 基础 → 通用组件 → 外壳 → 学习页面。
+ * 各文件职责见各自文件头注释；新增样式先判断归属文件，禁止跨层堆放。
+ */
+@import "./tokens.css";
+@import "./base.css";
+@import "./components.css";
+@import "./shell.css";
+@import "./pages.css";
