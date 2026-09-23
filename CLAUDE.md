@@ -53,18 +53,21 @@
 - [x] R2-0b 时钟泄漏修复（主会话，已验证 56/56 回绿）：`AppServices` 门面暴露注入 `clock`；`VocabularyPage`（到期判断）、`TodayPage`（今日标题）、`display.ts formatUserDate`（同年判断，签名加 `referenceNow` 参数）全部改用注入时钟
 - [x] R2-1 森系令牌 + 玻璃封装（子 agent A 交付，主会话复核通过）：CSS 拆分为 `theme/{index,tokens,base,components,shell,pages}.css`（main.tsx 改引 index.css）；森色系双主题 14 组对比度实测全 ≥4.5:1（数值注释在 tokens.css）；`ui/Glass.tsx` 封装（ResizeObserver/backdrop-filter 能力检测，jsdom/旧 WebKit 降级 `.glass-fallback`；库的锚点居中模型与内联样式复位怪癖已在文件头注释收口）；`liquid-glass-react@1.1.1` 精确版本入依赖（62KiB ESM）；验证四项全绿
 - [x] R2-2 外壳重构（子 agent B = agent-2 交付，**主会话已复核 diff 通过**）：桌面浮动玻璃侧栏 + 移动端（≤900px，JS `useMediaQuery("(max-width: 900px)")` 驱动、jsdom 无 matchMedia 时回桌面）顶栏 + 玻璃抽屉。约定 testid：`nav-drawer-open`（汉堡）、`nav-drawer`、`nav-drawer-backdrop`、`topbar-space`（顶栏 Space 胶囊直达 Space 管理）；关闭路径=点导航/背景罩/Escape；焦点进出管理、body 滚动锁、reduced-motion 关动画齐全；抽屉测试并入 `app/test/navigation.test.tsx`（4 用例，60/60 绿）
-- [ ] R2-3 页面打磨 + React 最佳实践（子 agent C：**agent-3 曾被叫停且未写入任何文件；用户睡前指示重派并给足审美授权，现以 agent-4 重跑中**）：VocabCard 提取 memo + 详情可见性改渲染期派生 + 函数式 setState 等最佳实践逐条落实；Modal/Toast/`.firstpass-save-bar` 玻璃化；移动端：设置页横向溢出修复、词汇详情改覆盖层、测试会话按钮竖排、`.vocab-card` content-visibility。**审美授权口径（用户原话）**：充分发挥审美、不被过往文档和视觉样式束缚，但用户路径（路由/testid/术语/交互流程）绝不魔改；测试文件不得修改
+- [x] R2-3 页面打磨 + React 最佳实践（子 agent C = agent-4 交付，主会话已复核 diff 通过，提交 `29e9558`）：VocabCard 提取 memo + 详情可见性改渲染期派生 + 函数式 setState 等最佳实践逐条落实；Modal/Toast/`.firstpass-save-bar` 玻璃化；移动端：设置页横向溢出修复、词汇详情改覆盖层、测试会话按钮竖排、`.vocab-card` content-visibility
 - [x] R2-4 测试适配（主会话）：新增 `app/e2e/nav.ts` 导航助手（按视口宽度 ≤900px 判定移动结构，非项目名）；smoke/acceptance 全部 nav-*/space-switcher/theme-* 交互收口到 `navTo`/`openSpaceManagement`/`expectActiveSpace`/`setTheme`；移动端补抽屉打开态截图键 `nav-drawer`；typecheck 干净（e2e 在 app tsconfig 覆盖内）
-- [ ] R2-5 集成验证（主会话）：typecheck + 全仓 Vitest + build + e2e 四视口全绿；截图全量重生成
-- [ ] R2-6 双端视觉验收（主会话）：逐张复核关键截图（桌面/移动 × 明/暗）+ Playwright 亲手走查 16.1 八项（常规模式口径，词书缺口维持如实记录）+ 验收记录落档 `docs/autonomous-runs/`
+- [x] R2-5 集成验证（主会话）：根 typecheck（7 个 tsconfig）干净；全仓 Vitest 497/497；app 构建成功；e2e 四视口 56/56 四轮全绿；截图全量重生成。截图复核实证并修复 3 个缺陷：①入场动画期截图残影（`nav.ts` 新增 `waitAnimationsSettled`）；②设置页换日行"开始"被 `.field-input width:100%` 挤下行（`components.css` 加 `.settings-inline-row .field-input` 宽度收口）；③侧栏主题开关"跟随系统"折行（padding 收口 + nowrap）
+- [x] R2-6 双端视觉验收（主会话，已完成）：逐张复核关键截图（桌面/移动 × 明/暗，玻璃材质与森色系成立、移动端无可读性问题）；Playwright MCP 在 preview 4173 亲手走查 16.1 八项双端全过（暂停恢复/两步作答/录入两步流/词汇 sheet/Space 创建/换日保存均实证）；验收记录已落档（见下）
+- [x] R2-7 录入对齐 V1 术语（主会话，已完成，提交 `27a0196`）：V2 把页面叫"首过录入"不对齐——V1（`main_window.py:124`）导航统一叫"录入"，词书/常规（日常积累）共用同一入口，页标题按模式分"录入词汇/录入条目"（`ui/pages/first_pass.py:196,483`）。**口径决策**：只改用户可见命名，代码标识符（`FirstPassPage`、`routes.firstPass`、testid `nav-first-pass`）保留首轮命名（理由写在 FirstPassPage 文件头注释）；词书模式维持如实占位（应用层无用例，属后续阶段）。改动：导航 label→"录入"；无 Space 分支标题→"录入"；词书占位分支标题→"录入词汇"、占位文案修正"首过在线下书"病句并改如实引导；常规模式两步流文案本已与 V1 一致；`需求规格.md` mermaid 与 `界面设计规格.md` 7 处同步；测试与 e2e 断言同步
 
-### 续跑锚点（会话压缩/重启后从这里恢复）
+### 本轮状态：已完成，待用户验收（2026-09-24 凌晨）
 
-1. 已提交快照（9568722→78043ce 共 6 个）：时钟修复 → typecheck 链条补齐（**根 typecheck 现已覆盖全部 7 个 tsconfig：根+protocol+domain+application+persistence+server+app**，此前 application/persistence/app 三处漏检）→ 主题令牌+Glass → 外壳重构 → docs → e2e 适配。Glass.tsx 的 4 个类型错误已修（CSS.supports 重载改直接调用；LiquidGlass 类型按 CJS 命名空间形态取 .default）。
-2. 当前在跑：agent-4（R2-3，后台），白名单 = pages/*、ui/{Modal,EmptyState,PageShell,StepperInput}、ToastContext、theme/{pages,components}.css（tokens.css 只许新增结构令牌）。完成后主会话复核 diff 再进 R2-5。
-3. 子 agent 均被禁止跑 e2e/build（防端口与 dist 争抢）；其自证不替代主会话复核 diff 与重跑全部验证。
-4. R2-5 起 e2e 预期变化：compact（800×600，≤900 也走移动结构）与 mobile 项目全部导航经抽屉；截图全量重生成（旧截图已失效，工作区遗留的截图改动是审计期重跑残留，直接覆盖）。
-5. 视觉待验收：玻璃侧栏/抽屉真实渲染、`.main-area` 透明后页面落在环境渐变上的可读性、R2-3 页面级玻璃化效果，需 R2-5/R2-6 截图目检。
+- **验收记录**：`docs/autonomous-runs/20260924-0215-第二轮自主实现用户级验收记录.md`（含第一轮审计结论、16.1 双端走查、视觉复核、缺陷处置表、验证矩阵、遗留事项）。
+- **验证终态**：根 typecheck 干净；全仓 Vitest 497/497（app 60/60）；app 构建成功；e2e 四视口 56/56 全绿且截图全量重生成；主会话 MCP 双端走查 + ReadMediaFile 逐张复核通过。
+- **提交链（最新为头）**：`2c55be1` e2e 竞态修复+截图重生成 → `715e731` WebKit 注释归因 → `27a0196` R2-7 术语对齐 → `c07eaad` WebKit 降级磨砂 → `f68b5ee` 浅色抽屉修复 → `8915f71`/`51e4bb5`/`0e1495b`/`5f0cea6` 视觉缺陷修复与截图 → `29e9558` R2-3 页面打磨。
+- **两个必须记住的跨阶段口径**：
+  1. **WebKit 玻璃降级**：liquid-glass-react 的位移折射在 WebKit 不成立（库 README 明示 + 探针实证），`Glass.tsx` 按 UA 引擎判定降级磨砂；**macOS 正式 App（WKWebView）将呈磨砂，Phase 4/6 再评估**。
+  2. **截图竞态根因**：库给 `.glass` 内联 `transition: all 0.2s`，主题翻转瞬间截图会抓到过渡中途色；`e2e/nav.ts` 的 `waitDarkGlassSettled`/`waitAnimationsSettled` 是防线，新增截图用例必须复用。
+- **遗留（用户决策项）**：词书逐词测试会话/词书首过录入占位（后续阶段）；录入降级 toast"使用本地整理"与按钮"改为手动填写"措辞待统一；移动端会话按钮键盘提示可按介质隐藏（均不阻塞，详见验收记录第五节）。
 
 ### 文件修改白名单（分工隔离）
 
