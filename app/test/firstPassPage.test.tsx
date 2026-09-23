@@ -1,5 +1,5 @@
 /**
- * 首过录入页测试：Space 模式分流（词书引导占位 / 常规两步流）、智能整理如实
+ * 录入页测试：Space 模式分流（词书引导占位 / 常规两步流）、智能整理如实
  * 降级、本地表单校验、保存写入与冲突三态交互（覆盖 / 本次不录入 / 取消）。
  */
 
@@ -9,11 +9,11 @@ import { screen } from "@testing-library/react";
 import { renderApp } from "./helpers.tsx";
 import { seedRegularDueServices } from "./seed.ts";
 
-describe("首过录入页：Space 模式分流", () => {
+describe("录入页：Space 模式分流", () => {
   it("词书模式显示线下首过引导占位，不提供表单", async () => {
     renderApp();
     await userEvent.setup().click(screen.getByTestId("nav-first-pass"));
-    expect(screen.getByText("首过在线下书完成，软件只接收结果")).toBeInTheDocument();
+    expect(screen.getByText("词书批量录入将在后续版本提供")).toBeInTheDocument();
     expect(screen.queryByTestId("firstpass-raw-input")).not.toBeInTheDocument();
     expect(screen.queryByTestId("firstpass-save")).not.toBeInTheDocument();
   });
@@ -36,7 +36,7 @@ describe("首过录入页：Space 模式分流", () => {
   });
 });
 
-describe("首过录入页：常规模式手动填写与保存", () => {
+describe("录入页：常规模式手动填写与保存", () => {
   it("填写条目保存：写入内容目录与首过事件，完成反馈按规格文案", async () => {
     const user = userEvent.setup();
     const { services } = seedRegularDueServices([], { spaceName: "录入空间" });

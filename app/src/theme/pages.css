@@ -279,7 +279,7 @@
   align-items: flex-start;
 }
 
-/* 首过录入（常规模式两步流）。 */
+/* 录入页（常规模式两步流）。 */
 .firstpass-textarea {
   min-height: 160px;
   resize: vertical;

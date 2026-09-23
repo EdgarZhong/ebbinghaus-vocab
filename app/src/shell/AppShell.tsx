@@ -15,7 +15,9 @@
  * 不变），关闭路径：点导航项（导航同时发生）、点背景罩、按 Escape。
  *
  * 布局与交互语义来自界面设计规格第 4/6 章：
- * - 一级导航顺序固定：今日、复习、测试、首过录入、词汇、设置；
+ * - 一级导航顺序固定：今日、复习、测试、录入、词汇、设置（第四项正式名称
+ *   "录入"，对齐 V1 已验证口径——词书模式录入词汇与常规模式录入条目共用
+ *   同一入口；"首过"是线下学习动作的概念名，不是页面名）；
  * - 侧边栏顶部显示当前 Space 名称，点击后在主内容区打开 Space 管理页；
  * - 当前页用强调条 + 浅色选中背景 + 加粗表达，不只靠颜色；
  * - 键盘快捷键 Command+1..5 / Command+, 对应六个页面（Ctrl 同样接受），
@@ -35,7 +37,7 @@ const NAV_ITEMS: readonly { path: RoutePath; label: string; testId: string }[] =
   { path: routes.today, label: "今日", testId: "nav-today" },
   { path: routes.review, label: "复习", testId: "nav-review" },
   { path: routes.test, label: "测试", testId: "nav-test" },
-  { path: routes.firstPass, label: "首过录入", testId: "nav-first-pass" },
+  { path: routes.firstPass, label: "录入", testId: "nav-first-pass" },
   { path: routes.vocabulary, label: "词汇", testId: "nav-vocabulary" },
   { path: routes.settings, label: "设置", testId: "nav-settings" },
 ];

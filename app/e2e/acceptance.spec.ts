@@ -180,7 +180,7 @@ test("任务4：根据建议进入首过，完成输入、检查和保存", asyn
     services.spaces.createAndActivate({ name: "验收积累", learningMode: "常规模式" });
   });
 
-  // 首过录入页：输入步 → 智能整理在浏览器模式如实降级（未配置提示）→ 改为手动填写。
+  // 录入页：输入步 → 智能整理在浏览器模式如实降级（未配置提示）→ 改为手动填写。
   await navTo(page, "nav-first-pass");
   await expect(page.getByRole("heading", { level: 1, name: "录入条目" })).toBeVisible();
   await page.getByTestId("firstpass-organize").click();

@@ -37,7 +37,7 @@ const NAV_PAGES: readonly { navTestId: string; heading: string | RegExp; key: st
   { navTestId: "nav-today", heading: /今天/, key: "today" },
   { navTestId: "nav-review", heading: "复习", key: "review" },
   { navTestId: "nav-test", heading: "测试", key: "test" },
-  { navTestId: "nav-first-pass", heading: "首过录入", key: "first-pass" },
+  { navTestId: "nav-first-pass", heading: "录入词汇", key: "first-pass" },
   { navTestId: "nav-vocabulary", heading: "词汇", key: "vocabulary" },
   { navTestId: "nav-settings", heading: "设置", key: "settings" },
 ];

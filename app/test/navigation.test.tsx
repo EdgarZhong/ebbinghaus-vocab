@@ -55,7 +55,7 @@ describe("应用外壳与一级导航", () => {
     expect(screen.getByText("今天没有需要测试的 List")).toBeInTheDocument();
 
     await user.click(screen.getByTestId("nav-first-pass"));
-    expect(screen.getByRole("heading", { level: 1, name: "首过录入" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "录入词汇" })).toBeInTheDocument();
 
     await user.click(screen.getByTestId("nav-vocabulary"));
     expect(screen.getByRole("heading", { level: 1, name: "词汇" })).toBeInTheDocument();
@@ -85,12 +85,12 @@ describe("应用外壳与一级导航", () => {
     expect(screen.getByTestId("nav-today")).toBeInTheDocument();
   });
 
-  it("今日页空态提供录入入口且可跳转首过录入", async () => {
+  it("今日页空态提供录入入口且可跳转录入页", async () => {
     const user = userEvent.setup();
     renderApp();
     expect(screen.getByText("今天的任务完成了")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "录入新 List" }));
-    expect(screen.getByRole("heading", { level: 1, name: "首过录入" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "录入词汇" })).toBeInTheDocument();
   });
 
   it("主题切换控件在侧边栏可用", () => {

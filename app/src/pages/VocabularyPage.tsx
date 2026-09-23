@@ -234,7 +234,7 @@ export function VocabularyPage(): ReactNode {
       {entries.length === 0 ? (
         <EmptyState
           title="还没有录入任何词"
-          description="在首过录入中添加重点词后，会显示在这里。"
+          description="在录入中添加重点词后，会显示在这里。"
         />
       ) : filtered.length === 0 ? (
         <EmptyState title="没有匹配的词" description="换个关键词，或清除筛选后再试。" />

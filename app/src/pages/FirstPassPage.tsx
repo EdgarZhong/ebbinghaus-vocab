@@ -1,8 +1,11 @@
 /**
- * 首过录入页（功能完整）：Space 模式分流。
+ * 录入页（功能完整）：Space 模式分流。页面正式名称"录入"（V1 已验证口径：
+ * 词书模式录入词汇、常规模式录入条目，共用同一入口）；"首过"是线下学习动作
+ * 的概念名，不是页面名。内部标识符（FirstPassPage/routes.firstPass/nav-first-pass）
+ * 保留首轮命名，属遗留标识，不影响用户可见面。
  *
- * - 词书模式：规格口径是"首过在线下书完成，软件只接收结果"；词书批量录入属于
- *   后续阶段，本页如实显示引导占位，不提供看似可用实则缺失的表单，文案不误导。
+ * - 词书模式：规格口径是"首过在纸质词书上完成，软件只接收结果"；词书批量录入
+ *   属于后续阶段，本页如实显示引导占位，不提供看似可用实则缺失的表单，文案不误导。
  * - 常规模式（规格 11.5 两步任务流"输入 → 检查并保存"）：
  *   第一步只有一个大文本框与"智能整理并检查"主要操作；整理调用经应用层
  *   EntryOrganizerService，浏览器模式未装配整理端口时按规格 6.9 如实降级——
@@ -122,20 +125,23 @@ export function FirstPassPage(): ReactNode {
   const [savedCount, setSavedCount] = useState(0);
 
   if (activeSpace === null) {
+    // 尚未选择 Space 时模式未知，标题用统一入口名"录入"（对齐 V1 导航口径）。
     return (
-      <PageShell title="首过录入" description="录入新学 List 的重点词。">
+      <PageShell title="录入" description="录入词汇或日常积累条目。">
         <EmptyState title="还没有选择 Space" description="从侧边栏顶部选择一个 Space，再回到这里录入。" />
       </PageShell>
     );
   }
 
   if (!isRegularMode) {
-    // 词书模式：词书批量录入属后续阶段，如实引导，不误导（任务口径）。
+    // 词书模式：标题对齐 V1 词书模式"录入词汇"。批量录入（Unit/List 定位 + 两步流）
+    // 属后续阶段（应用层用例尚未就位），如实引导，不误导；首过口径见需求规格核心
+    // 概念表——首过在纸质词书上完成，软件只接收结果。
     return (
-      <PageShell title="首过录入" description="首过在纸质词书上完成。">
+      <PageShell title="录入词汇" description="首过在纸质词书上完成，软件只接收结果。">
         <EmptyState
-          title="首过在线下书完成，软件只接收结果"
-          description="先在纸质词书里学习新的 List，软件负责记录学习结果。批量录入将在后续更新中提供，现在可以先完成测试和复习任务。"
+          title="词书批量录入将在后续版本提供"
+          description="先在纸质词书里学习新的 List 并标记重点词，再回到这里批量录入。现在可以先完成测试和复习任务。"
           action={
             <button type="button" className="btn btn-primary" onClick={() => navigate(routes.today)}>
               返回今日
