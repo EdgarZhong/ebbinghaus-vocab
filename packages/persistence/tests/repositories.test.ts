@@ -3,7 +3,7 @@
  *
  * 覆盖重点（按端口）：
  * - 事件存储：append-only（重复抛错 + 触发器拒绝 UPDATE/DELETE）、整批原子、拉取幂等；
- * - 内容目录：upsert 整体替换、软移除不物理删除、同 Space 未移除键唯一兜底；
+ * - 内容目录：upsert 整体替换、软移除不物理删除、跨设备同键冲突可完整落地；
  * - 词书目录与 Space：定位事实存取、displayOrder 稳定排序；
  * - 会话/卡片/每日计划：设备本地存取与 upsert 覆盖语义；
  * - 设置通道：LWW 收敛 + outbox 同事务入队（save 与 applyMerged 的入队差异）；
@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ApplicationEvent } from "@ebbinghaus/application";
+import type { ApplicationEvent, WordContentRecord } from "@ebbinghaus/application";
 import { createNodeClientRuntime, type NodeClientRuntime } from "../src/index.ts";
 import { TransparentSecretCipher } from "../src/repositories/settings.ts";
 
@@ -120,8 +120,8 @@ describe("SQLite 仓储（端口合同落实）", () => {
       expect(runtime.wordContentStore.hasEntriesForSpace("s-1")).toBe(false);
     });
 
-    it("同 Space 未移除 normalizedKey 唯一索引兜底生效", () => {
-      const spaceEntry = (wordId: string): typeof entry => ({
+    it("同 Space 不同设备同键冲突保留两条供应用层处理，不阻断完整副本", () => {
+      const spaceEntry = (wordId: string): WordContentRecord => ({
         ...entry,
         wordId,
         listId: null,
@@ -129,12 +129,10 @@ describe("SQLite 仓储（端口合同落实）", () => {
       });
       runtime.wordContentStore.upsertEntries([spaceEntry("w-1")]);
 
-      // 同键不同 id → 部分唯一索引拒绝；移除 w-1 后同键可再次登记。
-      expect(() => runtime.wordContentStore.upsertEntries([spaceEntry("w-2")])).toThrow(
-        /UNIQUE constraint failed/,
-      );
-      runtime.wordContentStore.markRemoved("w-1", CLOCK_ISO);
-      expect(() => runtime.wordContentStore.upsertEntries([spaceEntry("w-2")])).not.toThrow();
+      // 唯一性仍由录入用例检查，但两台设备离线同时创建的不同 ID 必须都能拉取。
+      runtime.wordContentStore.upsertEntries([spaceEntry("w-2")]);
+      expect(runtime.wordContentStore.listEntriesForSpace("s-1").map((word) => word.wordId).sort())
+        .toEqual(["w-1", "w-2"]);
     });
   });
 

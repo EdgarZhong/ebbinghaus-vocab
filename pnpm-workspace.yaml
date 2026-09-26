@@ -7,4 +7,6 @@ packages:
   - app
 allowBuilds:
   better-sqlite3: true
+  edgedriver: false
   esbuild: true
+  geckodriver: false

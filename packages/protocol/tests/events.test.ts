@@ -8,11 +8,11 @@ import {
 import { makeEvent, makeStoredEvent, SAMPLE_DEVICE_ID } from "./fixtures.ts";
 
 describe("学习事件 schema：事件类型枚举以需求规格 7.2 原文为准", () => {
-  it("固化规格 7.2 全部 18 类事件类型，不漏不增", () => {
+  it("固化规格 7.2 与 V1 双向手动掌握共 20 类事件类型", () => {
     // 规格 7.2 实际逐条列出 18 个事件类型（testSessionPaused/Resumed、
     // dictionaryFetched/FetchFailed 为成对条目）。此断言锁死数量，防止后续
     // 维护者无意增删枚举成员而偏离规格。
-    expect(learningEventTypeValues).toHaveLength(18);
+    expect(learningEventTypeValues).toHaveLength(20);
     expect([...learningEventTypeValues]).toEqual([
       "firstPassRecorded",
       "reviewOnlyCompleted",
@@ -32,12 +32,14 @@ describe("学习事件 schema：事件类型枚举以需求规格 7.2 原文为�
       "wordAdded",
       "wordContentUpdated",
       "wordRemoved",
+      "wordManuallyMarkedUnmastered",
+      "wordManuallyMarkedMastered",
     ]);
   });
 });
 
 describe("学习事件 schema：每类事件的合法样例", () => {
-  it("18 类事件各提供一个合法样例并通过完整解析", () => {
+  it("20 类事件各提供一个合法样例并通过完整解析", () => {
     for (const eventType of learningEventTypeValues) {
       const parsed = learningEventSchema.safeParse(makeEvent(eventType));
       expect(parsed.success, `${eventType} 的合法样例应通过解析`).toBe(true);

@@ -96,7 +96,6 @@ test("设置：修改换日时间并保存成功", async ({ page }) => {
   await expect(page.getByTestId("settings-timezone")).toHaveValue("Asia/Shanghai");
 
   await page.getByTestId("settings-rollover").fill("05:30");
-  await page.getByTestId("settings-daily-target").fill("10");
   await screenshot(page, "settings-editing");
   await page.getByTestId("settings-save").click();
   await expect(page.getByTestId("settings-status")).toContainText("设置已保存。");

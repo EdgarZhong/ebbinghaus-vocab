@@ -122,6 +122,8 @@ export const VALID_METADATA_SAMPLES: Record<LearningEventType, Record<string, un
   wordAdded: { listId: "list-1", normalizedKey: "apple" },
   wordContentUpdated: { normalizedKey: "apple" },
   wordRemoved: { listId: "list-1", normalizedKey: "apple", reason: "重复录入冲突，用户选择从 List 中删除" },
+  wordManuallyMarkedUnmastered: { feedback: "不认识", previousMasteryStatus: "已掌握", nextMasteryStatus: "未掌握", newShortTermCycleAt: SAMPLE_OCCURRED_AT },
+  wordManuallyMarkedMastered: { feedback: "标记为已掌握", previousMasteryStatus: "未掌握", nextMasteryStatus: "已掌握", hardMastery: true },
 };
 
 /** 各事件类型在 V1 中的目标类型（targetType）与目标 ID 语义。 */
@@ -144,6 +146,8 @@ const TARGET_SAMPLES: Record<LearningEventType, { targetType: string; targetId: 
   wordAdded: { targetType: "Word", targetId: "word-2" },
   wordContentUpdated: { targetType: "Word", targetId: "word-1" },
   wordRemoved: { targetType: "Word", targetId: "word-1" },
+  wordManuallyMarkedUnmastered: { targetType: "Word", targetId: "word-1" },
+  wordManuallyMarkedMastered: { targetType: "Word", targetId: "word-1" },
 };
 
 /** 各事件类型在 V1 中的 source 样例（稳定人类可读描述；词典事件记提供方）。 */

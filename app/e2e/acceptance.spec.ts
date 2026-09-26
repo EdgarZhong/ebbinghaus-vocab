@@ -183,16 +183,20 @@ test("任务4：根据建议进入首过，完成输入、检查和保存", asyn
   // 录入页：输入步 → 智能整理在浏览器模式如实降级（未配置提示）→ 改为手动填写。
   await navTo(page, "nav-first-pass");
   await expect(page.getByRole("heading", { level: 1, name: "录入条目" })).toBeVisible();
+  await page.getByTestId("firstpass-raw-input").fill("serendipity：意外发现珍宝的运气");
   await page.getByTestId("firstpass-organize").click();
   await expect(page.getByTestId("firstpass-organize-error")).toBeVisible();
   await page.getByTestId("firstpass-switch-manual").click();
   await page.getByTestId("firstpass-term-0").fill("serendipity");
   await page.getByTestId("firstpass-def-0-0").fill("意外发现珍宝的运气");
+  await expect(page.getByTestId("firstpass-preview-0")).toContainText("serendipity");
   await screenshot(page, "task4-firstpass-form");
 
-  // 检查（预览保存语义：表单即检查页）→ 保存，进入完成反馈。
+  // 检查（预览保存语义：表单即检查页）→ 保存，原页短暂提示并准备下一批。
   await page.getByTestId("firstpass-save").click();
-  await expect(page.getByText("录入完成")).toBeVisible();
+  await expect(page.getByTestId("toast")).toContainText("已录入 1 个条目");
+  await expect(page.getByTestId("firstpass-raw-input")).toHaveValue("");
+  await expect(page.getByText("录入完成")).toHaveCount(0);
 
   // 词汇页可查到新条目（录入事实已入库）。
   await navTo(page, "nav-vocabulary");
@@ -273,9 +277,11 @@ test("任务8：今日看板修改每日目标；设置中修改换日时间", a
   await page.getByTestId("today-daily-target-increase").click();
   await page.getByTestId("today-save-target").click();
 
-  // 持久化验证：设置页的每日目标显示新值。
+  // 持久化验证：每日目标归“今日”页，切到设置再返回仍保留新值。
   await navTo(page, "nav-settings");
-  await expect(page.getByTestId("settings-daily-target")).toHaveValue("1");
+  await expect(page.getByTestId("settings-daily-target")).toHaveCount(0);
+  await navTo(page, "nav-today");
+  await expect(page.getByTestId("today-daily-target")).toHaveValue("1");
 
   // 设置页修改换日时间并保存成功。
   await navTo(page, "nav-settings");

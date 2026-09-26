@@ -142,12 +142,12 @@ export class EntryOrganizerService {
   }
 
   /** 执行两种模式完全相同的非空校验、模型调用和空结果校验。 */
-  organize(rawText: string): EntryOrganizationResult {
+  async organize(rawText: string): Promise<EntryOrganizationResult> {
     EntryOrganizerService.validateRawText(rawText);
     if (this.organizer === null) {
       throw new LanguageModelNotConfiguredError("未配置智能整理服务");
     }
-    const result = this.organizer.organize(rawText);
+    const result = await this.organizer.organize(rawText);
     if (result.candidates.length === 0) {
       throw new LanguageModelOrganizationError("没有识别到可填写的条目");
     }
@@ -161,20 +161,12 @@ export class EntryOrganizerService {
 
   /** 在 UI 启动新整理前清除适配器上一轮的取消标记（端口未实现时静默跳过）。 */
   prepareCancellation(): void {
-    const organizer = this.organizer as Record<string, unknown> | null;
-    const prepare = organizer?.["prepareCancellation"];
-    if (typeof prepare === "function") {
-      (prepare as () => void).call(organizer);
-    }
+    this.organizer?.prepareCancellation?.();
   }
 
   /** 向具体整理适配器转发用户取消，不让应用层猜测 HTTP 实现细节。 */
   cancel(): void {
-    const organizer = this.organizer as Record<string, unknown> | null;
-    const cancel = organizer?.["cancel"];
-    if (typeof cancel === "function") {
-      (cancel as () => void).call(organizer);
-    }
+    this.organizer?.cancel?.();
   }
 
   /** 定义唯一的智能整理输入边界，供需要先落草稿的词书编排提前复用。 */

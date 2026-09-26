@@ -124,7 +124,7 @@ export function TodayPage(): ReactNode {
   const isResumable = (task: TaskItemSnapshot): boolean =>
     task.completedCount > 0 || task.sessionStatus !== null;
 
-  const unitLabel = isRegularMode ? "条目" : "List";
+  const countLabel = isRegularMode ? "个条目" : "个 List";
   const suggestedCount = snapshot.suggestedFirstPassCount;
   const capacityLoading = snapshot.capacityStale && snapshot.capacityAlgorithmVersion === "";
   const capacityRefreshing = snapshot.capacityStale && snapshot.capacityAlgorithmVersion !== "";
@@ -213,8 +213,8 @@ export function TodayPage(): ReactNode {
                 </h2>
                 <p className="next-step-description" data-testid="today-next-description">
                   {noSample
-                    ? `建议新增 ${suggestedCount} 个${unitLabel}。暂无近期完成记录，先按你的每日目标估算。`
-                    : `建议新增 ${suggestedCount} 个${unitLabel}。`}
+                    ? `建议新增 ${suggestedCount} ${countLabel}。暂无近期完成记录，先按你的每日目标估算。`
+                    : `建议新增 ${suggestedCount} ${countLabel}。`}
                 </p>
               </div>
               <button
@@ -268,7 +268,7 @@ export function TodayPage(): ReactNode {
               {capacityLoading
                 ? "正在准备今日建议……"
                 : suggestedCount > 0
-                  ? `今天建议新增 ${suggestedCount} 个${unitLabel}`
+                  ? `今天建议新增 ${suggestedCount} ${countLabel}`
                   : "今天不建议新增"}
             </span>
             <button type="button" className="btn btn-secondary" onClick={() => navigate(routes.firstPass)}>
@@ -307,7 +307,7 @@ export function TodayPage(): ReactNode {
             ? "正在根据你的学习记录准备今日建议，完成后自动更新。"
             : capacityRefreshing
               ? "学习情况有更新，建议正在后台刷新，先显示最近一次结果。"
-              : `按你的每日目标，今天适合新增 ${suggestedCount} 个${unitLabel}。未来一周的压力已一并考虑。`}
+              : `按你的每日目标，今天适合新增 ${suggestedCount} ${countLabel}。未来一周的压力已一并考虑。`}
         </p>
         {snapshot.overdueWorkload > 0 ? (
           <p className="field-hint" data-testid="today-overdue-note">

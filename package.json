@@ -9,7 +9,7 @@
   "scripts": {
     "test": "vitest run",
     "test:app": "vitest run --project app",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/protocol && tsc --noEmit -p packages/domain && tsc --noEmit -p packages/application && tsc --noEmit -p packages/persistence && tsc --noEmit -p server && tsc --noEmit -p app",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/protocol && tsc --noEmit -p packages/domain && tsc --noEmit -p packages/application && tsc --noEmit -p packages/persistence && tsc --noEmit -p packages/migration && tsc --noEmit -p server && tsc --noEmit -p app",
     "typecheck:app": "tsc --noEmit -p app",
     "server:start": "pnpm --filter @ebbinghaus/server start",
     "server:backup": "pnpm --filter @ebbinghaus/server backup"

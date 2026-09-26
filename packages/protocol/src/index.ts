@@ -11,3 +11,4 @@ export * from "./events.ts";
 export * from "./settings.ts";
 export * from "./sync.ts";
 export * from "./ordering.ts";
+export * from "./content.ts";

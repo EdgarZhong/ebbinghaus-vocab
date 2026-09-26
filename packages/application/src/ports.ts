@@ -17,6 +17,7 @@
  */
 
 import type { LearningEventType } from "@ebbinghaus/protocol";
+import type { PersistedListTask } from "./scheduling.ts";
 import type {
   EntryOrganizationResult,
   Space,
@@ -187,6 +188,37 @@ export interface BookCatalogStore {
   hasListsForSpace(spaceId: string): boolean;
 }
 
+/**
+ * 首过草稿属于用户输入资产：保存原始转写与整理证据，跨重启与跨设备均需恢复。
+ * `status=已确认` 是不可物理删除的完成墓碑；不同 id 的草稿全部保留，同 id
+ * 写入在同步侧按 updatedAt → deviceId 确定收敛。不得把 rawText 写入日志。
+ */
+export interface FirstPassDraftRecord {
+  readonly id: string;
+  readonly spaceId: string;
+  readonly unitNumber: number;
+  readonly listNumber: number;
+  readonly rawText: string;
+  readonly useLanguageModel: boolean;
+  readonly status: "草稿" | "已解析" | "解析失败" | "已确认";
+  readonly lastError: string | null;
+  /** 可编辑候选的 JSON；未整理前为 null。 */
+  readonly candidatesJson: string | null;
+  /** 证据树与警告的 JSON；未整理前为 null。 */
+  readonly auditJson: string | null;
+  readonly unresolvedDescription: string | null;
+  readonly updatedAt: string;
+  /** 同时刻跨设备更新的确定性决胜标识，V1 迁移由迁移器填入固定设备 ID。 */
+  readonly deviceId: string;
+}
+
+export interface FirstPassDraftStore {
+  upsertDraft(draft: FirstPassDraftRecord): void;
+  getDraft(id: string): FirstPassDraftRecord | null;
+  /** 当前 Space 未确认草稿，按 updatedAt 降序稳定返回。 */
+  listOpenDrafts(spaceId: string): FirstPassDraftRecord[];
+}
+
 // ---------------------------------------------------------------------------
 // Space 元数据
 // ---------------------------------------------------------------------------
@@ -231,6 +263,8 @@ export interface SessionWordPlan {
   readonly wordId: string;
   /** 计划测试时刻（UTC ISO8601，通常为会话开始时刻）。 */
   readonly plannedTestAt: string;
+  /** 词书任务逐词需求类型；常规模式无需此字段。 */
+  readonly taskType?: "短期测试" | "等待校验" | "长期验证";
 }
 
 /** 测试会话记录（词书模式与常规模式共用形态，按字段区分）。 */
@@ -247,6 +281,8 @@ export interface TestSessionRecord {
   readonly groupOrdinal: number | null;
   /** 词书模式绑定的计划任务标识（任务由调度派生，绑定关系保存在会话里）。 */
   readonly taskId: string | null;
+  /** 词书会话启动时的完整任务快照；跨日及作答后的任务重派生不改变本会话。 */
+  readonly taskSnapshot?: PersistedListTask | null;
   /** 会话开始时的条目顺序快照（之后新增/移除不影响进行中的会话）。 */
   readonly words: readonly SessionWordPlan[];
   readonly currentPosition: number;
@@ -373,7 +409,12 @@ export interface LlmConfigurationStore {
  * 实现（HTTP 适配器）由基础设施层提供；失败语义见 errors.ts 的统一错误类型。
  */
 export interface LanguageModelOrganizerPort {
-  organize(rawText: string): EntryOrganizationResult;
+  /** 联网请求必须异步完成；取消只针对当前活动请求，不中断已替换的新整理器。 */
+  organize(rawText: string): Promise<EntryOrganizationResult>;
+  /** V1 录入页允许用户在等待模型时主动取消；具体网络关闭由适配器负责。 */
+  cancel?(): void;
+  /** 下一次整理开始前清理上一轮的预取消标记。 */
+  prepareCancellation?(): void;
 }
 
 /** 整理器构造端口：组合根在配置事务提交后用它构建新的活动整理器。 */
@@ -393,15 +434,25 @@ export interface LlmOrganizerFactory {
  * 调用线程读取配置、把三字段值交给探测闭包（V1 prepare_llm_connection_test 语义）。
  */
 export interface LlmConnectivityProbe {
-  probe(baseUrl: string, modelName: string, apiKey: string | null): void;
+  probe(baseUrl: string, modelName: string, apiKey: string | null): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
 // 在线词典（可失败的补充依赖）
 // ---------------------------------------------------------------------------
 
-/** 在线词典查询载荷（提供方相关结构，原样交给缓存层保存，不做语义解读）。 */
-export type DictionaryLookupPayload = Record<string, unknown>;
+/** 词典源返回的中立中文义项；手录义项不参与请求，也不与该结构合并写回。 */
+export interface DictionaryDefinition {
+  readonly partOfSpeech: string;
+  readonly definition: string;
+}
+
+export interface DictionaryLookupPayload {
+  readonly provider: string;
+  readonly normalizedWord: string;
+  readonly definitions: readonly DictionaryDefinition[];
+  readonly rawResponseSummary: string;
+}
 
 /**
  * 在线词典端口：可失败的补充依赖；返回数据不得覆盖手录义项。
@@ -411,7 +462,22 @@ export interface OnlineDictionaryPort {
   lookup(
     normalizedWord: string,
     options?: { readonly isCancelled?: () => boolean },
-  ): DictionaryLookupPayload;
+  ): Promise<DictionaryLookupPayload>;
+}
+
+/** 每个 Word 至多保存一条成功缓存；失败只写审计事件，不落失败缓存。 */
+export interface DictionaryCacheRecord extends DictionaryLookupPayload {
+  readonly id: string;
+  readonly wordId: string;
+  readonly fetchedAt: string;
+  readonly cacheStatus: "有效" | "失效";
+}
+
+export interface DictionaryCacheStore {
+  get(wordId: string): DictionaryCacheRecord | null;
+  replace(record: DictionaryCacheRecord): void;
+  /** V1 的 100 MiB 硬上限：按抓取时间淘汰最旧成功缓存。 */
+  pruneBySize(maxBytes: number): void;
 }
 
 // ---------------------------------------------------------------------------

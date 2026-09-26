@@ -16,6 +16,7 @@ import type {
   WordContentRecord,
   WordContentStore,
 } from "@ebbinghaus/application";
+import type { ContentSyncStore } from "../sync/contentStore.ts";
 
 // ---------------------------------------------------------------------------
 // 词内容目录
@@ -58,7 +59,7 @@ export class SqliteWordContentStore implements WordContentStore {
   private readonly listCatalogStmt;
   private readonly hasForSpaceStmt;
 
-  constructor(db: Database.Database) {
+  constructor(db: Database.Database, private readonly contentSync?: ContentSyncStore) {
     this.db = db;
     this.upsertStmt = this.db.prepare(`
       INSERT INTO word_contents
@@ -124,6 +125,7 @@ export class SqliteWordContentStore implements WordContentStore {
           recordedAt: entry.recordedAt,
           removedAt: null,
         });
+        this.contentSync?.recordLocal("word", entry.wordId, entry);
       }
     });
     run(entries);
@@ -144,10 +146,13 @@ export class SqliteWordContentStore implements WordContentStore {
 
   /** 软移除：只置标记与审计时间，绝不物理删除（历史与重放需要完整时间线）。 */
   markRemoved(wordId: string, removedAt: string): void {
-    const result = this.markRemovedStmt.run(removedAt, wordId);
-    if (result.changes === 0) {
-      throw new Error(`词内容不存在：${wordId}`);
-    }
+    this.db.transaction(() => {
+      const result = this.markRemovedStmt.run(removedAt, wordId);
+      if (result.changes === 0) throw new Error(`词内容不存在：${wordId}`);
+      const entry = this.getEntry(wordId);
+      if (entry === null) throw new Error(`软移除后词内容不存在：${wordId}`);
+      this.contentSync?.recordLocal("word", wordId, entry);
+    })();
   }
 
   /** 全量登记（含已移除词）：重放器 wordCatalog 的输入口径。 */
@@ -177,7 +182,7 @@ export class SqliteBookCatalogStore implements BookCatalogStore {
   private readonly listForSpaceStmt;
   private readonly hasForSpaceStmt;
 
-  constructor(db: Database.Database) {
+  constructor(db: Database.Database, private readonly contentSync?: ContentSyncStore) {
     this.db = db;
     this.addUnitStmt = this.db.prepare(
       `INSERT INTO study_units (unit_id, space_id, unit_number) VALUES (@id, @spaceId, @number)`,
@@ -210,7 +215,10 @@ export class SqliteBookCatalogStore implements BookCatalogStore {
   }
 
   addUnit(unit: StudyUnit): void {
-    this.addUnitStmt.run({ id: unit.id, spaceId: unit.spaceId, number: unit.number });
+    this.db.transaction(() => {
+      this.addUnitStmt.run({ id: unit.id, spaceId: unit.spaceId, number: unit.number });
+      this.contentSync?.recordLocal("unit", unit.id, unit);
+    })();
   }
 
   getUnit(unitId: string): StudyUnit | null {
@@ -222,7 +230,10 @@ export class SqliteBookCatalogStore implements BookCatalogStore {
   }
 
   addList(record: ListCatalogRecord): void {
-    this.addListStmt.run(record);
+    this.db.transaction(() => {
+      this.addListStmt.run(record);
+      this.contentSync?.recordLocal("list", record.listId, record);
+    })();
   }
 
   getList(listId: string): ListCatalogRecord | null {
@@ -280,7 +291,7 @@ export class SqliteSpaceStore implements SpaceStore {
   private readonly listStmt;
   private readonly getStmt;
 
-  constructor(db: Database.Database) {
+  constructor(db: Database.Database, private readonly contentSync?: ContentSyncStore) {
     this.db = db;
     this.addStmt = this.db.prepare(`
       INSERT INTO spaces (id, kind, display_order, name, archived_at, created_at, updated_at, learning_mode)
@@ -303,7 +314,8 @@ export class SqliteSpaceStore implements SpaceStore {
   }
 
   addSpace(space: Space): void {
-    this.addStmt.run({
+    this.db.transaction(() => {
+      this.addStmt.run({
       id: space.id,
       kind: space.kind,
       displayOrder: space.displayOrder,
@@ -312,11 +324,16 @@ export class SqliteSpaceStore implements SpaceStore {
       createdAt: space.createdAt,
       updatedAt: space.updatedAt,
       learningMode: space.learningMode,
-    });
+      });
+      // 首次创建保留实体创建时间作为同步版本；默认 Space 的固定早期时间
+      // 不能压过另一设备已经修改的同一固定 Space。
+      this.contentSync?.recordLocal("space", space.id, space, space.createdAt ?? undefined);
+    })();
   }
 
   updateSpace(space: Space): void {
-    const result = this.updateStmt.run({
+    this.db.transaction(() => {
+      const result = this.updateStmt.run({
       id: space.id,
       kind: space.kind,
       displayOrder: space.displayOrder,
@@ -324,14 +341,17 @@ export class SqliteSpaceStore implements SpaceStore {
       archivedAt: space.archivedAt,
       updatedAt: space.updatedAt,
       learningMode: space.learningMode,
-    });
-    if (result.changes === 0) {
-      throw new Error(`Space 不存在：${space.id}`);
-    }
+      });
+      if (result.changes === 0) throw new Error(`Space 不存在：${space.id}`);
+      this.contentSync?.recordLocal("space", space.id, space);
+    })();
   }
 
   deleteSpace(spaceId: string): void {
-    this.deleteStmt.run(spaceId);
+    this.db.transaction(() => {
+      this.deleteStmt.run(spaceId);
+      this.contentSync?.recordLocal("space", spaceId, null);
+    })();
   }
 
   /** 按端口合同以 displayOrder 升序稳定返回。 */

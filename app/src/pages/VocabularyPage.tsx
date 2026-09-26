@@ -3,42 +3,34 @@
  *
  * 交互语义对应界面设计规格第 12 章与需求规格 6.6/6.8：
  * - 默认占满主内容区的单列卡片：未掌握固定排在已掌握前，同一状态内最新录入在
- *   最上方（排序在组合根视图完成）；第二行显示录入日期与当前状态。
+ *   最上方（排序在组合根视图完成）；折叠态只展示英文、手录释义和展开箭头。
  * - 点击整卡打开详情（不新开窗口、不覆盖侧边栏、不改变导航选中）：桌面端从主
  *   内容区右侧滑出并排面板（列表收窄为三行重排）；移动端（≤900px）改为底部
  *   浮动 sheet 毛玻璃覆盖层（第二轮重构：旧版铺满整行会把列表顶出视口）。
  *   两种形态都只通过"收起"按钮或 Escape 关闭，点击详情外其他区域不收起。
  * - 筛选面板位于标题区下方、列表上方；搜索框输入即实时搜索，同时匹配英文词条
  *   与中文释义，与掌握状态筛选组合生效；筛选与详情完全解耦（被过滤掉才收起）。
- * - 掌握标记与删除词条依赖的应用层用例（手动标记事件、软移除独立用例）尚未
- *   交付（协议枚举待晨审），本页如实不提供对应按钮，不伪造功能。
+ * - 双向掌握直接提交事件；详情删除为“删除词条→确认删除”，卡片右滑后露出删除。
+ * - 卡片只负责选中；掌握切换放在详情中。悬停时临时出现的卡片按钮曾在窄屏
+ *   点击中央时抢走点击并误改掌握状态，属于用户旅程错误，不能保留。
  *
  * 性能与渲染口径（第二轮 React 重构）：卡片提取为 memo 组件（稳定 props）；
  * 详情可见性在渲染期派生（选中项被过滤掉即渲染期调整，不经 effect 同步）；
  * 长列表用 content-visibility 跳过屏外渲染（DOM 保持挂载，不用虚拟列表）。
  */
 
-import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { MasteryStatus } from "@ebbinghaus/domain";
+import type { DictionarySnapshot } from "@ebbinghaus/application";
 import type { VocabularyEntryView } from "../services/learningViews.ts";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { PageShell } from "../ui/PageShell.tsx";
+import { useToast } from "../shell/ToastContext.tsx";
 import { formatUserDate } from "../ui/display.ts";
 
-/** 掌握状态筛选值；常规模式额外提供"今天待测试"。 */
-type StatusFilter = "全部" | "今天待测试" | "学习中" | "已掌握";
-
-/** 面向用户的状态文本：已掌握 / 今天待测试 / 学习中（规格 12.5）。 */
-function statusLabel(entry: VocabularyEntryView, nowMs: number): string {
-  if (entry.masteryStatus === MasteryStatus.Mastered) {
-    return "已掌握";
-  }
-  if (entry.nextDueAt !== null && Date.parse(entry.nextDueAt) <= nowMs) {
-    return "今天待测试";
-  }
-  return "学习中";
-}
+/** V1 词汇页只按领域掌握状态过滤；今天是否到期属于“测试”页。 */
+type StatusFilter = "全部掌握状态" | "未掌握" | "已掌握";
 
 /**
  * 单词卡片（rerender-memo）：60 词长列表中，筛选输入每敲一键都会重渲染整页；
@@ -48,58 +40,68 @@ function statusLabel(entry: VocabularyEntryView, nowMs: number): string {
  */
 const VocabCard = memo(function VocabCard({
   entry,
-  label,
-  recordedLabel,
   selected,
   onSelect,
+  onRemove,
 }: {
   readonly entry: VocabularyEntryView;
-  /** 已算好的状态文案（已掌握 / 今天待测试 / 学习中）。 */
-  readonly label: string;
-  /** 已格式化的录入日期前缀（如"3 天前"），不含"录入"后缀。 */
-  readonly recordedLabel: string;
   readonly selected: boolean;
   readonly onSelect: (wordId: string) => void;
+  readonly onRemove: (wordId: string) => void;
 }): ReactNode {
-  const mastered = label === "已掌握";
+  const mastered = entry.masteryStatus === MasteryStatus.Mastered;
+  const [swiped, setSwiped] = useState(false);
+  const pointerStart = useRef<number | null>(null);
+  const swiping = useRef(false);
+  const select = (): void => {
+    if (swiped) { setSwiped(false); return; }
+    if (!swiping.current) onSelect(entry.wordId);
+  };
   return (
-    <button
-      type="button"
-      className={`vocab-card${mastered ? " mastered" : ""}${selected ? " selected" : ""}`}
-      onClick={() => onSelect(entry.wordId)}
-      data-testid={`vocab-card-${entry.originalSpelling}`}
-    >
-      <span className="vocab-card-row">
-        <span className="vocab-card-term">
-          {entry.originalSpelling}
-          {mastered ? (
-            <span className="mastered-check" role="img" aria-label="已掌握">
-              ✓
-            </span>
-          ) : null}
+    <div className={`vocab-card-row-wrap${swiped ? " swiped" : ""}`}>
+      <button type="button" className="vocab-swipe-delete" onClick={() => onRemove(entry.wordId)} aria-label={`删除 ${entry.originalSpelling}`} data-testid={`vocab-swipe-delete-${entry.originalSpelling}`}>删除</button>
+      <div
+        role="button"
+        tabIndex={0}
+        className={`vocab-card${mastered ? " mastered" : ""}${selected ? " selected" : ""}`}
+        onClick={select}
+        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } }}
+        onPointerDown={(event) => { pointerStart.current = event.clientX; swiping.current = false; }}
+        onPointerMove={(event) => { if (pointerStart.current !== null && event.clientX - pointerStart.current > 24) swiping.current = true; }}
+        onPointerUp={(event) => { if (pointerStart.current !== null && event.clientX - pointerStart.current > 42 && !selected) setSwiped(true); pointerStart.current = null; }}
+        data-testid={`vocab-card-${entry.originalSpelling}`}
+        aria-label={`查看 ${entry.originalSpelling}${entry.unitNumber === null ? "" : `，Unit ${entry.unitNumber}，List ${entry.listNumber}`}`}
+      >
+        <span className="vocab-card-row">
+          <span className="vocab-card-term">{entry.originalSpelling}</span>
+          {mastered ? <span className="mastered-check" role="img" aria-label="已掌握">✓</span> : null}
+          <span className="vocab-card-meaning">{entry.manualMeaning}</span>
+          <span className="vocab-card-arrow" aria-hidden="true">›</span>
         </span>
-        <span className="vocab-card-meaning">{entry.manualMeaning}</span>
-        <span className="vocab-card-arrow" aria-hidden="true">
-          ›
-        </span>
-      </span>
-      <span className="vocab-card-row meta">
-        <span>{recordedLabel}录入</span>
-        <span>{label}</span>
-      </span>
-    </button>
+        <span className="vocab-card-row meta">{entry.unitNumber === null ? entry.masteryStatus : `Unit ${entry.unitNumber} · List ${entry.listNumber}`}</span>
+      </div>
+    </div>
   );
 });
 
 export function VocabularyPage(): ReactNode {
   const services = useServices();
+  const { showToast } = useToast();
   const activeSpace = useActiveSpace();
   const version = useSyncExternalStore(services.subscribeChanged, services.getVersion, services.getVersion);
 
   const [filterOpen, setFilterOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("全部");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("全部掌握状态");
+  const [unitFilter, setUnitFilter] = useState(0);
+  const [listFilter, setListFilter] = useState(0);
   const [query, setQuery] = useState("");
+  const [selectedWordId, setSelectedWordId] = useState<string | null>(null);
   const [detailWordId, setDetailWordId] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [detailDeleteArmed, setDetailDeleteArmed] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [dictionaryView, setDictionaryView] = useState<{ wordId: string; snapshot: DictionarySnapshot } | null>(null);
+  const [dictionaryBusy, setDictionaryBusy] = useState(false);
 
   const entries = useMemo(() => {
     if (activeSpace === null) {
@@ -110,24 +112,15 @@ export function VocabularyPage(): ReactNode {
   }, [services, version, activeSpace]);
 
   const isRegularMode = activeSpace?.learningMode === "常规模式";
-  // "今天待测试"到期判断与"录入日期"同年判断统一使用组合根注入时钟（测试为固定
-  // 时钟），禁止直读系统时间；version 变化时重取，保证事件写入后状态即时刷新。
+  // 学习记录日期使用注入时钟做同年判断，避免测试或跨时区展示随系统时钟漂移。
   const referenceNow = useMemo(() => services.clock.now(), [services, version]);
-  const nowMs = referenceNow.getTime();
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     return entries.filter((entry) => {
-      const label = statusLabel(entry, nowMs);
-      if (statusFilter === "已掌握" && label !== "已掌握") {
-        return false;
-      }
-      if (statusFilter === "学习中" && label !== "学习中") {
-        return false;
-      }
-      if (statusFilter === "今天待测试" && label !== "今天待测试") {
-        return false;
-      }
+      if (statusFilter !== "全部掌握状态" && entry.masteryStatus !== statusFilter) return false;
+      if (unitFilter > 0 && entry.unitNumber !== unitFilter) return false;
+      if (listFilter > 0 && entry.listNumber !== listFilter) return false;
       if (keyword === "") {
         return true;
       }
@@ -137,7 +130,7 @@ export function VocabularyPage(): ReactNode {
       // 中文释义模糊匹配：任一义项命中即保留。
       return entry.meanings.some((meaning) => meaning.definition.includes(keyword) || meaning.definition.includes(query.trim()));
     });
-  }, [entries, query, statusFilter, nowMs]);
+  }, [entries, query, statusFilter, unitFilter, listFilter]);
 
   // 详情与筛选解耦（规格 12.1）：选中词条被过滤掉时详情收起。
   // rerender-derived-state-no-effect：不做"effect 监听 filtered → 回写 state"的
@@ -146,6 +139,9 @@ export function VocabularyPage(): ReactNode {
   // 详情不会闪出一帧。语义与原 effect 完全一致（选中永久清除，而非暂隐）。
   if (detailWordId !== null && !filtered.some((entry) => entry.wordId === detailWordId)) {
     setDetailWordId(null);
+  }
+  if (selectedWordId !== null && !filtered.some((entry) => entry.wordId === selectedWordId)) {
+    setSelectedWordId(null);
   }
 
   // Escape 收起详情（规格 12.2）。
@@ -163,8 +159,74 @@ export function VocabularyPage(): ReactNode {
   // 卡片选中回调：setState 函数引用天然稳定，useCallback 空依赖保证 VocabCard
   // 的 memo props 不因父级重渲染而失效。
   const selectCard = useCallback((wordId: string): void => {
+    setSelectedWordId(wordId);
     setDetailWordId(wordId);
+    setDetailDeleteArmed(false);
+    setTimelineOpen(false);
   }, []);
+
+  const dictionaryEnabled = services.settings.getFeatureFlags().onlineDictionary;
+  useEffect(() => {
+    if (detailWordId === null || !dictionaryEnabled) {
+      setDictionaryView(null);
+      setDictionaryBusy(false);
+      return;
+    }
+    let cancelled = false;
+    const wordId = detailWordId;
+    const cached = services.dictionary.getSnapshot(wordId);
+    setDictionaryView({ wordId, snapshot: cached });
+    if (!cached.needsRefresh) return () => { cancelled = true; };
+    // V1 打开详情时自动补拉；查询期间保持界面可操作，收起或切换词条则取消旧结果。
+    setDictionaryBusy(true);
+    void services.dictionary.load(wordId, { isCancelled: () => cancelled }).then((snapshot) => {
+      if (cancelled) return;
+      setDictionaryView({ wordId, snapshot });
+      services.notifyChanged();
+    }).catch(() => {
+      if (!cancelled) setDictionaryView({ wordId, snapshot: {
+        status: "查询失败", provider: "在线词典", fetchedAt: null, definitions: [],
+        message: "在线释义暂时不可用，请检查网络后重试", needsRefresh: true,
+      } });
+    }).finally(() => { if (!cancelled) setDictionaryBusy(false); });
+    return () => { cancelled = true; };
+  }, [detailWordId, dictionaryEnabled, services]);
+
+  const retryDictionary = (): void => {
+    if (detailWordId === null || dictionaryBusy) return;
+    const wordId = detailWordId;
+    setDictionaryBusy(true);
+    void services.dictionary.load(wordId).then((snapshot) => {
+      setDictionaryView({ wordId, snapshot });
+      services.notifyChanged();
+    }).catch(() => setDictionaryView({ wordId, snapshot: {
+      status: "查询失败", provider: "在线词典", fetchedAt: null, definitions: [],
+      message: "在线释义暂时不可用，请检查网络后重试", needsRefresh: true,
+    } })).finally(() => setDictionaryBusy(false));
+  };
+
+  const markWord = (wordId: string, mastered: boolean): void => {
+    if (activeSpace === null) return;
+    try {
+      services.vocabularyMastery.mark({ spaceId: activeSpace.id, wordId, mastered });
+      services.notifyChanged();
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const confirmRemove = (wordId: string): void => {
+    try {
+      services.bookLearning.removeWord({ wordId, firstConfirmation: true, secondConfirmation: true });
+      services.notifyChanged();
+      showToast("词条已从词汇中移除。");
+      setDetailWordId(null);
+      setSelectedWordId(null);
+      setDetailDeleteArmed(false);
+    } catch (cause) {
+      setEditError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
 
   if (activeSpace === null) {
     return (
@@ -175,9 +237,11 @@ export function VocabularyPage(): ReactNode {
   }
 
   const detailEntry = detailWordId === null ? null : (entries.find((entry) => entry.wordId === detailWordId) ?? null);
-  const statusOptions: readonly StatusFilter[] = isRegularMode
-    ? ["全部", "今天待测试", "学习中", "已掌握"]
-    : ["全部", "学习中", "已掌握"];
+  const statusOptions: readonly StatusFilter[] = ["全部掌握状态", "未掌握", "已掌握"];
+  const timeline = detailEntry === null ? [] : services.learningViews.listVocabularyTimeline(detailEntry.wordId);
+  const dictionarySnapshot = detailEntry !== null && dictionaryView?.wordId === detailEntry.wordId ? dictionaryView.snapshot : null;
+  const dictionaryHasContent = (dictionarySnapshot?.definitions.length ?? 0) > 0;
+  const dictionaryFailed = dictionarySnapshot?.status === "查询失败" && !dictionaryHasContent;
 
   return (
     <PageShell
@@ -197,9 +261,19 @@ export function VocabularyPage(): ReactNode {
     >
       {filterOpen ? (
         <section className="card filter-panel" data-testid="vocabulary-filter-panel">
+          {isRegularMode ? null : (
+            <>
+              <div className="field"><label className="field-label" htmlFor="vocabulary-unit-filter">Unit</label>
+                <input id="vocabulary-unit-filter" className="field-input" type="number" min="0" max="9999" value={unitFilter || ""} placeholder="全部" onChange={(event) => setUnitFilter(Number(event.target.value) || 0)} data-testid="vocabulary-unit-filter" />
+              </div>
+              <div className="field"><label className="field-label" htmlFor="vocabulary-list-filter">List</label>
+                <input id="vocabulary-list-filter" className="field-input" type="number" min="0" max="9999" value={listFilter || ""} placeholder="全部" onChange={(event) => setListFilter(Number(event.target.value) || 0)} data-testid="vocabulary-list-filter" />
+              </div>
+            </>
+          )}
           <div className="field">
             <label className="field-label" htmlFor="vocabulary-status-filter">
-              状态
+              掌握状态
             </label>
             <select
               id="vocabulary-status-filter"
@@ -225,6 +299,7 @@ export function VocabularyPage(): ReactNode {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               aria-label="搜索词条或释义"
+              placeholder="搜索词条或释义"
               data-testid="vocabulary-search"
             />
           </div>
@@ -245,18 +320,16 @@ export function VocabularyPage(): ReactNode {
               <VocabCard
                 key={entry.wordId}
                 entry={entry}
-                label={statusLabel(entry, nowMs)}
-                recordedLabel={formatUserDate(entry.recordedAt, referenceNow)}
-                selected={detailWordId === entry.wordId}
+                selected={selectedWordId === entry.wordId}
                 onSelect={selectCard}
+                onRemove={confirmRemove}
               />
             ))}
           </div>
           {detailEntry === null ? null : (
             <aside className="vocab-detail" data-testid="vocabulary-detail">
               <div className="vocab-detail-header">
-                <h2 className="vocab-detail-title">
-                  {detailEntry.originalSpelling}
+                <h2 className="vocab-detail-title">{detailEntry.originalSpelling}
                   {detailEntry.masteryStatus === MasteryStatus.Mastered ? (
                     <span className="mastered-check" role="img" aria-label="已掌握">
                       ✓
@@ -273,30 +346,33 @@ export function VocabularyPage(): ReactNode {
                   收起
                 </button>
               </div>
-              <p className="vocab-detail-meta" data-testid="vocabulary-detail-meta">
-                {formatUserDate(detailEntry.recordedAt, referenceNow)}录入 · {statusLabel(detailEntry, nowMs)}
-              </p>
+              <div className="vocab-detail-actions">
+                {detailDeleteArmed ? (
+                  <><button type="button" className="btn btn-danger" onClick={() => confirmRemove(detailEntry.wordId)} data-testid="vocabulary-confirm-delete">确认删除</button>
+                    <button type="button" className="btn btn-secondary" onClick={() => setDetailDeleteArmed(false)} data-testid="vocabulary-cancel-delete">取消</button></>
+                ) : <button type="button" className="btn btn-danger" onClick={() => setDetailDeleteArmed(true)} data-testid="vocabulary-remove">删除词条</button>}
+                <button type="button" className="btn btn-secondary" onClick={() => markWord(detailEntry.wordId, detailEntry.masteryStatus !== MasteryStatus.Mastered)} data-testid="vocabulary-mark-mastery">
+                  {detailEntry.masteryStatus === MasteryStatus.Mastered ? "标记为未掌握" : "标记为已掌握"}
+                </button>
+              </div>
               <section className="vocab-detail-section">
-                <h3 className="card-section-title">你的释义</h3>
-                {detailEntry.meanings.map((meaning, index) => (
-                  <p className="vocab-meaning-line" key={index} data-testid={`vocabulary-meaning-${index}`}>
-                    {meaning.partOfSpeech === null ? null : <span className="meaning-pos-text">{meaning.partOfSpeech} </span>}
-                    {meaning.definition}
-                    {meaning.usage === null ? null : <span className="meaning-usage-text">（{meaning.usage}）</span>}
-                  </p>
-                ))}
+                <h3 className="card-section-title">手录释义</h3>
+                <textarea className="vocab-detail-textarea" readOnly value={detailEntry.manualMeaning} aria-label="手录义项主数据" data-testid="vocabulary-manual-meaning" />
               </section>
-              <section className="vocab-detail-section" data-testid="vocabulary-detail-progress">
-                <h3 className="card-section-title">学习进度</h3>
-                <p className="vocab-progress-line">
-                  {detailEntry.lastJudgement === null
-                    ? "还没有测试记录。"
-                    : `最近一次测试：${detailEntry.lastJudgement}。`}
-                  {detailEntry.nextDueAt !== null
-                    ? ` 下次测试：${formatUserDate(detailEntry.nextDueAt, referenceNow)}。`
-                    : null}
-                </p>
+              {dictionaryEnabled && (dictionaryHasContent || dictionaryFailed) ? (
+                <section className="vocab-detail-section" data-testid="vocabulary-online-section">
+                  <h3 className="card-section-title">在线释义</h3>
+                  {dictionaryHasContent ? <textarea className="vocab-detail-textarea online" readOnly value={dictionarySnapshot?.definitions.map((item) => `${item.partOfSpeech}：${item.definition}`).join("\n") ?? ""} aria-label="在线补充释义" data-testid="vocabulary-online-meanings" /> : null}
+                  {dictionaryFailed ? <><p role="alert">在线释义暂时不可用，请检查网络后重试</p><button type="button" className="btn btn-secondary" disabled={dictionaryBusy} onClick={retryDictionary} data-testid="vocabulary-dictionary-retry">重新查询</button></> : null}
+                </section>
+              ) : null}
+              <section className="vocab-detail-section">
+                <button type="button" className="vocab-timeline-toggle" onClick={() => setTimelineOpen((open) => !open)} aria-expanded={timelineOpen} data-testid="vocabulary-timeline-toggle">学习记录 {timelineOpen ? "⌄" : "›"}</button>
+                {timelineOpen ? <div className="vocab-timeline" data-testid="vocabulary-timeline">
+                  {timeline.length === 0 ? <p>暂无学习记录</p> : timeline.map((item) => <p key={item.eventId}>{formatUserDate(item.occurredAt, referenceNow)} · {item.title}</p>)}
+                </div> : null}
               </section>
+              {editError === null ? null : <p className="field-error" role="alert" data-testid="vocabulary-content-error">{editError}</p>}
             </aside>
           )}
         </div>

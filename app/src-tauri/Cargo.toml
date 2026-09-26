@@ -12,6 +12,10 @@ edition = "2021"
 name = "ebbinghaus_v2_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# 原生自动验收显式启用；正式构建不传入该特性，避免启动 WebDriver 服务。
+wdio-test = []
+
 # 版本锁定依据（2026-09-20 实查 crates.io 版本与发布日期）：
 # - tauri =2.11.5：tauri 2.x 线最高稳定版（2026-07-01 发布），与技术决策锁定的
 #   @tauri-apps/api 2.11.1 / @tauri-apps/cli 2.11.4 同代（npm 侧 2.11.x 对应 Rust 侧 2.11.x）。
@@ -24,10 +28,21 @@ tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
 tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-sql = { version = "=2.4.1", features = ["sqlite"] }
+sqlx = { version = "=0.8.6", default-features = false, features = ["sqlite", "runtime-tokio"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "query"] }
+tokio = { version = "1", features = ["sync", "macros"] }
+aes-gcm = "=0.10.3"
+scrypt = "=0.11.0"
+base64 = "=0.22.1"
+tauri-plugin-wdio = "=1.4.0"
+tauri-plugin-wdio-webdriver = "=1.4.0"
 
-# 插件接线占位（Phase 4 闸门测试时启用，本轮骨架只留计划、不接依赖）：
+# 其余插件接线占位（Phase 4 闸门测试时启用）：
 # 接入顺序与验收闸门见 CLAUDE.md「闸门测试清单（Phase 4）」与 docs/V2迁移技术决策.md。
-#   tauri-plugin-sql = "2"          # 客户端 SQLite 权威本地库（TauriProductionAdapter 存储后端）
 #   tauri-plugin-http = "2"         # 同步引擎的 HTTP 出口（经权限域收敛，仅放行服务器地址）
 #   tauri-plugin-stronghold = "2"   # 密钥存储（LLM 设备本地配置的密钥透传；或评估 keyring 插件）
 #   tauri-plugin-notification = "2" # 复习提醒通知

@@ -45,6 +45,11 @@ import {
 import { SqlitePullCursorStore } from "../sync/syncState.ts";
 import { buildHttpSyncGateway } from "../sync/httpGateway.ts";
 import { SyncEngine } from "../sync/syncEngine.ts";
+import { SqliteContentSyncStore } from "../sync/contentStore.ts";
+import { SqliteFirstPassDraftStore } from "../repositories/drafts.ts";
+import { SqliteDictionaryCacheStore } from "../repositories/dictionary.ts";
+import { createConcurrentOnlineDictionary, createFetchDictionaryTransport } from "../dictionary/onlineDictionary.ts";
+import type { OnlineDictionaryPort } from "@ebbinghaus/application";
 
 /** Node 运行时端口集合（与 TauriProductionAdapter 的实现合同一致）。 */
 export interface NodeClientRuntime {
@@ -59,11 +64,15 @@ export interface NodeClientRuntime {
   readonly syncedSettingsStore: SqliteSyncedSettingsStore;
   readonly deviceLocalStore: SqliteDeviceLocalStore;
   readonly llmConfigurationStore: SqliteLlmConfigurationStore;
+  readonly dictionaryCacheStore: SqliteDictionaryCacheStore;
+  readonly onlineDictionary: OnlineDictionaryPort;
   readonly outbox: SqliteOutbox;
   readonly unitOfWork: UnitOfWork;
   readonly deviceIdentity: DeviceIdentityProvider;
   readonly deviceSeqAllocator: DeviceSeqAllocator;
   readonly pullCursor: SqlitePullCursorStore;
+  readonly contentSyncStore: SqliteContentSyncStore;
+  readonly firstPassDraftStore: SqliteFirstPassDraftStore;
   readonly syncEngine: SyncEngine | null;
   /** 显式关闭底库（WAL checkpoint 后释放文件句柄；测试间隔离用）。 */
   close(): void;
@@ -77,10 +86,12 @@ export interface CreateNodeClientRuntimeOptions {
   readonly idGenerator?: IdGenerator;
   /** 密钥加密端口：缺省明文透传（开发/测试），生产必须注入真实实现（见 SecretCipher）。 */
   readonly secretCipher?: SecretCipher;
+  readonly onlineDictionary?: OnlineDictionaryPort;
   /** 服务器接入：Base URL + Bearer token；缺省构造纯离线运行时（syncEngine 为 null）。 */
   readonly server?: { readonly baseUrl: string; readonly authToken: string };
   readonly backoff?: OutboxBackoffOptions;
   readonly onEventsApplied?: (appliedCount: number) => void;
+  readonly onContentApplied?: (appliedCount: number) => void;
 }
 
 export function createNodeClientRuntime(
@@ -93,7 +104,9 @@ export function createNodeClientRuntime(
   const backoff = options.backoff ?? DEFAULT_OUTBOX_BACKOFF;
 
   const outbox = new SqliteOutbox(db, backoff, clock);
-  const eventStore = new SqliteLearningEventStore(db, clock);
+  const deviceIdentity = new SqliteDeviceIdentityProvider(db, idGenerator);
+  const contentSyncStore = new SqliteContentSyncStore(db, clock, deviceIdentity, backoff);
+  const eventStore = new SqliteLearningEventStore(db, clock, outbox);
   const syncedSettingsStore = new SqliteSyncedSettingsStore(db, outbox);
   const pullCursor = new SqlitePullCursorStore(db);
 
@@ -107,29 +120,35 @@ export function createNodeClientRuntime(
           }),
           eventStore,
           settingsStore: syncedSettingsStore,
+          contentStore: contentSyncStore,
           outbox,
           clock,
           pullCursor,
           onEventsApplied: options.onEventsApplied,
+          onContentApplied: options.onContentApplied,
         });
 
   return {
     db,
     eventStore,
-    wordContentStore: new SqliteWordContentStore(db),
-    bookCatalogStore: new SqliteBookCatalogStore(db),
-    spaceStore: new SqliteSpaceStore(db),
+    wordContentStore: new SqliteWordContentStore(db, contentSyncStore),
+    bookCatalogStore: new SqliteBookCatalogStore(db, contentSyncStore),
+    spaceStore: new SqliteSpaceStore(db, contentSyncStore),
     testSessionStore: new SqliteTestSessionStore(db),
     fsrsCardStore: new SqliteFsrsCardStore(db),
     dailyPlanStore: new SqliteDailyPlanStore(db),
     syncedSettingsStore,
     deviceLocalStore: new SqliteDeviceLocalStore(db),
     llmConfigurationStore: new SqliteLlmConfigurationStore(db, secretCipher, clock),
+    dictionaryCacheStore: new SqliteDictionaryCacheStore(db),
+    onlineDictionary: options.onlineDictionary ?? createConcurrentOnlineDictionary(createFetchDictionaryTransport()),
     outbox,
     unitOfWork: new SqliteUnitOfWork(db),
-    deviceIdentity: new SqliteDeviceIdentityProvider(db, idGenerator),
+    deviceIdentity,
     deviceSeqAllocator: new SqliteDeviceSeqAllocator(db),
     pullCursor,
+    contentSyncStore,
+    firstPassDraftStore: new SqliteFirstPassDraftStore(db, contentSyncStore),
     syncEngine,
     close: () => {
       db.close();

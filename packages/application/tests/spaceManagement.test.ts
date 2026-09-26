@@ -23,6 +23,7 @@ import {
   SpaceManagementService,
 } from "../src/spaceManagement.ts";
 import { SettingsService } from "../src/settingsFacade.ts";
+import { INITIAL_DEFAULT_TIMESTAMP } from "../src/settingsFacade.ts";
 import {
   FixedClock,
   InMemoryBookCatalogStore,
@@ -391,6 +392,7 @@ describe("首次启动默认数据", () => {
       "词书模式",
       "常规模式",
     ]);
+    expect(spaces.every((space) => space.createdAt === INITIAL_DEFAULT_TIMESTAMP && space.updatedAt === INITIAL_DEFAULT_TIMESTAMP)).toBe(true);
     // 活动 Space 是设备本地状态：首次缺省到第一个默认项。
     expect(settings.getActiveSpaceId()).toBe("a1f0c3d4-0000-4000-8000-000000000001");
   });

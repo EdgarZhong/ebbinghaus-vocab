@@ -18,6 +18,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
-    "@ebbinghaus/server": "workspace:*"
+    "@ebbinghaus/server": "workspace:*",
+    "fastify": "5.12.3"
   }
 }

@@ -101,7 +101,7 @@ export async function waitAnimationsSettled(page: Page, testId: string): Promise
   await target.evaluate((el) => {
     const animations = el
       .getAnimations({ subtree: true })
-      .filter((animation) => animation.playState === "running" || animation.playState === "pending");
+      .filter((animation) => animation.playState === "running");
     if (animations.length === 0) {
       return Promise.resolve();
     }

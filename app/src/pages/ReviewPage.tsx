@@ -2,9 +2,8 @@
  * 复习页（功能完整）：词书模式纸质复习确认 + 常规模式只读朗读分组。
  *
  * 交互语义对应界面设计规格第 9 章与需求规格 6.4/6.8：
- * - 词书模式：页面只出现需要线下翻书复习的 List（本阶段仅"仅复习"任务可达，
- *   测试后复习需词书逐词会话进入"等待纸质复习"状态，该会话用例尚未交付，
- *   如实不在列表出现）；主要按钮始终为"完成纸质复习"，完成反馈与按钮同名。
+ * - 词书模式：仅复习到期任务与软件测试完成的"等待纸质复习"任务都在此按
+ *   List 展示；主要按钮始终为"完成纸质复习"，完成反馈与按钮同名。
  * - 常规模式：说明改为"查看今天已经测试过的条目，方便朗读和背诵"；只展示当天
  *   已有最终测试结果的条目，最终"不认识"置顶并标注"刚刚忘记"；无完成/确认/
  *   推迟操作，关闭页面不产生任何学习事件。
@@ -104,6 +103,7 @@ function BookReviewView({ tasks }: { tasks: readonly BookReviewTaskView[] }): Re
                     ) : (
                       <span className="badge">{view.dueLabel}</span>
                     )}
+                    {view.task.taskType !== "仅复习" ? <span className="badge" data-testid={`review-awaiting-${view.title}`}>等待纸质复习</span> : null}
                     <span>{view.words.length} 个词需要复习</span>
                   </span>
                 </div>

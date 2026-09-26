@@ -13,9 +13,8 @@
  * 测试任务的完成前置（会话存在且处于"等待纸质复习"）按 V1 口径校验；会话是
  * 设备本地执行状态（TestSessionStore），不是事件。
  *
- * 未移植部分（如实记录）：V1 词书逐词测试会话流程（开始/恢复/暂停/确认答案/
- * 等待纸质复习状态推进）依赖 List 粒度会话与计划任务的持久化绑定，属于后续
- * 阶段接线范围；本文件先固化"任务完成记录"的事件产出口径。
+ * 会话由 BookLearningService 启动并推进；本用例在事件写入后关闭等待纸质复习
+ * 会话，确保任务完成反馈不会重复出现。
  */
 
 import { MasteryStatus, ShortTermPassCount, reviewDemandKey } from "@ebbinghaus/domain";
@@ -25,6 +24,7 @@ import type {
   LearningEventStore,
   TestSessionRecord,
   TestSessionStore,
+  UnitOfWork,
   WordContentStore,
 } from "./ports.ts";
 import { TestSessionExecutionStatus } from "./ports.ts";
@@ -39,6 +39,7 @@ export interface BookReviewCompletionServiceDeps {
   readonly wordContentStore: WordContentStore;
   readonly bookCatalogStore: BookCatalogStore;
   readonly sessionStore: TestSessionStore;
+  readonly unitOfWork?: UnitOfWork;
 }
 
 export class BookReviewCompletionService {
@@ -134,6 +135,16 @@ export class BookReviewCompletionService {
         );
       }
     }
-    this.deps.eventStore.appendEvents(events);
+    const commit = (): void => {
+      this.deps.eventStore.appendEvents(events);
+      if (session !== null) {
+        this.deps.sessionStore.updateSession({ ...session, status: TestSessionExecutionStatus.Completed });
+      }
+    };
+    if (this.deps.unitOfWork === undefined) {
+      commit();
+    } else {
+      this.deps.unitOfWork.run(commit);
+    }
   }
 }

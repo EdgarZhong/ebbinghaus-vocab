@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 
 import { settingKeySchema, spaceSettingKey, type SettingEntry } from "@ebbinghaus/protocol";
 
-import { SettingsService } from "../src/settingsFacade.ts";
+import { INITIAL_DEFAULT_TIMESTAMP, SettingsService } from "../src/settingsFacade.ts";
 import {
   FixedClock,
   InMemoryDeviceLocalStore,
@@ -44,6 +44,18 @@ function buildService(clockIso: string = CLOCK_ISO) {
 }
 
 describe("全局学习日设置（同步通道）", () => {
+  it("首启默认项使用早期版本；之后真实保存仍使用当前时钟", () => {
+    const { settings, syncedSettings } = buildService();
+    settings.ensureLearningDayDefaults();
+    settings.ensureSpaceLearningDefaults(SPACE_ID);
+    expect(syncedSettings.getAll().every((entry) => entry.updatedAt === INITIAL_DEFAULT_TIMESTAMP)).toBe(true);
+
+    settings.saveSpaceDailyTarget(SPACE_ID, 10);
+    const dailyTarget = syncedSettings.getAll().find((entry) => entry.key === spaceSettingKey(SPACE_ID, "dailyTarget"));
+    expect(dailyTarget?.updatedAt).toBe(CLOCK_ISO);
+    expect(dailyTarget?.value).toBe(10);
+  });
+
   it("键缺失时回退领域默认值（东八区、04:00）", () => {
     const { settings } = buildService();
 

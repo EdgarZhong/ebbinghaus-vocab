@@ -40,6 +40,17 @@ export interface StoredEventPageRow {
   readonly serverSeq: number;
 }
 
+/** 内容目录只物化版本与身份；完整载荷由协议校验后原样存储。 */
+export interface ContentRow {
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly payload: string;
+  readonly updatedAt: string;
+  readonly deviceId: string;
+  readonly deleted: number;
+  readonly serverSeq: number;
+}
+
 /** 同步存取接口：路由层依赖此接口而非裸 better-sqlite3 句柄。 */
 export interface SyncStore {
   /** 按 event_id 查已入库事件获得过的同步游标；不存在返回 undefined。 */
@@ -60,6 +71,11 @@ export interface SyncStore {
   upsertSettingRow(row: SettingRow): void;
   /** settings 总数（测试与运维核对用）。 */
   countSettings(): number;
+  getContentRow(entityType: string, entityId: string): ContentRow | undefined;
+  upsertContentRow(row: ContentRow): void;
+  allocateContentSeq(): number;
+  listContentsAfter(afterSeq: number, limit: number): ContentRow[];
+  countContents(): number;
 }
 
 /** 创建基于 better-sqlite3 的存取实现。prepared statement 在创建时预编译复用。 */
@@ -97,6 +113,23 @@ export function createSyncStore(db: Database.Database): SyncStore {
       server_updated_at = excluded.server_updated_at
   `);
   const countSettingsStmt = db.prepare("SELECT COUNT(*) AS total FROM settings");
+  const getContentStmt = db.prepare(
+    "SELECT entity_type AS entityType, entity_id AS entityId, payload, updated_at AS updatedAt, device_id AS deviceId, deleted, server_seq AS serverSeq FROM contents WHERE entity_type = ? AND entity_id = ?",
+  );
+  const upsertContentStmt = db.prepare(`
+    INSERT INTO contents (entity_type, entity_id, payload, updated_at, device_id, deleted, server_seq)
+    VALUES (@entityType, @entityId, @payload, @updatedAt, @deviceId, @deleted, @serverSeq)
+    ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+      payload = excluded.payload, updated_at = excluded.updated_at,
+      device_id = excluded.device_id, deleted = excluded.deleted, server_seq = excluded.server_seq
+  `);
+  const allocateContentSeqStmt = db.prepare(
+    "UPDATE sync_counters SET value = value + 1 WHERE name = 'content_seq' RETURNING value",
+  );
+  const listContentsStmt = db.prepare(
+    "SELECT entity_type AS entityType, entity_id AS entityId, payload, updated_at AS updatedAt, device_id AS deviceId, deleted, server_seq AS serverSeq FROM contents WHERE server_seq > ? ORDER BY server_seq ASC LIMIT ?",
+  );
+  const countContentsStmt = db.prepare("SELECT COUNT(*) AS total FROM contents");
 
   return {
     findServerSeqByEventId(eventId: string): number | undefined {
@@ -136,6 +169,28 @@ export function createSyncStore(db: Database.Database): SyncStore {
 
     countSettings(): number {
       const row = countSettingsStmt.get() as { total: number };
+      return row.total;
+    },
+
+    getContentRow(entityType: string, entityId: string): ContentRow | undefined {
+      return getContentStmt.get(entityType, entityId) as ContentRow | undefined;
+    },
+
+    upsertContentRow(row: ContentRow): void {
+      upsertContentStmt.run(row);
+    },
+
+    allocateContentSeq(): number {
+      const row = allocateContentSeqStmt.get() as { value: number };
+      return row.value;
+    },
+
+    listContentsAfter(afterSeq: number, limit: number): ContentRow[] {
+      return listContentsStmt.all(afterSeq, limit) as ContentRow[];
+    },
+
+    countContents(): number {
+      const row = countContentsStmt.get() as { total: number };
       return row.total;
     },
   };

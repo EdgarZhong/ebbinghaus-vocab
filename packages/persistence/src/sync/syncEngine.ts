@@ -20,6 +20,7 @@ import type { Clock } from "@ebbinghaus/application";
 import type { SyncGateway } from "./httpGateway.ts";
 import type { OutboxStore } from "../outbox/outboxStore.ts";
 import { SyncError } from "../errors.ts";
+import type { ContentSyncStore } from "./contentStore.ts";
 
 /** 单次推送批量上限：单事件数百字节，200 条约数十 KB，gzip 后往返成本可控。 */
 const PUSH_BATCH_SIZE = 200;
@@ -32,8 +33,10 @@ const DRAIN_LIMIT = 500;
 export interface SyncCycleResult {
   /** 本轮拉取并新落库的事件数（触发重放的依据）。 */
   readonly pulledEventCount: number;
+  readonly pulledContentCount: number;
   /** 本轮成功清队的 outbox 条目数。 */
   readonly pushedEntryCount: number;
+  readonly pushedContentCount: number;
   /** 本轮 settings 全量对账是否成功执行。 */
   readonly settingsReconciled: boolean;
   /** 各阶段失败摘要（空数组 = 全部成功）；仅为观测，不驱动控制流。 */
@@ -54,12 +57,14 @@ export interface SyncEngineDeps {
   readonly gateway: SyncGateway;
   readonly eventStore: PulledEventApplier;
   readonly settingsStore: MergedSettingsApplier;
+  readonly contentStore?: ContentSyncStore;
   readonly outbox: OutboxStore;
   readonly clock: Clock;
   /** 拉取游标（sync_state）存取：断点续传的载体。 */
   readonly pullCursor: { readonly read: () => number; readonly write: (value: number) => void };
   /** 拉取到新事件后的组合根钩子（重放/派生刷新）；引擎不关心其内部实现。 */
   readonly onEventsApplied?: (appliedCount: number) => void;
+  readonly onContentApplied?: (appliedCount: number) => void;
 }
 
 export class SyncEngine {
@@ -87,7 +92,9 @@ export class SyncEngine {
     const errors: string[] = [];
     let settingsReconciled = false;
     let pulledEventCount = 0;
+    let pulledContentCount = 0;
     let pushedEntryCount = 0;
+    let pushedContentCount = 0;
 
     // 1) settings 全量对账。
     try {
@@ -98,7 +105,23 @@ export class SyncEngine {
       errors.push(`settings 对账失败：${describeSyncError(error)}`);
     }
 
-    // 2) 事件增量拉取（断点续传：逐页推进并落盘游标）。
+    // 2) 内容先于事件拉取：领域重放需要已齐备的 Space/Word 目录作为输入。
+    if (this.deps.contentStore !== undefined) {
+      try {
+        for (;;) {
+          const page = await this.deps.gateway.pullContent(this.deps.contentStore.readCursor(), PULL_PAGE_SIZE);
+          const applied = this.deps.contentStore.applyRemote(page.contents);
+          this.deps.contentStore.writeCursor(page.nextCursor);
+          pulledContentCount += applied;
+          if (applied > 0) this.deps.onContentApplied?.(applied);
+          if (!page.hasMore) break;
+        }
+      } catch (error) {
+        errors.push(`内容拉取失败：${describeSyncError(error)}`);
+      }
+    }
+
+    // 3) 事件增量拉取（断点续传：逐页推进并落盘游标）。
     try {
       for (;;) {
         const page = await this.deps.gateway.pull(this.readCursor(), PULL_PAGE_SIZE);
@@ -116,14 +139,34 @@ export class SyncEngine {
       errors.push(`事件拉取失败：${describeSyncError(error)}`);
     }
 
-    // 3) outbox 消费（事件批量 push + settings 批量 PUT）。
+    // 4) 内容先于事件推送：其他设备获得学习事实时，其身份目录应已存在于云端。
+    if (this.deps.contentStore !== undefined) {
+      const nowIso = this.deps.clock.now().toISOString();
+      const due = this.deps.contentStore.dueEntries(nowIso, DRAIN_LIMIT);
+      for (let offset = 0; offset < due.length; offset += PUSH_BATCH_SIZE) {
+        const batch = due.slice(offset, offset + PUSH_BATCH_SIZE);
+        try {
+          const response = await this.deps.gateway.putContent(batch.map((item) => item.entry));
+          this.deps.contentStore.applyRemote(response.contents);
+          for (const item of batch) {
+            this.deps.contentStore.markSucceeded(item);
+            pushedContentCount += 1;
+          }
+        } catch (error) {
+          for (const item of batch) this.deps.contentStore.markFailed(item, describeSyncError(error), nowIso);
+          errors.push(`内容推送失败：${describeSyncError(error)}`);
+        }
+      }
+    }
+
+    // 5) 学习事件与 settings 出站；内容失败不阻断学习操作，但失败会留在本地待重试。
     try {
       pushedEntryCount = await this.drainOutbox(errors);
     } catch (error) {
       errors.push(`推送失败：${describeSyncError(error)}`);
     }
 
-    return { pulledEventCount, pushedEntryCount, settingsReconciled, errors };
+    return { pulledEventCount, pulledContentCount, pushedEntryCount, pushedContentCount, settingsReconciled, errors };
   }
 
   /** 消费到期条目：事件与 settings 各自批量单往返；失败逐条退避，绝不清队。 */

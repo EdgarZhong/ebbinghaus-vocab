@@ -21,6 +21,7 @@ import { createSyncStore } from "./store.ts";
 import { registerHealthRoutes } from "./routes/health.ts";
 import { registerSettingsRoutes } from "./routes/settings.ts";
 import { registerSyncRoutes } from "./routes/sync.ts";
+import { registerContentRoutes } from "./routes/content.ts";
 
 /** buildApp 可注入项。 */
 export interface BuildAppOptions {
@@ -122,6 +123,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerHealthRoutes(app, { now });
   registerSyncRoutes(app, { db: options.db, store, now });
   registerSettingsRoutes(app, { db: options.db, store, now });
+  registerContentRoutes(app, { db: options.db, store });
 
   return app;
 }

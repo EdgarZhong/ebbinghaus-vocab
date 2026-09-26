@@ -25,7 +25,7 @@ import type {
   UnitOfWork,
   WordContentStore,
 } from "./ports.ts";
-import type { SettingsService } from "./settingsFacade.ts";
+import { INITIAL_DEFAULT_TIMESTAMP, type SettingsService } from "./settingsFacade.ts";
 
 export interface SpaceManagementServiceDeps {
   readonly spaceStore: SpaceStore;
@@ -265,7 +265,9 @@ export function initializeDefaultApplicationData(deps: {
       if (existingByIid.has(definition.id)) {
         continue;
       }
-      const now = deps.clock.now().toISOString();
+      // 固定默认 Space 是首启种子。用极早的版本时间，避免后安装的设备以
+      // “刚创建”的默认目录覆盖云端已有的改名、归档等用户修改。
+      const now = INITIAL_DEFAULT_TIMESTAMP;
       deps.spaceStore.addSpace(
         createSpace({
           id: definition.id,

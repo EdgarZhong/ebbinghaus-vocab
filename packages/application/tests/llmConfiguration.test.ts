@@ -294,13 +294,13 @@ describe("保存配置与活动整理器重建", () => {
 });
 
 describe("连通性测试准备", () => {
-  it("准备阶段读取已保存配置，闭包执行才探测，成功返回用户可读提示", () => {
+  it("准备阶段读取已保存配置，闭包执行才探测，成功返回用户可读提示", async () => {
     // V1 映射：test_prepare_llm_connection_test_reads_saved_config_on_calling_thread。
     const captured: { baseUrl: string; modelName: string; apiKey: string | null }[] = [];
     const { service } = buildService({
       stored: { baseUrl: "https://db.example.com", modelName: "db-model", apiKey: "db-key", thinkingEnabled: true },
       probe: {
-        probe(baseUrl, modelName, apiKey) {
+        async probe(baseUrl, modelName, apiKey) {
           captured.push({ baseUrl, modelName, apiKey });
         },
       },
@@ -310,37 +310,37 @@ describe("连通性测试准备", () => {
 
     // 准备阶段只读配置，不发起探测。
     expect(captured).toEqual([]);
-    expect(run()).toBe("连接成功，大语言模型服务可用");
+    await expect(run()).resolves.toBe("连接成功，大语言模型服务可用");
     expect(captured).toEqual([{ baseUrl: "https://db.example.com", modelName: "db-model", apiKey: "db-key" }]);
   });
 
-  it("库内无记录时使用百炼默认地址与模型，密钥为 null", () => {
+  it("库内无记录时使用百炼默认地址与模型，密钥为 null", async () => {
     // V1 映射：test_prepare_llm_connection_test_uses_defaults_without_stored_config。
     const captured: { baseUrl: string; modelName: string; apiKey: string | null }[] = [];
     const { service } = buildService({
       probe: {
-        probe(baseUrl, modelName, apiKey) {
+        async probe(baseUrl, modelName, apiKey) {
           captured.push({ baseUrl, modelName, apiKey });
         },
       },
     });
 
-    service.prepareConnectionTest()();
+    await service.prepareConnectionTest()();
 
     expect(captured).toEqual([{ baseUrl: ALIYUN_BAILIAN_BASE_URL, modelName: ALIYUN_BAILIAN_MODEL, apiKey: null }]);
   });
 
-  it("探测闭包抛出的用户可读错误原样透传，不得吞掉或改写", () => {
+  it("探测闭包抛出的用户可读错误原样透传，不得吞掉或改写", async () => {
     // V1 映射：test_prepare_llm_connection_test_propagates_probe_failure。
     const { service } = buildService({
       probe: {
-        probe() {
+        async probe() {
           throw new Error("无法连接大语言模型服务");
         },
       },
     });
 
-    expect(() => service.prepareConnectionTest()()).toThrow("无法连接大语言模型服务");
+    await expect(service.prepareConnectionTest()()).rejects.toThrow("无法连接大语言模型服务");
   });
 
   it("组合根未注入探测时明确报不可用，而不是静默成功", () => {

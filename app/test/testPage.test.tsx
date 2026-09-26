@@ -1,13 +1,15 @@
 /**
  * 测试页测试：任务列表（常规分组 / 词书任务）、逐词测试会话主路径（开始 →
- * 作答 → 揭示 → 确认 → 完成）、暂停/恢复、改判单向与键盘语义、词书任务占位。
+ * 作答 → 揭示 → 确认 → 完成）、暂停/恢复、改判单向与键盘语义、词书纸质复习。
  */
 
 import { describe, expect, it } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { screen } from "@testing-library/react";
+import { ConfirmedEntry } from "@ebbinghaus/application";
 import { createTestServices, renderApp } from "./helpers.tsx";
-import { seedRegularDueServices, seedBookSpaceWithReviewOnlyTask } from "./seed.ts";
+import { FIXED_NOW } from "./helpers.tsx";
+import { createMutableClock, createTestServicesWithClock, seedRegularDueServices } from "./seed.ts";
 
 /** 渲染 → 打开测试页。 */
 async function openTestPage(services = createTestServices()): Promise<void> {
@@ -32,17 +34,55 @@ describe("测试页：任务列表", () => {
     expect(screen.queryByText(/Unit/)).not.toBeInTheDocument();
   });
 
-  it("词书模式显示 Unit/List 任务；逐词测试未开放时给出如实占位", async () => {
+  it("词书模式从首过到逐词测试、等待纸质复习，再完成纸质复习", async () => {
     const user = userEvent.setup();
-    const services = createTestServices();
-    const spaceId = seedBookSpaceWithReviewOnlyTask(services);
-    void spaceId;
+    const mutable = createMutableClock(new Date(FIXED_NOW.getTime() - 2 * 86_400_000));
+    const services = createTestServicesWithClock(mutable.clock);
+    const spaceId = services.getActiveSpace()?.id ?? "";
+    services.bookLearning.recordFirstPass({
+      spaceId, unitNumber: 1, listNumber: 4,
+      entries: [new ConfirmedEntry("abandon", [{ partOfSpeech: "v.", definition: "放弃", usage: null }])],
+    });
+    mutable.setNow(FIXED_NOW);
     renderApp(services);
-    // 默认活动 Space 是"必考词"（词书模式无任务），种子 Space 为新建活动 Space。
     await user.click(screen.getByTestId("nav-test"));
-    expect(screen.getByTestId(/test-task-seed-list-4/)).toBeInTheDocument();
-    await user.click(screen.getByTestId(/test-start-seed-list-4/));
-    expect(screen.getByTestId("test-book-hint")).toHaveTextContent("逐词测试将在后续更新中提供");
+    const listId = services.runtime.bookCatalogStore.listListsForSpace(spaceId)[0]?.listId ?? "";
+    expect(screen.getByTestId(`test-task-${listId}`)).toHaveTextContent("Unit 1 · List 4");
+    await user.click(screen.getByTestId(`test-start-${listId}`));
+    expect(screen.getByTestId("session-word")).toHaveTextContent("abandon");
+    await user.click(screen.getByTestId("session-recognized"));
+    await user.click(screen.getByTestId("session-next"));
+    expect(screen.getByTestId("test-completed")).toHaveTextContent("软件测试完成了");
+    await user.click(screen.getByTestId("test-go-review"));
+    expect(screen.getByTestId("review-awaiting-Unit 1 · List 4")).toHaveTextContent("等待纸质复习");
+    await user.click(screen.getByTestId("review-complete-Unit 1 · List 4"));
+    expect(services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "testFollowedByReviewCompleted")).toBe(true);
+  });
+
+  it("词书会话确认一词后暂停，任务行与恢复会话都准确显示尚余一词", async () => {
+    const user = userEvent.setup();
+    const mutable = createMutableClock(new Date(FIXED_NOW.getTime() - 2 * 86_400_000));
+    const services = createTestServicesWithClock(mutable.clock);
+    const spaceId = services.getActiveSpace()?.id ?? "";
+    services.bookLearning.recordFirstPass({
+      spaceId, unitNumber: 1, listNumber: 5,
+      entries: [
+        new ConfirmedEntry("abandon", [{ partOfSpeech: "v.", definition: "放弃", usage: null }]),
+        new ConfirmedEntry("elaborate", [{ partOfSpeech: "ad.", definition: "精细的", usage: null }]),
+      ],
+    });
+    mutable.setNow(FIXED_NOW);
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-test"));
+    const listId = services.runtime.bookCatalogStore.listListsForSpace(spaceId)[0]?.listId ?? "";
+    await user.click(screen.getByTestId(`test-start-${listId}`));
+    await user.click(screen.getByTestId("session-recognized"));
+    await user.click(screen.getByTestId("session-next"));
+    expect(screen.getByTestId("test-session-remaining")).toHaveTextContent("尚余 1 个词");
+    await user.click(screen.getByTestId("session-pause"));
+    expect(screen.getByTestId(`test-task-${listId}`)).toHaveTextContent("本 List 尚余 1 个词");
+    await user.click(screen.getByTestId(`test-start-${listId}`));
+    expect(screen.getByTestId("test-session-remaining")).toHaveTextContent("尚余 1 个词");
   });
 });
 

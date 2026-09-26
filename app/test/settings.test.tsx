@@ -1,6 +1,6 @@
 /**
- * 设置页测试：同步设置读写（学习日 / 每日目标 / 词典来源 / 联网辅助）、
- * LLM 四项配置（设备本地）、API 密钥脱敏与"清空并重新填写"语义、
+ * 设置页测试：同步设置读写（学习日 / 联网辅助 / 复习参数）、
+ * LLM 四项配置（设备本地）、API 密钥单独保存与"清空并重新填写"语义、
  * 客户端校验失败时的就地提示。
  */
 
@@ -18,46 +18,38 @@ async function openSettings(user: ReturnType<typeof userEvent.setup>): Promise<A
 }
 
 describe("设置页：同步设置", () => {
-  it("初始展示默认值：东八区、04:00 换日、联网辅助开启、维基词典", async () => {
+  it("初始展示默认值：东八区、04:00 换日、联网辅助开启且无来源选择", async () => {
     const user = userEvent.setup();
     const services = await openSettings(user);
     expect(screen.getByTestId("settings-timezone")).toHaveValue("Asia/Shanghai");
     expect(screen.getByTestId("settings-rollover")).toHaveValue("04:00");
     expect(screen.getByTestId("feature-smart-organizing")).toBeChecked();
     expect(screen.getByTestId("feature-online-dictionary")).toBeChecked();
-    expect(screen.getByTestId("dictionary-provider")).toHaveValue("维基词典");
-    // 默认 Space（必考词）的每日目标初始为 0。
-    expect(screen.getByTestId("settings-daily-target")).toHaveValue("0");
+    expect(screen.queryByTestId("dictionary-provider")).not.toBeInTheDocument();
+    // V1 的每日目标在“今日”页调整，设置页不重复放入口。
+    expect(screen.queryByTestId("settings-daily-target")).not.toBeInTheDocument();
     void services;
   });
 
-  it("修改换日时间与每日目标后保存，写入同步设置", async () => {
+  it("修改换日时间后保存，写入同步设置", async () => {
     const user = userEvent.setup();
     const services = await openSettings(user);
 
     fireEvent.change(screen.getByTestId("settings-rollover"), { target: { value: "05:30" } });
-    const targetInput = screen.getByTestId("settings-daily-target");
-    await user.clear(targetInput);
-    await user.type(targetInput, "12");
     await user.click(screen.getByTestId("settings-save"));
 
     expect(screen.getByTestId("settings-status")).toHaveTextContent("设置已保存。");
     expect(services.settings.getLearningDaySettings().rolloverTime).toBe("05:30");
-    expect(
-      services.settings.getSpaceLearningSettings("a1f0c3d4-0000-4000-8000-000000000001").dailyTarget,
-    ).toBe(12);
   });
 
-  it("切换词典来源与联网辅助开关后保存，写入同步设置", async () => {
+  it("切换联网辅助开关后保存，写入同步设置", async () => {
     const user = userEvent.setup();
     const services = await openSettings(user);
 
-    await user.selectOptions(screen.getByTestId("dictionary-provider"), "有道词典");
     await user.click(screen.getByTestId("feature-smart-organizing"));
     await user.click(screen.getByTestId("settings-save"));
 
     expect(screen.getByTestId("settings-status")).toHaveTextContent("设置已保存。");
-    expect(services.settings.getDictionaryProvider()).toBe("有道词典");
     expect(services.settings.getFeatureFlags()).toMatchObject({
       smartOrganizing: false,
       onlineDictionary: true,
@@ -78,11 +70,11 @@ describe("设置页：同步设置", () => {
 });
 
 describe("设置页：大语言模型配置", () => {
-  it("未配置密钥时显示未配置并提供填写入口", async () => {
+  it("未配置密钥时直接提供输入与独立保存", async () => {
     const user = userEvent.setup();
     await openSettings(user);
-    expect(screen.getByTestId("llm-api-key-masked")).toHaveTextContent("未配置");
-    expect(screen.getByTestId("llm-fill-api-key")).toBeInTheDocument();
+    expect(screen.getByTestId("llm-api-key-input")).toBeInTheDocument();
+    expect(screen.getByTestId("llm-save-api-key")).toBeInTheDocument();
     expect(screen.getByTestId("llm-base-url")).toHaveValue(
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
     );
@@ -94,9 +86,8 @@ describe("设置页：大语言模型配置", () => {
     const user = userEvent.setup();
     const services = await openSettings(user);
 
-    await user.click(screen.getByTestId("llm-fill-api-key"));
     await user.type(screen.getByTestId("llm-api-key-input"), "sk-test-abcd1234");
-    await user.click(screen.getByTestId("settings-save"));
+    await user.click(screen.getByTestId("llm-save-api-key"));
 
     const snapshot = services.llm.configurationSnapshot();
     expect(snapshot.hasApiKey).toBe(true);
@@ -112,9 +103,8 @@ describe("设置页：大语言模型配置", () => {
     const user = userEvent.setup();
     const services = await openSettings(user);
 
-    await user.click(screen.getByTestId("llm-fill-api-key"));
     await user.type(screen.getByTestId("llm-api-key-input"), "sk-live-99887766");
-    await user.click(screen.getByTestId("settings-save"));
+    await user.click(screen.getByTestId("llm-save-api-key"));
     expect(services.llm.configurationSnapshot().hasApiKey).toBe(true);
 
     await user.click(screen.getByTestId("llm-clear-api-key"));
@@ -122,10 +112,19 @@ describe("设置页：大语言模型配置", () => {
     expect(services.llm.configurationSnapshot().hasApiKey).toBe(true);
 
     await user.click(screen.getByTestId("llm-clear-api-key"));
-    await user.click(screen.getByTestId("settings-save"));
-    expect(screen.getByTestId("settings-status")).toHaveTextContent("设置已保存。");
+    await user.click(screen.getByTestId("llm-save-api-key"));
+    expect(screen.getByTestId("settings-status")).toHaveTextContent("API 密钥已清空");
     expect(services.llm.configurationSnapshot().hasApiKey).toBe(false);
-    expect(screen.getByTestId("llm-api-key-masked")).toHaveTextContent("未配置");
+    expect(screen.getByTestId("llm-api-key-input")).toHaveValue("");
+  });
+
+  it("底部保存不会意外提交密钥行尚未保存的明文草稿", async () => {
+    const user = userEvent.setup();
+    const services = await openSettings(user);
+    await user.type(screen.getByTestId("llm-api-key-input"), "sk-unsaved-value");
+    await user.click(screen.getByTestId("settings-save"));
+    expect(services.llm.configurationSnapshot().hasApiKey).toBe(false);
+    expect(screen.getByTestId("llm-api-key-input")).toHaveValue("sk-unsaved-value");
   });
 
   it("思考开关随保存持久化到设备本地配置", async () => {
@@ -151,5 +150,32 @@ describe("设置页：大语言模型配置", () => {
     expect(services.llm.configurationSnapshot().baseUrl).toBe(
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
     );
+  });
+});
+
+describe("设置页：目标保持率", () => {
+  it("常规模式修改需两次确认，确认后仅保存复习参数", async () => {
+    const user = userEvent.setup();
+    const services = createTestServices();
+    const regular = services.spaces.createAndActivate({ name: "日常积累测试", learningMode: "常规模式" });
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-settings"));
+    const retention = screen.getByTestId("settings-retention");
+    expect(retention).toHaveValue("0.95");
+    await user.clear(retention);
+    await user.type(retention, "0.90");
+    await user.click(screen.getByTestId("settings-save"));
+    expect(services.settings.getSpaceLearningSettings(regular.id).fsrsParameters.desiredRetention).toBe(0.95);
+    await user.click(screen.getByTestId("confirm-retention"));
+    expect(screen.getByText(/再次确认修改/)).toBeInTheDocument();
+    await user.click(screen.getByTestId("confirm-retention"));
+    expect(services.settings.getSpaceLearningSettings(regular.id).fsrsParameters.desiredRetention).toBe(0.9);
+    expect(screen.getByTestId("settings-status")).toHaveTextContent("复习参数已保存");
+  });
+
+  it("词书模式不显示复习参数卡片", async () => {
+    const user = userEvent.setup();
+    await openSettings(user);
+    expect(screen.queryByTestId("settings-retention")).not.toBeInTheDocument();
   });
 });

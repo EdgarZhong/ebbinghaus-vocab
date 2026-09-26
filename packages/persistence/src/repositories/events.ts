@@ -17,6 +17,7 @@ import type Database from "better-sqlite3";
 import type { ApplicationEvent, Clock, LearningEventStore } from "@ebbinghaus/application";
 
 import { DuplicateEventError } from "../errors.ts";
+import type { OutboxStore } from "../outbox/outboxStore.ts";
 
 /** 事件行 → 应用层视图的列映射（SQL 内已用 AS 对齐 camelCase，此处只做 JSON 解析）。 */
 interface EventRow {
@@ -56,7 +57,7 @@ export class SqliteLearningEventStore implements LearningEventStore {
   /** 拉取侧专用语句：INSERT OR IGNORE 实现服务器回声的幂等落地。 */
   private readonly ignoreInsertStmt;
 
-  constructor(db: Database.Database, clock: Clock) {
+  constructor(db: Database.Database, clock: Clock, private readonly outbox?: OutboxStore) {
     this.db = db;
     this.clock = clock;
     this.insertStmt = this.db.prepare(`
@@ -101,6 +102,8 @@ export class SqliteLearningEventStore implements LearningEventStore {
             metadataJson: JSON.stringify(event.metadata),
             recordedAt,
           });
+          // 同一事务内登记推送意图：任何一侧失败都会整批回滚。
+          this.outbox?.enqueueEvent(event);
         } catch (error) {
           // UNIQUE 冲突（event_id 主键或 device_id+device_seq）→ 翻译为领域错误。
           if (error instanceof Error && error.message.includes("UNIQUE constraint failed")) {

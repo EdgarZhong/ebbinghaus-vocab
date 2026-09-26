@@ -21,8 +21,8 @@ import type Database from "better-sqlite3";
 
 import { buildApp } from "@ebbinghaus/server/app";
 import { openDatabase } from "@ebbinghaus/server/db";
-import type { ApplicationEvent, Space } from "@ebbinghaus/application";
-import { initializeDefaultApplicationData, SettingsService } from "@ebbinghaus/application";
+import type { ApplicationEvent, Space, WordContentRecord } from "@ebbinghaus/application";
+import { DEFAULT_SPACE_DEFINITIONS, initializeDefaultApplicationData, SettingsService } from "@ebbinghaus/application";
 import {
   createInMemoryRuntime,
   createNodeClientRuntime,
@@ -104,7 +104,6 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
     const event = makeEvent(1, clientA.deviceIdentity.getDeviceId(), "a1");
     clientA.unitOfWork.run(() => {
       clientA.eventStore.appendEvents([event]);
-      clientA.outbox.enqueueEvent(event);
     });
 
     // A 第一轮同步：settings PUT + 事件 push。
@@ -133,6 +132,59 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
     expect(clientB.outbox.pendingCount()).toBe(0);
   });
 
+  it("Space/Unit/List/Word 离线本地写入后经云端在双端收敛，软移除与删除墓碑不会复活", async () => {
+    const space: Space = {
+      id: "7ab31111-1111-4111-8111-111111111111", kind: null,
+      displayOrder: 8, name: "词书同步", archivedAt: null,
+      createdAt: CLOCK_ISO, updatedAt: CLOCK_ISO, learningMode: "词书模式",
+    };
+    const unit = { id: "unit-sync-1", spaceId: space.id, number: 1 };
+    const list = { listId: "list-sync-1", spaceId: space.id, unitId: unit.id,
+      unitNumber: 1, listNumber: 1 };
+    const word: WordContentRecord = {
+      wordId: "word-sync-1", listId: list.listId, spaceId: null,
+      originalSpelling: "reconcile", normalizedKey: "reconcile",
+      manualMeaning: "使一致", meanings: [{ partOfSpeech: null, definition: "使一致", usage: null }],
+      removed: false, recordedAt: CLOCK_ISO,
+    };
+    clientA.spaceStore.addSpace(space);
+    clientA.bookCatalogStore.addUnit(unit);
+    clientA.bookCatalogStore.addList(list);
+    clientA.wordContentStore.upsertEntries([word]);
+    expect(clientA.contentSyncStore.pendingCount()).toBe(4);
+
+    const pushed = await clientA.syncEngine!.runCycle();
+    expect(pushed.errors).toEqual([]);
+    expect(pushed.pushedContentCount).toBe(4);
+    expect(clientA.contentSyncStore.pendingCount()).toBe(0);
+    const pulled = await clientB.syncEngine!.runCycle();
+    expect(pulled.errors).toEqual([]);
+    expect(pulled.pulledContentCount).toBe(4);
+    expect(clientB.spaceStore.getSpace(space.id)?.name).toBe("词书同步");
+    expect(clientB.bookCatalogStore.getList(list.listId)).toEqual(list);
+    expect(clientB.wordContentStore.getEntry(word.wordId)?.manualMeaning).toBe("使一致");
+
+    clientB.spaceStore.updateSpace({ ...space, name: "词书已改名" });
+    clientB.wordContentStore.markRemoved(word.wordId, CLOCK_ISO);
+    await clientB.syncEngine!.runCycle();
+    await clientA.syncEngine!.runCycle();
+    expect(clientA.spaceStore.getSpace(space.id)?.name).toBe("词书已改名");
+    expect(clientA.wordContentStore.getEntry(word.wordId)?.removed).toBe(true);
+
+    clientB.spaceStore.deleteSpace(space.id);
+    await clientB.syncEngine!.runCycle();
+    await clientA.syncEngine!.runCycle();
+    expect(clientA.spaceStore.getSpace(space.id)).toBeNull();
+    // 旧版本重发只得到服务器墓碑，且不会再下发已删除的 Space。
+    const stale = await (await import("../src/index.ts")).buildHttpSyncGateway({ baseUrl, authToken: TOKEN })
+      .putContent([{
+        entityType: "space", entityId: space.id, value: space, deleted: false,
+        updatedAt: CLOCK_ISO, deviceId: clientA.deviceIdentity.getDeviceId(),
+      }]);
+    expect(stale.contents[0]?.deleted).toBe(true);
+    expect(clientA.spaceStore.getSpace(space.id)).toBeNull();
+  });
+
   it("断线：outbox 退避不清队、循环不抛错；恢复后自动补推收敛", async () => {
     // 指向一个必然拒绝连接的端口模拟断网；用文件库让"恢复"侧重开同一队列与断点。
     const tempDir = mkdtempSync(join(tmpdir(), "ebb-offline-"));
@@ -146,7 +198,6 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
       const event = makeEvent(2, offline.deviceIdentity.getDeviceId(), "off1");
       offline.unitOfWork.run(() => {
         offline.eventStore.appendEvents([event]);
-        offline.outbox.enqueueEvent(event);
       });
 
       const offlineCycle = await offline.syncEngine!.runCycle();
@@ -250,7 +301,6 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
       const event = makeEvent(9, runtime.deviceIdentity.getDeviceId(), "parity");
       runtime.unitOfWork.run(() => {
         runtime.eventStore.appendEvents([event]);
-        runtime.outbox.enqueueEvent(event);
       });
       const settings = new SettingsService({
         syncedSettings: runtime.syncedSettingsStore,
@@ -316,8 +366,33 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
       const cycle = await freshA.syncEngine!.runCycle();
       expect(cycle.errors).toEqual([]);
 
+      // A 已在云端留下真实用户修改；此时才安装并初始化 B，默认种子不能
+      // 借新设备的当前时间抢赢原设置或固定 Space 目录。
+      const settingsA = new SettingsService({
+        syncedSettings: freshA.syncedSettingsStore,
+        deviceLocal: freshA.deviceLocalStore,
+        clock,
+        deviceIdentity: freshA.deviceIdentity,
+      });
+      settingsA.saveSpaceDailyTarget(DEFAULT_SPACE_DEFINITIONS[0]!.id, 10);
+      const firstSpace = freshA.spaceStore.getSpace(DEFAULT_SPACE_DEFINITIONS[0]!.id)!;
+      freshA.spaceStore.updateSpace({ ...firstSpace, displayOrder: 9, updatedAt: clock.now().toISOString() });
+      expect((await freshA.syncEngine!.runCycle()).errors).toEqual([]);
+
+      initializeDefaultApplicationData({
+        spaceStore: freshB.spaceStore,
+        settings: new SettingsService({
+          syncedSettings: freshB.syncedSettingsStore,
+          deviceLocal: freshB.deviceLocalStore,
+          clock,
+          deviceIdentity: freshB.deviceIdentity,
+        }),
+        clock,
+        unitOfWork: freshB.unitOfWork,
+      });
+
       // B 同步后应收敛到相同的默认设置（时区/换日时间默认值）。
-      await freshB.syncEngine!.runCycle();
+      expect((await freshB.syncEngine!.runCycle()).errors).toEqual([]);
       const settingsB = new SettingsService({
         syncedSettings: freshB.syncedSettingsStore,
         deviceLocal: freshB.deviceLocalStore,
@@ -326,6 +401,11 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
       });
       expect(settingsB.getLearningScheduleSettings().timezoneName).toBe("Asia/Shanghai");
       expect(settingsB.getLearningScheduleSettings().dayRolloverTime).toBe("04:00");
+      expect(settingsB.getSpaceLearningSettings(DEFAULT_SPACE_DEFINITIONS[0]!.id).dailyTarget).toBe(10);
+      expect(freshB.spaceStore.getSpace(DEFAULT_SPACE_DEFINITIONS[0]!.id)?.displayOrder).toBe(9);
+      expect((await freshA.syncEngine!.runCycle()).errors).toEqual([]);
+      expect(settingsA.getSpaceLearningSettings(DEFAULT_SPACE_DEFINITIONS[0]!.id).dailyTarget).toBe(10);
+      expect(freshA.spaceStore.getSpace(DEFAULT_SPACE_DEFINITIONS[0]!.id)?.displayOrder).toBe(9);
     } finally {
       freshA.close();
       freshB.close();

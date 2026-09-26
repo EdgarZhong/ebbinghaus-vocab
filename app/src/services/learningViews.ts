@@ -22,6 +22,7 @@ import {
 } from "@ebbinghaus/domain";
 import {
   replayWordStates,
+  type BookLearningService,
   type PersistedListTask,
   type SettingsService,
   type SchedulingService,
@@ -42,11 +43,22 @@ export interface VocabularyEntryView {
   readonly meanings: readonly StructuredMeaning[];
   /** 录入（或最近内容更新）时刻 UTC ISO；排序与展示日期的唯一来源。 */
   readonly recordedAt: string;
+  /** 词书模式纸质定位；常规模式没有 Unit/List。 */
+  readonly unitNumber: number | null;
+  readonly listNumber: number | null;
   readonly masteryStatus: MasteryStatusType;
   /** 最近一次最终测试判断；从未测试为 null。 */
   readonly lastJudgement: TestJudgementType | null;
   /** 常规模式 FSRS 下次到期时间；词书模式词无 FSRS 卡片为 null。 */
   readonly nextDueAt: string | null;
+}
+
+/** V1 详情中可展开的学习事件记录，按发生时间稳定排序。 */
+export interface VocabularyTimelineItemView {
+  readonly eventId: string;
+  readonly occurredAt: string;
+  readonly title: string;
+  readonly detail: string;
 }
 
 /** 常规模式复习组内的只读条目（仅展示已有最终测试结果的条目）。 */
@@ -68,7 +80,7 @@ export interface RegularReviewGroupView {
   readonly others: readonly RegularReviewEntryView[];
 }
 
-/** 词书模式复习页任务卡（仅复习任务；测试后复习在会话接线前不可达）。 */
+/** 词书模式复习页任务卡，包含仅复习与已完成软件测试的纸质复习。 */
 export interface BookReviewTaskView {
   readonly taskId: string;
   /** 行为语言标题："Unit 2 · List 3"。 */
@@ -84,9 +96,10 @@ export interface BookReviewTaskView {
 export interface LearningViews {
   /** 词汇页：活动 Space 的全部条目（未掌握在前，同状态按录入倒序）。 */
   listVocabularyEntries(spaceId: string): readonly VocabularyEntryView[];
+  listVocabularyTimeline(wordId: string): readonly VocabularyTimelineItemView[];
   /** 常规模式复习页：当天已有最终测试结果的条目分组。 */
   listRegularReviewGroups(spaceId: string): readonly RegularReviewGroupView[];
-  /** 词书模式复习页：今天需要纸质复习的 List 任务（仅复习口径）。 */
+  /** 词书模式复习页：今天需要纸质复习的 List 任务。 */
   listBookReviewTasks(spaceId: string): readonly BookReviewTaskView[];
   /** 词书模式测试列表：全部派生任务（测试页与今日看板同一数据源）。 */
   bookTaskItems(spaceId: string): readonly TaskItemSnapshot[];
@@ -100,6 +113,7 @@ export interface CreateLearningViewsDeps {
   readonly runtime: InMemoryRuntime;
   readonly settings: SettingsService;
   readonly scheduling: SchedulingService;
+  readonly bookLearning: BookLearningService;
   readonly clock: Clock;
 }
 
@@ -141,7 +155,10 @@ function toBookTaskItem(
     workload: task.workload,
     overdueDays: task.overdueDays,
     completedCount,
-    totalCount: activeWords.length,
+    // 已启动的会话冻结了本轮待测词集合；确认一词后调度需求会立刻缩减。
+    // 若此时仍用缩减后的需求数再减 currentPosition，会把已答词扣两次，
+    // 暂停列表比会话内少报一词，并可能误导用户以为续测跳词。
+    totalCount: sessionMatches && openSession !== null ? openSession.words.length : activeWords.length,
     sessionStatus,
     activeWords,
   };
@@ -178,17 +195,43 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       });
       return withIndex.map(({ content }) => {
         const state = replayed.get(content.wordId);
+        const list = content.listId === null ? null : runtime.bookCatalogStore.getList(content.listId);
+        const unit = list === null ? null : runtime.bookCatalogStore.getUnit(list.unitId);
         return {
           wordId: content.wordId,
           originalSpelling: content.originalSpelling,
           manualMeaning: content.manualMeaning,
           meanings: [...content.meanings],
           recordedAt: content.recordedAt,
+          unitNumber: unit?.number ?? null,
+          listNumber: list?.listNumber ?? null,
           masteryStatus: state?.masteryStatus ?? MasteryStatus.Unmastered,
           lastJudgement: state?.lastJudgement ?? null,
           nextDueAt: state?.regularDueAt ?? null,
         };
       });
+    },
+
+    listVocabularyTimeline(wordId: string): readonly VocabularyTimelineItemView[] {
+      const labels: Record<string, string> = {
+        firstPassRecorded: "首次录入", wordAdded: "新增词条", wordContentUpdated: "编辑内容",
+        wordRemoved: "删除词条", testAnswered: "测试作答", answerRevised: "测试改判",
+        shortTermPassCountChanged: "短期通过次数变更", longTermValidationCompleted: "长期验证完成",
+        wordMastered: "已掌握", wordManuallyMarkedMastered: "手动标记为已掌握",
+        wordManuallyMarkedUnmastered: "手动标记为未掌握",
+        dictionaryFetched: "在线释义已查询", dictionaryFetchFailed: "在线释义查询失败",
+      };
+      // 只取当前 Word 的审计事实；V2 派生任务不持久化，因此计划项由调度器另行
+      // 计算，不能把“当前计划”伪装成已经发生的历史记录。
+      return runtime.eventStore.listAllEvents()
+        .filter((event) => event.targetId === wordId)
+        .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.deviceSeq - b.deviceSeq)
+        .map((event) => ({
+          eventId: event.eventId,
+          occurredAt: event.occurredAt,
+          title: labels[event.eventType] ?? event.eventType,
+          detail: JSON.stringify(event.metadata),
+        }));
     },
 
     listRegularReviewGroups(spaceId: string): readonly RegularReviewGroupView[] {
@@ -248,8 +291,13 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       const learningDaySettings = settings.getLearningDaySettings();
       const replayed = states();
       const refresh = scheduling.refreshSpaceTasks({ spaceId, learningDaySettings });
-      return refresh.tasks
-        .filter((task) => task.taskType === "仅复习")
+      // 进行中的软件测试仍留在测试页；测试完成的任务从会话启动快照恢复，
+      // 防止答案改变调度投影后，纸质复习入口被新任务覆盖。
+      const paperTasks = [
+        ...refresh.tasks.filter((task) => task.taskType === "仅复习"),
+        ...deps.bookLearning.pendingPaperReviewTasks(spaceId),
+      ];
+      return [...new Map(paperTasks.map((task) => [task.taskId, task])).values()]
         .map((task) => {
           const listRecord = runtime.bookCatalogStore.getList(task.listId);
           const unit = listRecord === null ? null : runtime.bookCatalogStore.getUnit(listRecord.unitId);

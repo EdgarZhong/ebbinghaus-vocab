@@ -279,7 +279,7 @@
   align-items: flex-start;
 }
 
-/* 录入页（常规模式两步流）。 */
+/* V1 录入页的两步流：候选摘要在上、单条编辑器在下，最终操作始终可见。 */
 .firstpass-textarea {
   min-height: 160px;
   resize: vertical;
@@ -297,7 +297,76 @@
 .firstpass-entry-list {
   display: flex;
   flex-direction: column;
-  gap: var(--group-gap);
+  gap: 8px;
+  max-height: min(320px, 42vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.firstpass-review {
+  min-width: 0;
+}
+
+.firstpass-transcript {
+  padding: 12px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  overflow-wrap: anywhere;
+}
+
+.firstpass-transcript summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.firstpass-transcript p {
+  white-space: pre-wrap;
+  margin-bottom: 0;
+}
+
+.firstpass-preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  gap: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.firstpass-preview-item.is-selected {
+  border-color: var(--color-accent);
+}
+
+.firstpass-preview-item em,
+.firstpass-global-warning {
+  font-style: italic;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.firstpass-editor-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+}
+
+.firstpass-editor-panel .entry-card {
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
 }
 
 .entry-card {
@@ -367,7 +436,8 @@
   border-radius: var(--radius-xlarge);
   box-shadow: var(--glass-shadow);
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 /* 冲突处理行。 */

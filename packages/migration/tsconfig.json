@@ -1,0 +1,8 @@
+{
+  "$comment": "V1 一次性迁移工具；仅在 Node 运行，生产客户端与服务器都不导入此包。",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}

@@ -1,6 +1,6 @@
 /**
- * 词汇页测试：单列卡片与录入倒序、右侧滑出详情（释义/状态/最近结果）、实时
- * 搜索与状态筛选、筛选与详情解耦、空状态。
+ * 词汇页测试：V1 单列卡片与录入倒序、详情中的手录/在线释义区和学习记录、
+ * 双向手动掌握、详情确认删除、实时搜索与掌握状态筛选。
  */
 
 import { describe, expect, it } from "vitest";
@@ -52,9 +52,16 @@ describe("词汇页", () => {
     expect(screen.getByTestId("empty-state")).toHaveTextContent("还没有录入任何词");
   });
 
-  it("卡片按录入倒序；详情滑出显示释义、状态与最近结果", async () => {
+  it("卡片按录入倒序；详情按 V1 顺序显示手录释义、在线释义与折叠记录", async () => {
     const user = userEvent.setup();
-    const { services } = seedVocabulary();
+    const { services, spaceId } = seedVocabulary();
+    const abandonId = services.learningViews.listVocabularyEntries(spaceId).find((entry) => entry.originalSpelling === "abandon")?.wordId;
+    if (abandonId === undefined) throw new Error("缺少测试词条");
+    services.runtime.dictionaryCacheStore.replace({
+      id: "dictionary-test-1", wordId: abandonId, provider: "有道词典", normalizedWord: "abandon",
+      definitions: [{ partOfSpeech: "v.", definition: "舍弃" }], rawResponseSummary: "测试释义",
+      fetchedAt: FIXED_NOW.toISOString(), cacheStatus: "有效",
+    });
     renderApp(services);
     await user.click(screen.getByTestId("nav-vocabulary"));
 
@@ -69,9 +76,12 @@ describe("词汇页", () => {
     expect(screen.queryByTestId("vocabulary-detail")).not.toBeInTheDocument();
     await user.click(screen.getByTestId("vocab-card-abandon"));
     const detail = screen.getByTestId("vocabulary-detail");
-    expect(within(detail).getByTestId("vocabulary-detail-meta")).toHaveTextContent("学习中");
-    expect(within(detail).getByText(/放弃/)).toBeInTheDocument();
-    expect(within(detail).getByTestId("vocabulary-detail-progress")).toHaveTextContent("最近一次测试：认识。");
+    expect(within(detail).getByTestId("vocabulary-manual-meaning")).toHaveValue("v. 放弃");
+    expect(await within(detail).findByTestId("vocabulary-online-section")).toHaveTextContent("在线释义");
+    expect(within(detail).getByTestId("vocabulary-online-meanings")).toHaveValue("v.：舍弃");
+    expect(within(detail).getByTestId("vocabulary-timeline-toggle")).toHaveAttribute("aria-expanded", "false");
+    await user.click(within(detail).getByTestId("vocabulary-timeline-toggle"));
+    expect(within(detail).getByTestId("vocabulary-timeline")).toHaveTextContent("测试作答");
 
     // 收起详情。
     await user.click(screen.getByTestId("vocabulary-detail-close"));
@@ -113,5 +123,27 @@ describe("词汇页", () => {
     expect(screen.queryByTestId("vocabulary-detail")).not.toBeInTheDocument();
     expect(screen.getByTestId("empty-state")).toHaveTextContent("没有匹配的词");
     void services;
+  });
+
+  it("详情双向掌握立即写事件并刷新卡片；删除先展开确认再移除", async () => {
+    const user = userEvent.setup();
+    const { services } = seedVocabulary();
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-vocabulary"));
+    await user.click(screen.getByTestId("vocab-card-abandon"));
+    await user.click(screen.getByTestId("vocabulary-mark-mastery"));
+    expect(screen.getByTestId("vocabulary-mark-mastery")).toHaveTextContent("标记为未掌握");
+    expect(services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "wordManuallyMarkedMastered")).toBe(true);
+    await user.click(screen.getByTestId("vocabulary-mark-mastery"));
+    expect(screen.getByTestId("vocabulary-mark-mastery")).toHaveTextContent("标记为已掌握");
+    expect(services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "wordManuallyMarkedUnmastered")).toBe(true);
+
+    await user.click(screen.getByTestId("vocabulary-remove"));
+    expect(screen.getByTestId("vocab-card-abandon")).toBeInTheDocument();
+    await user.click(screen.getByTestId("vocabulary-cancel-delete"));
+    expect(screen.getByTestId("vocab-card-abandon")).toBeInTheDocument();
+    await user.click(screen.getByTestId("vocabulary-remove"));
+    await user.click(screen.getByTestId("vocabulary-confirm-delete"));
+    expect(screen.queryByTestId("vocab-card-abandon")).not.toBeInTheDocument();
   });
 });

@@ -4,12 +4,8 @@ import { z } from "zod";
  * 学习事件协议 schema（需求规格 7.2 + docs/V2首轮自主判断与口径收敛.md B4）。
  *
  * 设计总纲：
- * - 事件类型枚举以需求规格 7.2 原文为准，共 18 个枚举值（判断文件 B4 写"15 类"，
- *   但规格 7.2 实际逐条列出 18 个，其中 testSessionPaused/Resumed、
- *   dictionaryFetched/FetchFailed 是成对条目；本包以规格原文为准，勿漏勿增）。
- *   V1 枚举另有 wordManuallyMarkedUnmastered / wordManuallyMarkedMastered 两个
- *   规格 7.2 未收录的事件类型（对应验收场景 10 的双向手动掌握标记），按 B4 口径
- *   暂不纳入本协议，是否扩枚举留待用户晨审定夺。
+ * - 需求规格 7.2 原列 18 类。V1 正式应用另有双向手动掌握事件，用户已明确要求
+ *   V2 除技术栈和跨端同步外保持 V1 行为；协议因此补齐这两类，共 20 类。
  * - 同步事件信封 = V1 `learning_events` 既有字段（id→eventId、event_type→eventType、
  *   target_type/target_id、occurred_at→occurredAt、learning_day、source、
  *   metadata_json→metadata）+ 新增 deviceId、deviceSeq（技术决策第四章）。
@@ -59,7 +55,7 @@ const learningDaySchema = z
   }, "learningDay 必须是真实存在的日历日");
 
 // ---------------------------------------------------------------------------
-// 事件类型枚举：需求规格 7.2 全部 18 类，Zod enum 固化，顺序与规格原文一致。
+// 事件类型枚举：需求规格 7.2 的 18 类及 V1 双向手动掌握两类。
 // ---------------------------------------------------------------------------
 
 export const learningEventTypeValues = [
@@ -81,6 +77,8 @@ export const learningEventTypeValues = [
   "wordAdded",
   "wordContentUpdated",
   "wordRemoved",
+  "wordManuallyMarkedUnmastered",
+  "wordManuallyMarkedMastered",
 ] as const;
 
 export const learningEventTypeSchema = z.enum(learningEventTypeValues);
@@ -253,6 +251,23 @@ const wordRemovedMetadataSchema = z.looseObject({
 });
 
 /**
+ * V1 词汇页的手动掌握反馈。词书模式记录前后状态与短期周期，常规模式记录
+ * FSRS 卡片反馈和到期时间；两者均保留原始 metadata 字段以支持历史迁移。
+ */
+const wordManuallyMarkedMetadataSchema = z.looseObject({
+  wordId: z.string().min(1).optional(),
+  feedback: z.string().min(1),
+  beforeState: wordStateSnapshotSchema.optional(),
+  afterState: wordStateSnapshotSchema.optional(),
+  previousMasteryStatus: z.string().min(1).optional(),
+  nextMasteryStatus: z.string().min(1).optional(),
+  newShortTermCycleAt: isoTimestampSchema.optional(),
+  hardMastery: z.boolean().optional(),
+  listMastered: z.boolean().optional(),
+  algorithmVersion: z.string().min(1).optional(),
+});
+
+/**
  * taskDeferred：任务跨学习日未完成。
  * V1 仅在枚举中定义了该事件类型（domain/enums.py），application 层没有任何构造点，
  * 实际 metadata 结构未知——故用完全开放的 record 校验（只要求是 JSON 对象），
@@ -296,7 +311,7 @@ function defineEventSchema(eventType: LearningEventType, metadataSchema: z.ZodTy
  * 刻意用 z.union 而非 z.discriminatedUnion：discriminatedUnion 的 TS 泛型要求成员
  * 以元组形式传入，此处成员经由工厂函数生成后再 .map() 构造存储视图，tuple 退化
  * 会让联合输出类型退化为 unknown，丢失全部类型推导（校验行为不变）；z.union 对
- * 数组成员的类型推导稳定，输出为 18 类事件输出类型的精确联合。代价是解析错误
+ * 数组成员的类型推导稳定，输出为 20 类事件输出类型的精确联合。代价是解析错误
  * 信息不按 eventType 分派（逐成员尝试），对双端排障足够。
  */
 export const learningEventSchema = z.union([
@@ -330,6 +345,8 @@ export const learningEventSchema = z.union([
   defineEventSchema("wordAdded", wordAddedMetadataSchema),
   defineEventSchema("wordContentUpdated", wordContentUpdatedMetadataSchema),
   defineEventSchema("wordRemoved", wordRemovedMetadataSchema),
+  defineEventSchema("wordManuallyMarkedUnmastered", wordManuallyMarkedMetadataSchema),
+  defineEventSchema("wordManuallyMarkedMastered", wordManuallyMarkedMetadataSchema),
 ]);
 
 /** push 载荷单事件类型（不含 serverSeq——serverSeq 由服务器分配，客户端不发送）。 */
@@ -393,6 +410,12 @@ export const storedLearningEventSchema = z.union([
     serverSeq: z.number().int().positive(),
   }),
   defineEventSchema("wordRemoved", wordRemovedMetadataSchema).extend({
+    serverSeq: z.number().int().positive(),
+  }),
+  defineEventSchema("wordManuallyMarkedUnmastered", wordManuallyMarkedMetadataSchema).extend({
+    serverSeq: z.number().int().positive(),
+  }),
+  defineEventSchema("wordManuallyMarkedMastered", wordManuallyMarkedMetadataSchema).extend({
     serverSeq: z.number().int().positive(),
   }),
 ]);

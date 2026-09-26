@@ -1,0 +1,25 @@
+[Unit]
+Description=Ebbinghaus V2 云端数据托管
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ebbinghaus
+EnvironmentFile=/etc/ebbinghaus/server.env
+Environment=EBB_SERVER_DB_PATH=/opt/ebbinghaus/data/ebbinghaus.db
+Environment=EBB_SERVER_HOST=127.0.0.1
+Environment=EBB_SERVER_PORT=8787
+Environment=PATH=/opt/ebbinghaus/runtime/node-v24.21.0-linux-x64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/pnpm --dir /opt/ebbinghaus/server start
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ebbinghaus/data
+
+[Install]
+WantedBy=multi-user.target

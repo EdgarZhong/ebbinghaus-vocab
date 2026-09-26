@@ -2,37 +2,35 @@
  * 设置页（功能完整）。
  *
  * 布局与文案对应界面设计规格第 13 章；读写一律经应用层：
- * - 同步设置（时区、换日时间、每日目标、词典来源、智能整理、在线词典）走
+ * - 同步设置（时区、换日时间、智能整理、在线词典、复习参数）走
  *   SettingsService（settingsFacade）；
  * - 大语言模型四项配置（基础地址 / 模型名称 / API 密钥 / 思考开关）是设备本地
  *   数据（需求规格 6.9、判断文件 A1 第 11–14 项），走 LlmConfigurationService；
  *   API 密钥只以脱敏形态展示，不提供查看明文入口，仅提供"清空并重新填写"。
  *
- * 保存语义：统一使用底部"保存设置"按钮一次提交；成功提示"设置已保存。"，
- * 失败提示"没有保存成功，请检查输入后重试。"并保留用户当前输入。
+ * 保存语义按 V1 实际页面：密钥行独立保存，目标保持率需两次确认并独立保存；
+ * 底部“保存设置”提交其余设置。失败保留用户当前输入。
  *
- * 范围说明：规格第 13 章的"复习参数（目标保持率）"卡片不在本阶段交付范围
- * （任务口径仅要求学习日/每日目标/词典来源/联网辅助/LLM 四项），留待 UI-2。
+ * 当前按正式 V1 桌面设置页提供联网辅助总开关，不暴露词典来源选择；两源并发
+ * 的选择属于后台适配器行为。
  */
 
 import { useState, type ReactNode } from "react";
 import type { LlmConfigurationSnapshot } from "@ebbinghaus/application";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
-import { StepperInput } from "../ui/StepperInput.tsx";
 import { PageShell } from "../ui/PageShell.tsx";
-
-/** 词典来源选项（需求规格核心概念表：在线词典并发查询有道词典与维基词典）。 */
-const DICTIONARY_PROVIDERS: readonly string[] = ["维基词典", "有道词典"];
+import { Modal } from "../ui/Modal.tsx";
 
 interface FieldErrors {
   timezone?: string;
   rollover?: string;
-  dailyTarget?: string;
   baseUrl?: string;
   modelName?: string;
+  retention?: string;
 }
 
-type SaveStatus = "idle" | "saved" | "failed";
+type SaveStatus = "idle" | "saved" | "retention-saved" | "key-saved" | "failed";
+type ConnectionState = { readonly busy: boolean; readonly message: string; readonly failed: boolean };
 
 /** API 密钥输入状态：masked=脱敏展示；refill=清空后待重填。 */
 type ApiKeyState =
@@ -52,22 +50,30 @@ export function SettingsPage(): ReactNode {
 
   const [timezoneName, setTimezoneName] = useState(schedule.timezoneName);
   const [dayRolloverTime, setDayRolloverTime] = useState(schedule.dayRolloverTime);
-  const [dailyTarget, setDailyTarget] = useState(
-    spaceSettings === null ? "0" : String(spaceSettings.dailyTarget),
+  const [desiredRetention, setDesiredRetention] = useState(
+    String(spaceSettings?.fsrsParameters.desiredRetention ?? 0.95),
   );
+  const [currentRetention, setCurrentRetention] = useState(
+    spaceSettings?.fsrsParameters.desiredRetention ?? 0.95,
+  );
+  const [retentionConfirmation, setRetentionConfirmation] = useState<0 | 1 | 2>(0);
   const [smartOrganizing, setSmartOrganizing] = useState(flags.smartOrganizing);
   const [onlineDictionary, setOnlineDictionary] = useState(flags.onlineDictionary);
-  const [dictionaryProvider, setDictionaryProvider] = useState(
-    services.settings.getDictionaryProvider(),
-  );
   const [llmBaseUrl, setLlmBaseUrl] = useState(llmSnapshot.baseUrl);
   const [llmModelName, setLlmModelName] = useState(llmSnapshot.modelName);
   const [thinkingEnabled, setThinkingEnabled] = useState(llmSnapshot.thinkingEnabled);
-  const [apiKey, setApiKey] = useState<ApiKeyState>({ phase: "masked" });
+  const [apiKey, setApiKey] = useState<ApiKeyState>(
+    llmSnapshot.hasApiKey ? { phase: "masked" } : { phase: "refill", draft: "" },
+  );
 
   const [errors, setErrors] = useState<FieldErrors>({});
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [llmDisplay, setLlmDisplay] = useState<LlmConfigurationSnapshot>(llmSnapshot);
+  const [connection, setConnection] = useState<ConnectionState>({ busy: false, message: "", failed: false });
+  const [cloudTokenDraft, setCloudTokenDraft] = useState("");
+  const [cloudTokenEditing, setCloudTokenEditing] = useState(false);
+  const [cloudMessage, setCloudMessage] = useState("");
+  const cloudStatus = services.cloudSync?.getStatus();
 
   /** 任一字段编辑后清除全局保存状态，避免过期提示。 */
   const touch = (): void => {
@@ -95,10 +101,6 @@ export function SettingsPage(): ReactNode {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dayRolloverTime)) {
       next.rollover = "换日时间必须是 HH:mm 格式的本地时间。";
     }
-    const parsedTarget = Number.parseInt(dailyTarget, 10);
-    if (Number.isNaN(parsedTarget) || parsedTarget < 0 || String(parsedTarget) !== dailyTarget.trim()) {
-      next.dailyTarget = "每日学习目标必须是不小于 0 的整数。";
-    }
     const trimmedBaseUrl = llmBaseUrl.trim();
     if (!trimmedBaseUrl.startsWith("https://")) {
       next.baseUrl = "基础地址必须使用 HTTPS。";
@@ -109,7 +111,119 @@ export function SettingsPage(): ReactNode {
     return next;
   };
 
+  /** V1 的目标保持率是独立危险设置：只接受完整数值且与其他字段分开提交。 */
+  const retentionCandidate = Number(desiredRetention.trim());
+  const retentionChanged = isRegularMode && Number.isFinite(retentionCandidate)
+    && Math.abs(retentionCandidate - currentRetention) >= 1e-9;
+  const retentionError = isRegularMode && (
+    desiredRetention.trim() === "" || !Number.isFinite(retentionCandidate)
+    || retentionCandidate < 0.8 || retentionCandidate > 0.99
+  ) ? "目标保持率必须在 0.80 至 0.99 之间" : undefined;
+
+  /** API 密钥行独立保存；留空明确清空，取消只退出填写状态。 */
+  const saveApiKey = (): void => {
+    if (apiKey.phase !== "refill") return;
+    const llmErrors: FieldErrors = {};
+    if (!llmBaseUrl.trim().startsWith("https://")) llmErrors.baseUrl = "基础地址必须使用 HTTPS。";
+    if (!llmModelName.trim()) llmErrors.modelName = "模型名称不能为空。";
+    setErrors(llmErrors);
+    if (Object.keys(llmErrors).length > 0) { setStatus("failed"); return; }
+    try {
+      const snapshot = apiKey.draft.trim() === ""
+        ? services.llm.clearApiKey({ thinkingEnabled })
+        : services.llm.saveConfiguration({
+            baseUrl: llmBaseUrl.trim(), modelName: llmModelName.trim(),
+            apiKey: apiKey.draft.trim(), thinkingEnabled,
+          });
+      setLlmDisplay(snapshot);
+      setLlmBaseUrl(snapshot.baseUrl);
+      setLlmModelName(snapshot.modelName);
+      setThinkingEnabled(snapshot.thinkingEnabled);
+      setApiKey(snapshot.hasApiKey ? { phase: "masked" } : { phase: "refill", draft: "" });
+      services.notifyChanged();
+      setStatus("key-saved");
+    } catch {
+      setStatus("failed");
+    }
+  };
+
+  const confirmRetention = (): void => {
+    if (retentionConfirmation === 1) { setRetentionConfirmation(2); return; }
+    if (retentionConfirmation !== 2 || activeSpace === null) return;
+    try {
+      services.settings.saveRegularDesiredRetention(activeSpace.id, retentionCandidate);
+      setCurrentRetention(retentionCandidate);
+      services.notifyChanged();
+      setStatus("retention-saved");
+    } catch {
+      setStatus("failed");
+    } finally {
+      setRetentionConfirmation(0);
+    }
+  };
+
+  /** 先同步读取已保存配置，再异步探测；编辑框里的未保存密钥不参与连接测试。 */
+  const testConnection = (): void => {
+    if (connection.busy) return;
+    let probe: () => Promise<string>;
+    try {
+      probe = services.llm.prepareConnectionTest();
+    } catch (cause) {
+      setConnection({ busy: false, failed: true,
+        message: cause instanceof Error ? cause.message : "无法准备连接测试" });
+      return;
+    }
+    setConnection({ busy: true, failed: false, message: "正在测试连接…" });
+    void probe().then(
+      (message) => setConnection({ busy: false, failed: false, message }),
+      (cause: unknown) => setConnection({ busy: false, failed: true,
+        message: cause instanceof Error ? cause.message : "无法连接大语言模型服务" }),
+    );
+  };
+
+  /** 云令牌独立提交；不与学习设置或 LLM 密钥共用底部保存按钮。 */
+  const saveCloudToken = (): void => {
+    const token = cloudTokenDraft.trim();
+    if (!token || services.cloudSync === null) {
+      setCloudMessage("请输入云端访问令牌。");
+      return;
+    }
+    try {
+      services.cloudSync.configureToken(token);
+      setCloudTokenDraft("");
+      setCloudTokenEditing(false);
+      setCloudMessage("访问令牌已保存在本机，正在同步…");
+      services.notifyChanged();
+      void services.cloudSync.syncNow().then(() => services.notifyChanged());
+    } catch {
+      setCloudMessage("访问令牌保存失败，请重试。");
+    }
+  };
+
+  const syncCloudNow = (): void => {
+    if (services.cloudSync === null) return;
+    setCloudMessage("正在同步…");
+    void services.cloudSync.syncNow().then(
+      () => {
+        services.notifyChanged();
+        setCloudMessage(services.cloudSync?.getStatus().lastError ?? "云端数据已同步。");
+      },
+      () => setCloudMessage("同步失败，本机数据已保留，请稍后重试。"),
+    );
+  };
+
   const save = (): void => {
+    // V1 在目标保持率被修改时只处理这项危险设置；两次确认结束后，用户需再点
+    // “保存设置”才会提交其他草稿，避免一次点击混入两类不同风险的修改。
+    if (retentionError !== undefined) {
+      setErrors({ retention: retentionError });
+      setStatus("failed");
+      return;
+    }
+    if (retentionChanged) {
+      setRetentionConfirmation(1);
+      return;
+    }
     const nextErrors = validate();
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -122,21 +236,15 @@ export function SettingsPage(): ReactNode {
         dayRolloverTime,
       });
       services.settings.saveFeatureFlags({ smartOrganizing, onlineDictionary });
-      services.settings.saveDictionaryProvider(dictionaryProvider);
-      if (activeSpace !== null) {
-        // 每日目标属于当前活动 Space（规格第 13 章），按 Space 级设置保存。
-        services.settings.saveSpaceDailyTarget(activeSpace.id, Number.parseInt(dailyTarget, 10));
-      }
-      // LLM 四项在同一保存动作中提交；apiKey：masked 态传 null=保留既有密钥，
-      // refill 态传当前输入（空串=明确清空，非空=更新）。
+      // V1 底部保存只提交地址、模型和思考开关；密钥行须显式点“保存”，
+      // 未提交的明文输入不能因保存其他设置而意外落库。
       const snapshot = services.llm.saveConfiguration({
         baseUrl: llmBaseUrl.trim(),
         modelName: llmModelName.trim(),
-        apiKey: apiKey.phase === "refill" ? apiKey.draft : null,
+        apiKey: null,
         thinkingEnabled,
       });
       setLlmDisplay(snapshot);
-      setApiKey({ phase: "masked" });
       services.notifyChanged();
       setStatus("saved");
     } catch (cause) {
@@ -148,7 +256,7 @@ export function SettingsPage(): ReactNode {
   };
 
   return (
-    <PageShell title="设置" description="学习日、联网辅助与大语言模型服务连接。">
+    <PageShell title="设置" description="调整学习节奏和联网辅助">
       <section className="card settings-section" aria-labelledby="settings-learning-day">
         <h2 className="card-section-title" id="settings-learning-day">
           学习日
@@ -203,34 +311,6 @@ export function SettingsPage(): ReactNode {
         </div>
       </section>
 
-      <section className="card settings-section" aria-labelledby="settings-daily-target">
-        <h2 className="card-section-title" id="settings-daily-target">
-          每日目标
-        </h2>
-        {activeSpace === null || spaceSettings === null ? (
-          <p className="field-hint">当前没有可用的 Space，暂时无法设置每日目标。</p>
-        ) : (
-          <StepperInput
-            id="settings-daily-target"
-            label={isRegularMode ? "每天希望完成（个条目）" : "每天希望完成（份学习）"}
-            value={dailyTarget}
-            onValueChange={(value) => {
-              setDailyTarget(value);
-              touch();
-            }}
-            min={0}
-            error={errors.dailyTarget ?? null}
-            hint={
-              isRegularMode
-                ? "录入和测试各算 1 个条目；复习只供朗读，不计入工作量。"
-                : "首过或单独复习算 1 份；测试并复习算 2 份。"
-            }
-            testId="settings-daily-target"
-          />
-        )}
-        <p className="field-hint">每日目标按当前 Space 保存：{activeSpace === null ? "—" : activeSpace.learningMode === "常规模式" ? "常规模式按条目计量" : "词书模式按份计量"}。</p>
-      </section>
-
       <section className="card settings-section" aria-labelledby="settings-online">
         <h2 className="card-section-title" id="settings-online">
           联网辅助
@@ -259,28 +339,46 @@ export function SettingsPage(): ReactNode {
           />
           查询在线词典
         </label>
-        <div className="field">
-          <label className="field-label" htmlFor="dictionary-provider">
-            词典来源
-          </label>
-          <select
-            id="dictionary-provider"
-            className="field-input"
-            value={dictionaryProvider}
-            onChange={(event) => {
-              setDictionaryProvider(event.target.value);
-              touch();
-            }}
-            data-testid="dictionary-provider"
-          >
-            {DICTIONARY_PROVIDERS.map((provider) => (
-              <option key={provider} value={provider}>
-                {provider}
-              </option>
-            ))}
-          </select>
-        </div>
       </section>
+
+      {services.cloudSync === null ? null : (
+        <section className="card settings-section" aria-labelledby="settings-cloud-heading">
+          <h2 className="card-section-title" id="settings-cloud-heading">云端数据托管</h2>
+          <p className="field-hint">数据端点：eb-data.edgarzhong.fyi。本机仍可离线使用，联网后自动同步。</p>
+          {cloudStatus?.configured && !cloudTokenEditing ? (
+            <div className="settings-row">
+              <span>访问令牌已保存在本机</span>
+              <button type="button" className="btn btn-secondary" onClick={() => setCloudTokenEditing(true)}
+                data-testid="cloud-change-token">更新访问令牌</button>
+            </div>
+          ) : (
+            <div className="field">
+              <label className="field-label" htmlFor="cloud-sync-token">云端访问令牌</label>
+              <input id="cloud-sync-token" className="field-input" type="password"
+                value={cloudTokenDraft} onChange={(event) => setCloudTokenDraft(event.target.value)}
+                autoComplete="off" data-testid="cloud-sync-token" />
+              <div className="settings-row">
+                <button type="button" className="btn btn-primary" onClick={saveCloudToken}
+                  data-testid="cloud-save-token">保存并同步</button>
+                {cloudStatus?.configured ? <button type="button" className="btn btn-secondary"
+                  onClick={() => { setCloudTokenEditing(false); setCloudTokenDraft(""); }}>
+                  取消
+                </button> : null}
+              </div>
+            </div>
+          )}
+          {cloudStatus?.configured ? (
+            <div className="settings-row">
+              <button type="button" className="btn btn-secondary" onClick={syncCloudNow}
+                disabled={cloudStatus.running} data-testid="cloud-sync-now">立即同步</button>
+              <span>待同步事件：{cloudStatus.pendingOutboxCount}</span>
+            </div>
+          ) : null}
+          {cloudStatus?.lastSuccessAt ? <p className="field-hint">上次同步：{new Date(cloudStatus.lastSuccessAt).toLocaleString()}</p> : null}
+          {cloudStatus?.lastError ? <p className="field-error" role="status">{cloudStatus.lastError}</p> : null}
+          {cloudMessage ? <p className="field-hint" role="status" data-testid="cloud-sync-status">{cloudMessage}</p> : null}
+        </section>
+      )}
 
       <section className="card settings-section" aria-labelledby="settings-llm">
         <h2 className="card-section-title" id="settings-llm">
@@ -345,22 +443,10 @@ export function SettingsPage(): ReactNode {
                 >
                   清空并重新填写
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setApiKey({ phase: "refill", draft: "" });
-                    touch();
-                  }}
-                  data-testid="llm-fill-api-key"
-                >
-                  填写 API 密钥
-                </button>
-              )}
+              ) : null}
             </>
           ) : (
-            <input
+            <><input
               className="field-input"
               type="password"
               value={apiKey.draft}
@@ -369,30 +455,16 @@ export function SettingsPage(): ReactNode {
                 touch();
               }}
               aria-label="输入新的 API 密钥"
-              autoFocus
               data-testid="llm-api-key-input"
             />
+            <button type="button" className="btn btn-primary" onClick={saveApiKey}
+              data-testid="llm-save-api-key">保存</button>
+            {llmDisplay.hasApiKey ? <button type="button" className="btn btn-secondary"
+              onClick={() => setApiKey({ phase: "masked" })}
+              data-testid="llm-cancel-refill">取消</button> : null}</>
           )}
         </div>
-        {apiKey.phase === "refill" ? (
-          <>
-            <p className="field-hint">
-              重新输入的密钥将随“保存设置”一并保存；留空保存会清除已存密钥。
-            </p>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setApiKey({ phase: "masked" })}
-                data-testid="llm-cancel-refill"
-              >
-                取消重新填写
-              </button>
-            </div>
-          </>
-        ) : llmDisplay.hasApiKey ? null : (
-          <p className="field-hint">尚未配置 API 密钥，智能整理暂时无法使用。</p>
-        )}
+        <p className="field-hint">密钥只在本机保存；重新填写后点击同一行的“保存”才生效。</p>
         <label className="checkbox-field">
           <input
             type="checkbox"
@@ -406,7 +478,27 @@ export function SettingsPage(): ReactNode {
           允许大语言模型思考
         </label>
         <p className="field-hint">服务连接在本设备上保存，不随学习数据同步。</p>
+        <div className="settings-row">
+          <button type="button" className="btn btn-secondary" onClick={testConnection}
+            disabled={connection.busy} data-testid="llm-test-connection">测试连接</button>
+          {connection.message ? <p className={connection.failed ? "field-error" : "field-hint"}
+            role="status" data-testid="llm-test-result">{connection.message}</p> : null}
+        </div>
       </section>
+
+      {isRegularMode && activeSpace !== null ? (
+        <section className="card settings-section" aria-labelledby="settings-retention-heading">
+          <h2 className="card-section-title" id="settings-retention-heading">复习参数（仅常规模式生效）</h2>
+          <div className="field">
+            <label className="field-label" htmlFor="settings-retention">目标保持率</label>
+            <input id="settings-retention" className="field-input" inputMode="decimal"
+              value={desiredRetention} data-testid="settings-retention"
+              onChange={(event) => { setDesiredRetention(event.target.value); touch(); }} />
+            <p className="field-hint">范围 0.80 至 0.99，不推荐修改。修改后只影响后续排期。</p>
+            {errors.retention === undefined ? null : <p className="field-error" role="alert">{errors.retention}</p>}
+          </div>
+        </section>
+      ) : null}
 
       <div className="settings-row">
         <button type="button" className="btn btn-primary" onClick={save} data-testid="settings-save">
@@ -417,12 +509,29 @@ export function SettingsPage(): ReactNode {
             设置已保存。
           </p>
         ) : null}
+        {status === "retention-saved" || status === "key-saved" ? (
+          <p className="field-hint" role="status" data-testid="settings-status">
+            {status === "retention-saved" ? "复习参数已保存" : llmDisplay.hasApiKey ? "API 密钥已保存" : "API 密钥已清空"}
+          </p>
+        ) : null}
         {status === "failed" ? (
           <p className="field-error" role="alert" data-testid="settings-status">
             没有保存成功，请检查输入后重试。
           </p>
         ) : null}
       </div>
+      {retentionConfirmation > 0 ? (
+        <Modal title="确认修改目标保持率" onClose={() => setRetentionConfirmation(0)}>
+          <p>{retentionConfirmation === 1
+            ? `目标保持率改为 ${retentionCandidate.toFixed(2)}？`
+            : "目标保持率影响复习调度，修改后历史排期不变。再次确认修改？"}</p>
+          <div className="modal-actions">
+            <button type="button" className="btn btn-secondary" onClick={() => setRetentionConfirmation(0)}>取消</button>
+            <button type="button" className="btn btn-primary" onClick={confirmRetention}
+              data-testid="confirm-retention">确认修改</button>
+          </div>
+        </Modal>
+      ) : null}
     </PageShell>
   );
 }

@@ -25,20 +25,27 @@
 
 import {
   BookReviewCompletionService,
+  BookLearningService,
+  BookDraftService,
   CapacityPlanningService,
   DashboardService,
+  DictionaryService,
   EntryOrganizerService,
   initializeDefaultApplicationData,
   LearningEventRecorder,
   LlmConfigurationService,
+  resolveLlmConfiguration,
   RegularLearningService,
   SchedulingService,
   SettingsService,
   SpaceManagementService,
+  VocabularyMasteryService,
   type BookTaskItemsProvider,
   type Clock,
   type DeviceLocalStore,
   type IdGenerator,
+  type LlmConnectivityProbe,
+  type LlmOrganizerFactory,
 } from "@ebbinghaus/application";
 import { FsrsRegularScheduler, isSpaceArchived, type Space } from "@ebbinghaus/domain";
 import { createInMemoryRuntime, type InMemoryRuntime } from "@ebbinghaus/persistence/src/adapters/inMemoryRuntime.ts";
@@ -108,11 +115,30 @@ export interface SpaceSummary {
   readonly entryCount: number;
 }
 
+/** V2 云端托管的设备本地入口；页面只看状态，不接触 Bearer 令牌或网络细节。 */
+export interface CloudSyncPort {
+  hasToken(): boolean;
+  configureToken(token: string): void;
+  syncNow(): Promise<unknown>;
+  getStatus(): {
+    readonly configured: boolean;
+    readonly running: boolean;
+    readonly lastSuccessAt: string | null;
+    readonly lastAttemptAt: string | null;
+    readonly lastError: string | null;
+    readonly pendingOutboxCount: number;
+  };
+  start(): void;
+  stop(): void;
+}
+
 // ---------------------------------------------------------------------------
 // AppServices：界面消费的唯一服务门面
 // ---------------------------------------------------------------------------
 
 export interface AppServices {
+  /** V2 桌面端云端托管；浏览器验收适配器没有真实云连接。 */
+  readonly cloudSync: CloudSyncPort | null;
   /** 同步设置 + 设备本地设置的统一门面（设置页读写入口）。 */
   readonly settings: SettingsService;
   /** Space 生命周期用例（Space 管理页读写入口）。 */
@@ -137,6 +163,14 @@ export interface AppServices {
   readonly capacityPlanning: CapacityPlanningService;
   /** 词书纸质复习完成的事件产出口径（复习页确认入口）。 */
   readonly bookReview: BookReviewCompletionService;
+  /** 词书模式首过、逐词测试与 Word 内容维护。 */
+  readonly bookLearning: BookLearningService;
+  /** V1 词汇页双向手动掌握，用不可变事件驱动两种模式各自的调度。 */
+  readonly vocabularyMastery: VocabularyMasteryService;
+  /** V1 在线释义：有道/维基并发查询、成功缓存、失败可重试。 */
+  readonly dictionary: DictionaryService;
+  /** 首过草稿持久化：原文与可编辑预览可跨设备恢复。 */
+  readonly bookDrafts: BookDraftService;
   /** 今日看板门面：模式分发的任务汇总 + 容量视图 + 每日目标保存。 */
   readonly dashboard: DashboardService;
   /** 智能整理用例；浏览器模式未装配整理端口，调用按"未配置"失败（如实降级）。 */
@@ -161,12 +195,20 @@ export interface AppServices {
 }
 
 export interface CreateAppServicesOptions {
+  /** 生产组合根注入云端托管控制器，避免 React 页面直接调用平台网络 API。 */
+  readonly cloudSync?: CloudSyncPort | null;
+  /** 桌面平台注入的持久化运行时；浏览器缺省使用内存端口。 */
+  readonly runtime?: InMemoryRuntime;
   /** 覆盖系统时钟（测试注入确定性时钟）；缺省用真实系统时钟。 */
   readonly clock?: Clock;
   /** 覆盖设备本地 KV 底座（测试注入内存实现）；缺省用 localStorage。 */
   readonly deviceLocal?: DeviceLocalStore;
   /** 覆盖 ID 生成器（测试注入确定性实现）；缺省用 Web Crypto。 */
   readonly idGenerator?: IdGenerator;
+  /** 桌面端智能整理网络工厂；浏览器验收环境默认不发真实模型请求。 */
+  readonly llmOrganizerFactory?: LlmOrganizerFactory | null;
+  /** 桌面端非阻塞连通性探测。 */
+  readonly llmConnectivityProbe?: LlmConnectivityProbe | null;
 }
 
 export function createAppServices(options: CreateAppServicesOptions = {}): AppServices {
@@ -174,7 +216,7 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
   const idGenerator = options.idGenerator ?? createBrowserIdGenerator();
   const deviceLocal = options.deviceLocal ?? new BrowserDeviceLocalStore(window.localStorage);
 
-  const runtime = createInMemoryRuntime({
+  const runtime = options.runtime ?? createInMemoryRuntime({
     clock,
     idGenerator,
     // 生产（Tauri 适配器）必须替换为真实密钥加密实现，见文件头注释。
@@ -201,9 +243,21 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     unitOfWork: runtime.unitOfWork,
   });
 
-  // 本轮组合根不装配动态整理器/连通性探测（浏览器模式无密钥安全边界），
-  // LLM 设置页的读写与脱敏快照仍然完整可用。
-  const llm = new LlmConfigurationService({ configurationStore: runtime.llmConfigurationStore });
+  // 整理器只在桌面运行时装配；首次启动读取当前已保存配置，设置保存后由用例
+  // 重建端口。密钥留在基础设施与应用层内存，不经过 React 页面属性或同步通道。
+  const resolvedLlm = resolveLlmConfiguration({
+    stored: runtime.llmConfigurationStore.load(), environment: {},
+  });
+  const entryOrganizer = new EntryOrganizerService(options.llmOrganizerFactory?.build({
+    baseUrl: resolvedLlm.baseUrl, modelName: resolvedLlm.model,
+    apiKey: resolvedLlm.apiKey, thinkingEnabled: resolvedLlm.thinkingEnabled,
+  }) ?? null);
+  const llm = new LlmConfigurationService({
+    configurationStore: runtime.llmConfigurationStore,
+    organizerFactory: options.llmOrganizerFactory,
+    entryOrganizer,
+    connectivityProbe: options.llmConnectivityProbe,
+  });
 
   // ---- UI-2 学习用例装配（全部只组合既有应用层用例，不实现业务规则） ----
 
@@ -258,14 +312,57 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     wordContentStore: runtime.wordContentStore,
     bookCatalogStore: runtime.bookCatalogStore,
     sessionStore: runtime.testSessionStore,
+    unitOfWork: runtime.unitOfWork,
+  });
+
+  // 词书操作与常规模式共用事件、目录和事务端口；页面只调用应用层用例。
+  const bookLearning = new BookLearningService({
+    clock,
+    idGenerator,
+    eventRecorder,
+    eventStore: runtime.eventStore,
+    wordContentStore: runtime.wordContentStore,
+    bookCatalogStore: runtime.bookCatalogStore,
+    spaceStore: runtime.spaceStore,
+    sessionStore: runtime.testSessionStore,
+    settings,
+    scheduling,
+    unitOfWork: runtime.unitOfWork,
+  });
+  const bookDrafts = new BookDraftService({
+    clock,
+    deviceIdentity: runtime.deviceIdentity,
+    idGenerator,
+    drafts: runtime.firstPassDraftStore,
+  });
+  const vocabularyMastery = new VocabularyMasteryService({
+    clock,
+    recorder: eventRecorder,
+    eventStore: runtime.eventStore,
+    wordContentStore: runtime.wordContentStore,
+    bookCatalogStore: runtime.bookCatalogStore,
+    spaceStore: runtime.spaceStore,
+    fsrsCardStore: runtime.fsrsCardStore,
+    settings,
+    scheduler: fsrsScheduler,
+    unitOfWork: runtime.unitOfWork,
+  });
+  const dictionary = new DictionaryService({
+    wordContentStore: runtime.wordContentStore,
+    cacheStore: runtime.dictionaryCacheStore,
+    dictionary: runtime.onlineDictionary,
+    eventStore: runtime.eventStore,
+    eventRecorder,
+    unitOfWork: runtime.unitOfWork,
+    idGenerator,
+    clock,
   });
 
   // 组合根侧界面只读视图（词汇/常规复习组/词书任务转换）。
-  const learningViews = createLearningViews({ runtime, settings, scheduling, clock });
+  const learningViews = createLearningViews({ runtime, settings, scheduling, bookLearning, clock });
 
   // 词书任务提供者（组合根侧视图转换）：把调度派生任务拼装为界面任务快照。
-  // 词书逐词测试会话用例尚未在应用层交付（bookReview.ts 模块头如实记录），
-  // 这里只提供任务列表数据，不伪造会话能力。
+  // 任务列表与可恢复会话均由同一词书用例和调度投影提供。
   const bookTasks: BookTaskItemsProvider = {
     bookTaskItems: (spaceId: string) => learningViews.bookTaskItems(spaceId),
   };
@@ -277,10 +374,6 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     regularTasks: regularLearning,
     bookTasks,
   });
-
-  // 智能整理用例：浏览器模式不装配 HTTP 整理端口（无密钥安全边界），organize
-  // 会以"未配置智能整理服务"失败，界面按规格 6.9 如实降级为"改为手动填写"。
-  const entryOrganizer = new EntryOrganizerService(null);
 
   // ---- 变化通知（简单版本号 + 订阅者集合） ----
   let version = 0;
@@ -309,6 +402,7 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
   }
 
   const services: AppServices = {
+    cloudSync: options.cloudSync ?? null,
     settings,
     spaces,
     llm,
@@ -319,6 +413,10 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     scheduling,
     capacityPlanning,
     bookReview,
+    bookLearning,
+    vocabularyMastery,
+    dictionary,
+    bookDrafts,
     dashboard,
     entryOrganizer,
     eventRecorder,

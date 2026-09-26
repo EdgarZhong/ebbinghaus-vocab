@@ -31,6 +31,7 @@ interface SessionRow {
   readonly learning_day: string;
   readonly group_ordinal: number | null;
   readonly task_id: string | null;
+  readonly task_snapshot_json: string | null;
   readonly words_json: string;
   readonly current_position: number;
   readonly status: string;
@@ -48,6 +49,7 @@ function rowToSession(row: SessionRow): TestSessionRecord {
     learningDay: row.learning_day,
     groupOrdinal: row.group_ordinal,
     taskId: row.task_id,
+    taskSnapshot: row.task_snapshot_json === null ? null : JSON.parse(row.task_snapshot_json) as TestSessionRecord["taskSnapshot"],
     words: JSON.parse(row.words_json) as TestSessionRecord["words"],
     currentPosition: row.current_position,
     status: row.status as TestSessionRecord["status"],
@@ -71,10 +73,12 @@ export class SqliteTestSessionStore implements TestSessionStore {
     this.addStmt = this.db.prepare(`
       INSERT INTO test_sessions
         (session_id, learning_mode, space_id, list_id, learning_day, group_ordinal, task_id,
-         words_json, current_position, status, answered_word_ids_json, started_at, last_active_at)
+         words_json, current_position, status, answered_word_ids_json, started_at, last_active_at,
+         task_snapshot_json)
       VALUES
         (@sessionId, @learningMode, @spaceId, @listId, @learningDay, @groupOrdinal, @taskId,
-         @wordsJson, @currentPosition, @status, @answeredWordIdsJson, @startedAt, @lastActiveAt)
+         @wordsJson, @currentPosition, @status, @answeredWordIdsJson, @startedAt, @lastActiveAt,
+         @taskSnapshotJson)
     `);
     this.updateStmt = this.db.prepare(`
       UPDATE test_sessions SET
@@ -84,12 +88,14 @@ export class SqliteTestSessionStore implements TestSessionStore {
     `);
     this.getStmt = this.db.prepare(
       `SELECT session_id, learning_mode, space_id, list_id, learning_day, group_ordinal, task_id,
-              words_json, current_position, status, answered_word_ids_json, started_at, last_active_at
+              words_json, current_position, status, answered_word_ids_json, started_at, last_active_at,
+              task_snapshot_json
        FROM test_sessions WHERE session_id = ?`,
     );
     this.openRegularStmt = this.db.prepare(`
       SELECT session_id, learning_mode, space_id, list_id, learning_day, group_ordinal, task_id,
-             words_json, current_position, status, answered_word_ids_json, started_at, last_active_at
+             words_json, current_position, status, answered_word_ids_json, started_at, last_active_at,
+             task_snapshot_json
       FROM test_sessions
       WHERE learning_mode = '常规模式' AND space_id = ? AND learning_day = ?
         AND status IN ('进行中', '已暂停')
@@ -97,7 +103,8 @@ export class SqliteTestSessionStore implements TestSessionStore {
     `);
     this.openListStmt = this.db.prepare(`
       SELECT session_id, learning_mode, space_id, list_id, learning_day, group_ordinal, task_id,
-             words_json, current_position, status, answered_word_ids_json, started_at, last_active_at
+             words_json, current_position, status, answered_word_ids_json, started_at, last_active_at,
+             task_snapshot_json
       FROM test_sessions
       WHERE learning_mode = '词书模式' AND list_id = ?
         AND status IN ('进行中', '已暂停', '等待纸质复习')
@@ -114,6 +121,7 @@ export class SqliteTestSessionStore implements TestSessionStore {
       learningDay: session.learningDay,
       groupOrdinal: session.groupOrdinal,
       taskId: session.taskId,
+      taskSnapshotJson: session.taskSnapshot === undefined || session.taskSnapshot === null ? null : JSON.stringify(session.taskSnapshot),
       wordsJson: JSON.stringify(session.words),
       currentPosition: session.currentPosition,
       status: session.status,

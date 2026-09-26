@@ -10,7 +10,10 @@
  * 集合接入 Tauri SQLite 插件；本文件与 nodeRuntime.ts 的端口集合就是其实现合同。
  */
 
-import { mergeSettings, type SettingEntry } from "@ebbinghaus/protocol";
+import {
+  contentEntrySchema, isContentEntryNewer, mergeSettings,
+  type ContentEntry, type ContentEntityType, type StoredContentEntry, type SettingEntry,
+} from "@ebbinghaus/protocol";
 import type {
   ApplicationEvent,
   BookCatalogStore,
@@ -20,6 +23,8 @@ import type {
   DeviceIdentityProvider,
   DeviceLocalStore,
   DeviceSeqAllocator,
+  FirstPassDraftRecord,
+  FirstPassDraftStore,
   FsrsCardRecord,
   FsrsCardStore,
   IdGenerator,
@@ -27,6 +32,8 @@ import type {
   ListCatalogRecord,
   LlmConfigurationRecord,
   LlmConfigurationStore,
+  DictionaryCacheStore,
+  OnlineDictionaryPort,
   Space,
   SpaceStore,
   StudyUnit,
@@ -48,6 +55,9 @@ import { DEFAULT_OUTBOX_BACKOFF } from "../outbox/outboxStore.ts";
 import { SyncEngine } from "../sync/syncEngine.ts";
 import type { SyncGateway } from "../sync/httpGateway.ts";
 import type { SecretCipher } from "../repositories/settings.ts";
+import type { ContentSyncStore, PendingContentEntry } from "../sync/contentStore.ts";
+import { InMemoryDictionaryCacheStore } from "../repositories/dictionary.ts";
+import { createConcurrentOnlineDictionary, createFetchDictionaryTransport } from "../dictionary/onlineDictionary.ts";
 
 // ---------------------------------------------------------------------------
 // outbox（内存）
@@ -134,12 +144,15 @@ export class InMemoryOutbox implements OutboxStore {
 export class InMemoryEventStore implements LearningEventStore {
   private readonly events = new Map<string, ApplicationEvent>();
 
+  constructor(private readonly outbox?: OutboxStore) {}
+
   appendEvents(events: readonly ApplicationEvent[]): void {
     for (const event of events) {
       if (this.events.has(event.eventId)) {
         throw new DuplicateEventError(event.eventId);
       }
       this.events.set(event.eventId, event);
+      this.outbox?.enqueueEvent(event);
     }
   }
 
@@ -163,9 +176,12 @@ export class InMemoryEventStore implements LearningEventStore {
 export class InMemoryWordContentStore implements WordContentStore {
   private readonly entries = new Map<string, WordContentRecord>();
 
+  constructor(private readonly contentSync?: ContentSyncStore) {}
+
   upsertEntries(entries: readonly WordContentRecord[]): void {
     for (const entry of entries) {
       this.entries.set(entry.wordId, { ...entry });
+      this.contentSync?.recordLocal("word", entry.wordId, entry);
     }
   }
 
@@ -193,6 +209,7 @@ export class InMemoryWordContentStore implements WordContentStore {
       throw new Error(`词内容不存在：${wordId}`);
     }
     this.entries.set(wordId, { ...entry, removed: true });
+    this.contentSync?.recordLocal("word", wordId, { ...entry, removed: true });
   }
 
   listCatalogEntries(): WordContentRecord[] {
@@ -202,14 +219,45 @@ export class InMemoryWordContentStore implements WordContentStore {
   hasEntriesForSpace(spaceId: string): boolean {
     return [...this.entries.values()].some((entry) => entry.spaceId === spaceId);
   }
+
+  removeEntryForSync(wordId: string): void { this.entries.delete(wordId); }
+}
+
+/** 浏览器草稿仓储；确认墓碑保留在 Map 中，使两个客户端同步后不会再出现。 */
+export class InMemoryFirstPassDraftStore implements FirstPassDraftStore {
+  private readonly drafts = new Map<string, FirstPassDraftRecord>();
+
+  constructor(private readonly contentSync?: ContentSyncStore) {}
+
+  upsertDraft(draft: FirstPassDraftRecord): void {
+    this.drafts.set(draft.id, { ...draft });
+    this.contentSync?.recordLocal("draft", draft.id, draft);
+  }
+
+  getDraft(id: string): FirstPassDraftRecord | null {
+    const record = this.drafts.get(id);
+    return record === undefined ? null : { ...record };
+  }
+
+  listOpenDrafts(spaceId: string): FirstPassDraftRecord[] {
+    return [...this.drafts.values()]
+      .filter((draft) => draft.spaceId === spaceId && draft.status !== "已确认")
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))
+      .map((draft) => ({ ...draft }));
+  }
+
+  removeForSync(id: string): void { this.drafts.delete(id); }
 }
 
 export class InMemoryBookCatalogStore implements BookCatalogStore {
   private readonly units = new Map<string, StudyUnit>();
   private readonly lists = new Map<string, ListCatalogRecord>();
 
+  constructor(private readonly contentSync?: ContentSyncStore) {}
+
   addUnit(unit: StudyUnit): void {
     this.units.set(unit.id, { ...unit });
+    this.contentSync?.recordLocal("unit", unit.id, unit);
   }
 
   getUnit(unitId: string): StudyUnit | null {
@@ -228,6 +276,7 @@ export class InMemoryBookCatalogStore implements BookCatalogStore {
 
   addList(record: ListCatalogRecord): void {
     this.lists.set(record.listId, { ...record });
+    this.contentSync?.recordLocal("list", record.listId, record);
   }
 
   getList(listId: string): ListCatalogRecord | null {
@@ -253,13 +302,19 @@ export class InMemoryBookCatalogStore implements BookCatalogStore {
   hasListsForSpace(spaceId: string): boolean {
     return [...this.lists.values()].some((record) => record.spaceId === spaceId);
   }
+
+  removeUnitForSync(unitId: string): void { this.units.delete(unitId); }
+  removeListForSync(listId: string): void { this.lists.delete(listId); }
 }
 
 export class InMemorySpaceStore implements SpaceStore {
   private readonly spaces = new Map<string, Space>();
 
+  constructor(private readonly contentSync?: ContentSyncStore) {}
+
   addSpace(space: Space): void {
     this.spaces.set(space.id, { ...space });
+    this.contentSync?.recordLocal("space", space.id, space, space.createdAt ?? undefined);
   }
 
   updateSpace(space: Space): void {
@@ -267,10 +322,12 @@ export class InMemorySpaceStore implements SpaceStore {
       throw new Error(`Space 不存在：${space.id}`);
     }
     this.spaces.set(space.id, { ...space });
+    this.contentSync?.recordLocal("space", space.id, space);
   }
 
   deleteSpace(spaceId: string): void {
     this.spaces.delete(spaceId);
+    this.contentSync?.recordLocal("space", spaceId, null);
   }
 
   listSpaces(): Space[] {
@@ -283,6 +340,105 @@ export class InMemorySpaceStore implements SpaceStore {
     const space = this.spaces.get(spaceId);
     return space === undefined ? null : { ...space };
   }
+}
+
+/** 浏览器底座沿用与 SQLite 相同的内容版本顺序和退避规则。 */
+export class InMemoryContentSyncStore implements ContentSyncStore {
+  private readonly versions = new Map<string, ContentEntry>();
+  private readonly pending = new Map<string, { payloadJson: string; attempts: number; nextAttemptAt: string; lastError: string | null }>();
+  private cursor = 0;
+  private suppressRecord = false;
+  private stores: { space: InMemorySpaceStore; book: InMemoryBookCatalogStore; word: InMemoryWordContentStore; draft: InMemoryFirstPassDraftStore } | null = null;
+
+  constructor(
+    private readonly clock: Clock,
+    private readonly deviceIdentity: DeviceIdentityProvider,
+    private readonly backoff: OutboxBackoffOptions = DEFAULT_OUTBOX_BACKOFF,
+  ) {}
+
+  attachStores(stores: { space: InMemorySpaceStore; book: InMemoryBookCatalogStore; word: InMemoryWordContentStore; draft: InMemoryFirstPassDraftStore }): void {
+    this.stores = stores;
+  }
+
+  private key(type: ContentEntityType, id: string): string { return `${type}\u0000${id}`; }
+
+  recordLocal(entityType: ContentEntityType, entityId: string, value: unknown, initialVersionAt?: string): void {
+    if (this.suppressRecord) return;
+    const key = this.key(entityType, entityId);
+    const previous = this.versions.get(key);
+    const initialMs = initialVersionAt === undefined ? this.clock.now().getTime() : Date.parse(initialVersionAt);
+    const updatedAt = new Date(Math.max(initialMs, previous === undefined ? -Infinity : Date.parse(previous.updatedAt) + 1)).toISOString();
+    const entry = contentEntrySchema.parse({
+      entityType, entityId, value, deleted: value === null,
+      updatedAt, deviceId: this.deviceIdentity.getDeviceId(),
+    });
+    const payloadJson = JSON.stringify(entry);
+    this.versions.set(key, entry);
+    this.pending.set(key, { payloadJson, attempts: 0, nextAttemptAt: this.clock.now().toISOString(), lastError: null });
+  }
+
+  readCursor(): number { return this.cursor; }
+  writeCursor(cursor: number): void { this.cursor = cursor; }
+
+  applyRemote(entries: readonly StoredContentEntry[]): number {
+    if (this.stores === null) throw new Error("内容同步仓储尚未装配");
+    let changed = 0;
+    for (const { serverSeq: _serverSeq, ...incoming } of entries) {
+      const entry = contentEntrySchema.parse(incoming);
+      const key = this.key(entry.entityType, entry.entityId);
+      const previous = this.versions.get(key);
+      if (previous !== undefined && !isContentEntryNewer(entry, previous)) continue;
+      this.suppressRecord = true;
+      try {
+        if (entry.deleted || entry.value === null) {
+          if (entry.entityType === "space") this.stores.space.deleteSpace(entry.entityId);
+          if (entry.entityType === "unit") this.stores.book.removeUnitForSync(entry.entityId);
+          if (entry.entityType === "list") this.stores.book.removeListForSync(entry.entityId);
+          if (entry.entityType === "word") this.stores.word.removeEntryForSync(entry.entityId);
+          if (entry.entityType === "draft") this.stores.draft.removeForSync(entry.entityId);
+        } else {
+          switch (entry.entityType) {
+            case "space":
+              if (this.stores.space.getSpace(entry.entityId) === null) this.stores.space.addSpace(entry.value);
+              else this.stores.space.updateSpace(entry.value);
+              break;
+            case "unit": this.stores.book.addUnit(entry.value); break;
+            case "list": this.stores.book.addList(entry.value); break;
+            case "word": this.stores.word.upsertEntries([entry.value as WordContentRecord]); break;
+            case "draft": this.stores.draft.upsertDraft(entry.value); break;
+          }
+        }
+      } finally {
+        this.suppressRecord = false;
+      }
+      this.versions.set(key, entry);
+      this.pending.delete(key);
+      changed += 1;
+    }
+    return changed;
+  }
+
+  dueEntries(nowIso: string, limit: number): PendingContentEntry[] {
+    return [...this.pending.values()]
+      .filter((row) => row.nextAttemptAt <= nowIso)
+      .slice(0, limit)
+      .map((row) => ({ entry: contentEntrySchema.parse(JSON.parse(row.payloadJson)), payloadJson: row.payloadJson }));
+  }
+
+  markSucceeded(item: PendingContentEntry): void {
+    const key = this.key(item.entry.entityType, item.entry.entityId);
+    if (this.pending.get(key)?.payloadJson === item.payloadJson) this.pending.delete(key);
+  }
+
+  markFailed(item: PendingContentEntry, message: string, nowIso: string): void {
+    const row = this.pending.get(this.key(item.entry.entityType, item.entry.entityId));
+    if (row === undefined || row.payloadJson !== item.payloadJson) return;
+    row.attempts += 1;
+    row.lastError = message;
+    row.nextAttemptAt = new Date(Date.parse(nowIso) + computeBackoffDelayMs(row.attempts, this.backoff)).toISOString();
+  }
+
+  pendingCount(): number { return this.pending.size; }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +680,7 @@ export class InMemoryUnitOfWork implements UnitOfWork {
 export interface InMemoryRuntime {
   readonly eventStore: InMemoryEventStore;
   readonly wordContentStore: InMemoryWordContentStore;
+  readonly firstPassDraftStore: InMemoryFirstPassDraftStore;
   readonly bookCatalogStore: InMemoryBookCatalogStore;
   readonly spaceStore: InMemorySpaceStore;
   readonly testSessionStore: InMemoryTestSessionStore;
@@ -532,7 +689,10 @@ export interface InMemoryRuntime {
   readonly syncedSettingsStore: InMemorySyncedSettingsStore;
   readonly deviceLocalStore: InMemoryDeviceLocalStore;
   readonly llmConfigurationStore: InMemoryLlmConfigurationStore;
+  readonly dictionaryCacheStore: DictionaryCacheStore;
+  readonly onlineDictionary: OnlineDictionaryPort;
   readonly outbox: InMemoryOutbox;
+  readonly contentSyncStore: InMemoryContentSyncStore;
   readonly unitOfWork: InMemoryUnitOfWork;
   readonly deviceIdentity: InMemoryDeviceIdentity;
   readonly deviceSeqAllocator: InMemoryDeviceSeqAllocator;
@@ -546,10 +706,13 @@ export interface CreateInMemoryRuntimeOptions {
   readonly idGenerator: IdGenerator;
   /** 密钥加密端口：开发/演示可传 TransparentSecretCipher（见 repositories/settings.ts）。 */
   readonly secretCipher: SecretCipher;
+  /** 浏览器验收可注入确定性网络源，产品逻辑仍使用同一 DictionaryService。 */
+  readonly onlineDictionary?: OnlineDictionaryPort;
   /** 注入后启用同步（HTTP 网关或测试假网关）；缺省纯离线。 */
   readonly gateway?: SyncGateway;
   readonly backoff?: OutboxBackoffOptions;
   readonly onEventsApplied?: (appliedCount: number) => void;
+  readonly onContentApplied?: (appliedCount: number) => void;
 }
 
 export function createInMemoryRuntime(options: CreateInMemoryRuntimeOptions): InMemoryRuntime {
@@ -557,7 +720,13 @@ export function createInMemoryRuntime(options: CreateInMemoryRuntimeOptions): In
   const syncedSettingsStore = new InMemorySyncedSettingsStore(outbox);
   const deviceLocalStore = new InMemoryDeviceLocalStore();
   const deviceIdentity = new InMemoryDeviceIdentity(deviceLocalStore, options.idGenerator);
-  const eventStore = new InMemoryEventStore();
+  const eventStore = new InMemoryEventStore(outbox);
+  const contentSyncStore = new InMemoryContentSyncStore(options.clock, deviceIdentity, options.backoff);
+  const wordContentStore = new InMemoryWordContentStore(contentSyncStore);
+  const firstPassDraftStore = new InMemoryFirstPassDraftStore(contentSyncStore);
+  const bookCatalogStore = new InMemoryBookCatalogStore(contentSyncStore);
+  const spaceStore = new InMemorySpaceStore(contentSyncStore);
+  contentSyncStore.attachStores({ space: spaceStore, book: bookCatalogStore, word: wordContentStore, draft: firstPassDraftStore });
 
   // 拉取游标：内存底座用闭包变量承载（同一 SyncEngine 只依赖 read/write 两个能力）。
   let pullCursorValue = 0;
@@ -571,6 +740,7 @@ export function createInMemoryRuntime(options: CreateInMemoryRuntimeOptions): In
           gateway: options.gateway,
           eventStore,
           settingsStore: syncedSettingsStore,
+          contentStore: contentSyncStore,
           outbox,
           clock: options.clock,
           pullCursor: {
@@ -580,20 +750,25 @@ export function createInMemoryRuntime(options: CreateInMemoryRuntimeOptions): In
             },
           },
           onEventsApplied: options.onEventsApplied,
+          onContentApplied: options.onContentApplied,
         });
 
   return {
     eventStore,
-    wordContentStore: new InMemoryWordContentStore(),
-    bookCatalogStore: new InMemoryBookCatalogStore(),
-    spaceStore: new InMemorySpaceStore(),
+    wordContentStore,
+    firstPassDraftStore,
+    bookCatalogStore,
+    spaceStore,
     testSessionStore: new InMemoryTestSessionStore(),
     fsrsCardStore: new InMemoryFsrsCardStore(),
     dailyPlanStore: new InMemoryDailyPlanStore(),
     syncedSettingsStore,
     deviceLocalStore,
     llmConfigurationStore: new InMemoryLlmConfigurationStore(options.secretCipher),
+    dictionaryCacheStore: new InMemoryDictionaryCacheStore(),
+    onlineDictionary: options.onlineDictionary ?? createConcurrentOnlineDictionary(createFetchDictionaryTransport()),
     outbox,
+    contentSyncStore,
     unitOfWork: new InMemoryUnitOfWork(),
     deviceIdentity,
     deviceSeqAllocator: new InMemoryDeviceSeqAllocator(),

@@ -61,6 +61,20 @@ const MIGRATIONS: readonly string[] = [
 
   INSERT OR IGNORE INTO sync_counters (name, value) VALUES ('server_seq', 0);
   `,
+  `
+  CREATE TABLE IF NOT EXISTS contents (
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1)),
+    server_seq INTEGER NOT NULL UNIQUE,
+    PRIMARY KEY (entity_type, entity_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_contents_server_seq ON contents(server_seq);
+  INSERT OR IGNORE INTO sync_counters (name, value) VALUES ('content_seq', 0);
+  `,
 ];
 
 /**

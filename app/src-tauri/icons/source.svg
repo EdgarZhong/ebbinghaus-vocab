@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Ebbinghaus 书页图标">
+  <!-- 深松底色沿用 V2 桌面主题；书页和新芽在小尺寸 Dock 图标中仍保持清晰。 -->
+  <defs>
+    <linearGradient id="forest" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#244d37"/>
+      <stop offset="1" stop-color="#102a20"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#f4f7e9"/>
+      <stop offset="1" stop-color="#dcebdd"/>
+    </linearGradient>
+  </defs>
+  <rect x="52" y="52" width="920" height="920" rx="230" fill="url(#forest)"/>
+  <rect x="67" y="67" width="890" height="890" rx="218" fill="none" stroke="#75a987" stroke-opacity=".36" stroke-width="10"/>
+  <path d="M512 336c-95-61-210-66-319-17-17 8-28 25-28 44v335c0 25 25 43 49 34 104-39 201-37 298 19V336Z" fill="url(#paper)"/>
+  <path d="M512 336c95-61 210-66 319-17 17 8 28 25 28 44v335c0 25-25 43-49 34-104-39-201-37-298 19V336Z" fill="url(#paper)"/>
+  <path d="M512 343v410" stroke="#77ac87" stroke-width="22" stroke-linecap="round"/>
+  <path d="M230 398c76-26 156-24 221 4m-221 78c76-26 156-24 221 4m-221 78c76-26 156-24 221 4" fill="none" stroke="#a5c8ac" stroke-width="18" stroke-linecap="round"/>
+  <path d="M794 398c-76-26-156-24-221 4m221 78c-76-26-156-24-221 4m221 78c-76-26-156-24-221 4" fill="none" stroke="#a5c8ac" stroke-width="18" stroke-linecap="round"/>
+  <path d="M512 320c-15-64-6-120 29-168" fill="none" stroke="#a8d5a3" stroke-width="20" stroke-linecap="round"/>
+  <path d="M542 169c13-55 61-86 121-82-3 59-42 102-106 110-11 1-19-12-15-28Z" fill="#b5dda9"/>
+  <path d="M502 255c-53-8-82-46-85-93 55-4 92 23 101 73 2 12-4 22-16 20Z" fill="#8ec89b"/>
+</svg>

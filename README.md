@@ -1,13 +1,13 @@
 # Ebbinghaus V2
 
-Ebbinghaus V2 是个人自用英语学习/记忆管理客户端的全量技术栈迁移仓库：把 V1（Python/PySide6 桌面应用）迁移为 **React + TypeScript + Tauri 2（macOS 与 Android）客户端 + Node 同步服务器 + 云端权威数据**。产品交互与逻辑骨架不变，UI 视觉按新设计执行。
+Ebbinghaus V2 是个人自用英语学习/记忆管理客户端的全量技术栈迁移仓库：把 V1（Python/PySide6 桌面应用）迁移为 **React + TypeScript + Tauri 2（macOS 与 Android）客户端 + Node 同步服务器 + 云端权威数据**。macOS 桌面端的用户链路与业务行为以 V1 为基准；V2 保留自己的视觉方案、深色/浅色及跟随系统主题。
 
-V1 仓库位于 `/Users/edgar/code/Ebbinghaus`，自 2026-09 起转为**只读行为规格、算法参考和数据迁移来源**，保持正式使用、不再承担新功能；本仓库不继承其历史技术债。
+V1 仓库位于 `/Users/edgar/code/Ebbinghaus`，只作为行为规格、算法和迁移实现的只读参考；当前发现的 V1 数据库是测试样本，不能直接认定为正式生产迁移源。本仓库不继承其历史技术债。
 
 ## 产品定位（继承自 V1 的稳定产品事实）
 
 - 面向约 6000 词规模的纸质考研英语词书；每个 List 固定 60 词，软件只录入首过筛出的重点 Word。
-- 首次运行提供"必考词、常考词、偶考词"三个默认 Space；Space 是两种模式共同且可多实例的最外层数据隔离边界，学习模式创建后不可变。
+- 首次运行提供"必考词、常考词、偶考词、日常积累"四个默认 Space；Space 是两种模式共同且可多实例的最外层数据隔离边界，学习模式创建后不可变。
 - 词书模式层级 `Space → Unit → List → Word`，以 List 为纸质复习和工作量单位；常规模式层级 `Space → 条目`，条目级 FSRS 调度。
 - 手录释义是学习主数据；在线词典只是可失败的补充来源，网络失败不得阻塞核心学习流程。
 - 术语与行为细节以 `docs/需求规格.md` 为唯一真理源。
@@ -42,9 +42,9 @@ React + TypeScript + Vite
 - React 页面禁止直接 import Tauri API；平台能力经 Ports/Adapters（`BrowserTestAdapter` / `TauriProductionAdapter`）注入，浏览器模式与 Tauri 模式共用同一套业务逻辑。
 - 分层依赖：`ui → application → domain`；`packages/protocol` 由客户端与服务器共享；server 与客户端仅通过 HTTP 协议耦合。
 
-## 目标目录结构
+## 项目目录结构
 
-> 工程形态为 **pnpm workspace monorepo**。以下为迁移目标骨架（建议形态）；Phase 0/1 脚手架落地时如需调整，必须回写本节。
+> 工程形态为 **pnpm workspace monorepo**。以下列出当前稳定目录与入口。
 
 ```text
 Ebbinghaus-v2/
@@ -54,18 +54,21 @@ Ebbinghaus-v2/
 ├── tsconfig.base.json / tsconfig.json  # 共享 TS 基线（NodeNext + 全严格）与根级配置
 ├── vitest.config.ts                    # Vitest 根聚合（projects 模式，各包自带配置）
 ├── packages/
-│   ├── protocol/                       # 已落地（2026-09-19）：同步协议、事件 schema、Zod 定义（双端共享）
+│   ├── protocol/                       # 同步协议、事件与内容 schema、Zod 定义（双端共享）
 │   ├── domain/                         # 纯 TS 领域层：状态机、FSRS、容量预测（禁 DOM/Node/Tauri 依赖）
 │   ├── application/                    # 用例编排与端口定义（Repository、SyncEngine、LLM、词典）
-│   └── persistence/                    # Repository/Outbox/SyncEngine 的 Node 适配实现（2026-09-19 C2 判断新增）
+│   ├── persistence/                    # SQLite 仓储、Outbox、SyncEngine 与浏览器运行时
+│   └── migration/                      # V1 在线备份到 V2 客户端库的幂等导入与审计
 ├── app/
 │   ├── src/                            # React UI（Vite 浏览器模式可独立运行）
+│   ├── e2e/                            # Playwright 浏览器用户旅程与全窗口截图
+│   ├── native-e2e/                     # WebdriverIO macOS 原生运行时冒烟
 │   └── src-tauri/                      # Tauri 平台壳（macOS / Android）
 ├── server/                             # Node + Fastify + better-sqlite3 同步服务器
 └── .archive/                           # 废弃文件归档（不进版本控制）
 ```
 
-> workspace 成员声明为 `packages/*`、`server`、`app`（`server`/`app` 目录落地前被 pnpm 忽略）。
+> workspace 成员声明为 `packages/*`、`server`、`app`。
 > 内部包策略：各包 `exports` 直接指向 `src/*.ts` 源码，不预编译、不引入 bundler，Vitest 与
 > Node 24（type stripping）直接消费 TS 源码；`typecheck` 对各包 tsconfig 逐个 `tsc --noEmit` 检查。
 
@@ -73,8 +76,8 @@ Ebbinghaus-v2/
 
 ## 数据边界
 
-- 正式学习数据当前仍在 V1（本机 SQLite）。V2 在 Phase 2 完成真实数据上云前，不接管任何正式数据。
-- V2 开发期的一切数据库（客户端、服务器）都是独立开发/测试库；客户端正式 SQLite 位于各平台应用数据目录（Tauri path API 解析），服务器数据库位于 server 运行目录；仓库内不得提交任何数据库文件、密钥或个人数据。
+- 当前云端与 V2 本地数据库均为验收测试数据；V1 演练备份也不是已确认的生产源。正式生产库切换必须在识别源库并完成在线备份、核对后另行执行。
+- V2 桌面客户端 SQLite 位于 macOS 应用数据目录，服务器权威 SQLite 位于 `/opt/ebbinghaus/data`；仓库内不得提交数据库文件、密钥或个人数据。
 - 仓库 `data/` 目录当前只承载 V1 口径的说明文件，待 Phase 2 重写为 V2 数据边界。
 
 ## 运行环境与开发命令
@@ -88,9 +91,10 @@ Ebbinghaus-v2/
   - 开发服务：`rtk pnpm --filter @ebbinghaus/app dev`（Vite，脱离 Tauri 壳完整运行）；
   - 构建：`rtk pnpm --filter @ebbinghaus/app build`；
   - Testing Library：`rtk pnpm test`（与各包一起由根 Vitest 聚合）；
-  - Playwright 浏览器矩阵（构建产物 + 三视口截图）：`rtk pnpm --filter @ebbinghaus/app e2e`。
+  - Playwright 浏览器矩阵（桌面、紧凑、WebKit 桌面及手机视口，全窗口截图）：`rtk pnpm --filter @ebbinghaus/app e2e`。
+- macOS 原生自动验收：先在 `app/` 启动 `rtk pnpm dev --host 127.0.0.1`，再在 `app/src-tauri/` 执行 `rtk cargo build --features wdio-test`，最后在 `app/` 执行 `rtk pnpm e2e:native`。`wdio-test` 仅用于测试构建；正式包不启用内嵌 WebDriver。
 - 同步服务器（本地）：`rtk pnpm server:start`（CLI `--db= --token= --port=`，缺省 127.0.0.1:8787）、在线备份 `rtk pnpm server:backup`；部署口径见 `docs/服务器部署留档.md`。
-- Tauri 构建（Phase 4 起启用）以 `docs/V2迁移技术决策.md` 第六章为准。
+- 正式 macOS 桌面包：`rtk pnpm --filter @ebbinghaus/app tauri build`；产物位于 `app/src-tauri/target/release/bundle/macos/Ebbinghaus.app` 与相邻 `dmg/` 目录。本机验收安装路径为 `/Applications/Ebbinghaus V2.app`，与 V1 `/Applications/Ebbinghaus.app` 分开。
 
 ## 重要文档索引
 
@@ -104,7 +108,7 @@ Ebbinghaus-v2/
 | 界面信息架构、交互语义与可用性底线（v2 起约束力范围见其第 1 章） | `docs/界面设计规格.md` |
 | 记忆科学依据、调度模型、容量与逾期算法（v2 移植目标） | `docs/复习调度算法.md` |
 | 录入整理故障报告、基础日志设计与整理校验机制整改口径（v1 行为规格参考） | `docs/录入整理故障报告与日志设计.md` |
-| 同步服务器本地运行与上云部署蓝本（本轮仅留档，未执行远端操作） | `docs/服务器部署留档.md` |
+| 同步服务器的实际部署、检查与备份操作 | `docs/服务器部署留档.md` |
 | 自主执行轮次记录 | `docs/autonomous-runs/` |
 
 ## 代码规范与开发测试闭环

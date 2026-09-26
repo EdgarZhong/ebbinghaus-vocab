@@ -230,7 +230,7 @@ export class LlmConfigurationService {
    * 闭包执行探测成功返回用户可读提示；探测抛出的错误原样透传，绝不吞掉或改写。
    * 组合根未注入探测时明确报不可用，而不是静默成功或抛出裸属性错误。
    */
-  prepareConnectionTest(): () => string {
+  prepareConnectionTest(): () => Promise<string> {
     const probe = this.deps.connectivityProbe;
     if (!probe) {
       throw new LanguageModelNotConfiguredError("当前运行环境不支持大语言模型连通性测试");
@@ -239,8 +239,8 @@ export class LlmConfigurationService {
     const baseUrl = stored?.baseUrl || ALIYUN_BAILIAN_BASE_URL;
     const modelName = stored?.modelName || ALIYUN_BAILIAN_MODEL;
     const apiKey = typeof stored?.apiKey === "string" && stored.apiKey ? stored.apiKey : null;
-    return () => {
-      probe.probe(baseUrl, modelName, apiKey);
+    return async () => {
+      await probe.probe(baseUrl, modelName, apiKey);
       return "连接成功，大语言模型服务可用";
     };
   }

@@ -18,6 +18,8 @@
  *   内容属于本地内容表，事件只承载学习事实）。首过确认时刻即为该批词的 T0；
  * - `wordAdded` 携带 targetId 与 normalizedKey，重放器可据此创建词身份；新增词
  *   以事件发生时刻进入短期通过次数 0（复习调度算法 5.2 第 1 条）；
+ * - 手动掌握反馈沿用 V1 的状态转换：词书模式已掌握退出调度、重置未掌握重新开始
+ *   短期周期；常规模式手动不认识保留 FSRS Again 的到期时间。
  * - `taskDeferred` 在协议层尚未固化字段、`testSessionPaused/Resumed` 属于会话
  *   执行状态、`dictionaryFetched/FetchFailed` 属于词典缓存审计——均不产生调度
  *   派生状态，重放时忽略；
@@ -274,8 +276,13 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
           if (list.firstPassedAt === null) {
             list.firstPassedAt = event.occurredAt;
           }
-          // 首过确认时刻是本轮周期起点：为尚无 T0 的登记词初始化短期通过次数 0。
-          for (const wordId of list.wordIds) {
+          // 新协议携带本次确认的 Word 标识，避免最终内容目录提前登记了后续补录词时，
+          // 旧首过事件错误地把这些词的 T0 回填到最初日期。V1 历史事件没有该字段，
+          // 为保持原语义才退回完整 List 登记集合。
+          const recordedIds = Array.isArray(metadata["wordIds"])
+            ? metadata["wordIds"].filter((id): id is string => typeof id === "string")
+            : [...list.wordIds];
+          for (const wordId of recordedIds) {
             const word = ensureWord(wordId);
             if (word.t0 === null) {
               word.shortTermPassCount = 0;
@@ -321,6 +328,41 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
         const word = ensureWord(event.targetId);
         // 修改内容保持同一对象与学习历史；当前协议只承载规范键。
         word.normalizedKey = getRequiredMetadataString(metadata, "normalizedKey", `wordContentUpdated 事件 ${event.eventId}`);
+        break;
+      }
+      case "wordManuallyMarkedMastered":
+      case "wordManuallyMarkedUnmastered": {
+        const word = ensureWord(event.targetId);
+        const markedMastered = event.eventType === "wordManuallyMarkedMastered";
+        word.masteryStatus = markedMastered ? MasteryStatus.Mastered : MasteryStatus.Unmastered;
+        // 常规模式的手动“不认识”是真实 FSRS Again；V1 会更新卡片与到期日，
+        // 事件中携带的 afterState 是跨设备重放的唯一到期时间来源。
+        const afterState = metadata["afterState"];
+        if (typeof afterState === "object" && afterState !== null && !Array.isArray(afterState)) {
+          const dueAt = (afterState as Record<string, unknown>)["dueAt"];
+          if (typeof dueAt === "string") word.regularDueAt = dueAt;
+        }
+        if (word.listId !== null) {
+          const list = ensureList(word.listId);
+          if (markedMastered) {
+            const allMastered = [...list.wordIds].every((id) => {
+              const candidate = words.get(id);
+              return candidate?.removed === true || candidate?.masteryStatus === MasteryStatus.Mastered;
+            });
+            list.aggregateStatus = allMastered ? MasteryStatus.Mastered : MasteryStatus.Unmastered;
+            if (allMastered) list.stage = WordListStage.Mastered;
+            list.additionsLocked = true;
+          } else {
+            const cycleAt = metadata["newShortTermCycleAt"];
+            word.shortTermPassCount = 0;
+            word.t0 = typeof cycleAt === "string" ? cycleAt : event.occurredAt;
+            word.t1 = null;
+            word.t2 = null;
+            list.stage = WordListStage.ShortTermSync;
+            list.aggregateStatus = MasteryStatus.Unmastered;
+            list.additionsLocked = true;
+          }
+        }
         break;
       }
       case "testAnswered":
@@ -401,6 +443,11 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
       case "reviewOnlyCompleted":
       case "testFollowedByReviewCompleted": {
         const list = ensureList(event.targetId);
+        // 长期验证失败后重新进入短期同步；同步时建立的新增锁仍永久保留。
+        // 全词成功时同批后续 listMastered 事件会把阶段推进到已掌握。
+        if (event.eventType === "testFollowedByReviewCompleted" && metadata["taskType"] === "长期验证") {
+          list.stage = WordListStage.ShortTermSync;
+        }
         const keys = metadata["reviewDemandKeys"];
         if (Array.isArray(keys)) {
           for (const key of keys) {

@@ -43,6 +43,12 @@ export const DEVICE_LOCAL_KEYS = {
 /** V1 user_settings 的功能开关默认值（v001_initial：默认开启）。 */
 const DEFAULT_DICTIONARY_PROVIDER = "维基词典";
 
+/**
+ * 首启种子的逻辑时间。新设备即使晚于已有设备安装，也不能用“今天”的默认值
+ * 覆盖云端早已由用户修改的设置；真实用户操作仍使用注入时钟生成新版本。
+ */
+export const INITIAL_DEFAULT_TIMESTAMP = "1970-01-01T00:00:00.000Z";
+
 export interface SettingsServiceDeps {
   readonly syncedSettings: SyncedSettingsStore;
   readonly deviceLocal: DeviceLocalStore;
@@ -244,18 +250,21 @@ export class SettingsService {
       this.writeSyncedEntry(
         "learning.timezone",
         DEFAULT_LEARNING_SCHEDULE_SETTINGS.timezoneName,
+        true,
       );
     }
     if (this.readSyncedString("learning.dayRolloverTime") === null) {
       this.writeSyncedEntry(
         "learning.dayRolloverTime",
         DEFAULT_LEARNING_SCHEDULE_SETTINGS.dayRolloverTime,
+        true,
       );
     }
     if (this.readSyncedValue("learning.schedulerParameters") === null) {
       this.writeSyncedEntry(
         "learning.schedulerParameters",
         DEFAULT_LEARNING_SCHEDULE_SETTINGS.schedulerParameters,
+        true,
       );
     }
   }
@@ -267,19 +276,20 @@ export class SettingsService {
   ensureSpaceLearningDefaults(spaceId: string): void {
     const defaults = DEFAULT_SPACE_LEARNING_SETTINGS;
     if (this.readSyncedValue(spaceSettingKey(spaceId, "dailyTarget")) === null) {
-      this.writeSyncedEntry(spaceSettingKey(spaceId, "dailyTarget"), defaults.dailyTarget);
+      this.writeSyncedEntry(spaceSettingKey(spaceId, "dailyTarget"), defaults.dailyTarget, true);
     }
     if (this.readSyncedValue(spaceSettingKey(spaceId, "regularGroupSize")) === null) {
       this.writeSyncedEntry(
         spaceSettingKey(spaceId, "regularGroupSize"),
         defaults.regularGroupSize,
+        true,
       );
     }
     if (this.readSyncedValue(spaceSettingKey(spaceId, "fsrsParameters")) === null) {
       this.writeSyncedEntry(spaceSettingKey(spaceId, "fsrsParameters"), {
         desiredRetention: defaults.fsrsParameters.desiredRetention,
         weights: null,
-      });
+      }, true);
     }
   }
 
@@ -307,15 +317,17 @@ export class SettingsService {
   }
 
   /** 构造完整 SettingEntry（时钟 + 设备 ID）写入同步通道；键形态先过协议校验。 */
-  private writeSyncedEntry(key: string, value: unknown): void {
+  private writeSyncedEntry(key: string, value: unknown, initialDefault = false): void {
     const parsedKey = settingKeySchema.safeParse(key);
     if (!parsedKey.success) {
       throw new Error(`设置键不满足协议命名规则：${key}`);
     }
     // 单调护栏：时钟读数不晚于本进程上次写入时，向前推 1ms，保证严格递增（见字段注释）。
     const nowMs = this.deps.clock.now().getTime();
-    const updatedAtMs = nowMs > this.lastWrittenAtMs ? nowMs : this.lastWrittenAtMs + 1;
-    this.lastWrittenAtMs = updatedAtMs;
+    const updatedAtMs = initialDefault
+      ? Date.parse(INITIAL_DEFAULT_TIMESTAMP)
+      : nowMs > this.lastWrittenAtMs ? nowMs : this.lastWrittenAtMs + 1;
+    if (!initialDefault) this.lastWrittenAtMs = updatedAtMs;
     const entry: SettingEntry = {
       key: parsedKey.data,
       value,

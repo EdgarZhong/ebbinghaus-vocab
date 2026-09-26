@@ -36,6 +36,16 @@ export {
 export { SqliteOutbox } from "./outbox/sqliteOutbox.ts";
 
 export { SqliteLearningEventStore } from "./repositories/events.ts";
+export { SqliteDictionaryCacheStore, InMemoryDictionaryCacheStore } from "./repositories/dictionary.ts";
+export {
+  createConcurrentOnlineDictionary,
+  createFetchDictionaryTransport,
+  parseYoudaoDefinitions,
+  parseWiktionaryDefinitions,
+  type DictionaryHttpTransport,
+  type DictionarySource,
+} from "./dictionary/onlineDictionary.ts";
+export { SqliteFirstPassDraftStore } from "./repositories/drafts.ts";
 export {
   SqliteBookCatalogStore,
   SqliteSpaceStore,
@@ -57,14 +67,17 @@ export {
 export { buildHttpSyncGateway, type SyncGateway } from "./sync/httpGateway.ts";
 export { SyncEngine, type SyncCycleResult, type SyncEngineDeps } from "./sync/syncEngine.ts";
 export { SqlitePullCursorStore } from "./sync/syncState.ts";
+export { SqliteContentSyncStore, type ContentSyncStore } from "./sync/contentStore.ts";
 
 export {
   createInMemoryRuntime,
   InMemoryBookCatalogStore,
+  InMemoryContentSyncStore,
   InMemoryDailyPlanStore,
   InMemoryDeviceLocalStore,
   InMemoryDeviceSeqAllocator,
   InMemoryEventStore,
+  InMemoryFirstPassDraftStore,
   InMemoryFsrsCardStore,
   InMemoryLlmConfigurationStore,
   InMemoryOutbox,

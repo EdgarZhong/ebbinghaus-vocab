@@ -10,13 +10,12 @@
  *   按剩余任务给下一步文案。
  * - 键盘（规格 14.4）：Enter 表达"认识/下一个/确认不认识"，Backspace 只表达
  *   "不认识/标记为忘记"；仅在会话视图且不处于文本输入状态时生效。
- * - 词书逐词测试会话用例尚未在应用层交付（bookReview.ts 如实记录），任务行点击
- *   显示如实占位说明，不伪造会话能力。
+ * - 词书模式按 List 保存会话快照，全部软件测试完成后等待纸质复习。
  */
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { TestJudgement, type TestJudgement as TestJudgementType } from "@ebbinghaus/domain";
-import type { TaskItemSnapshot, TestSessionSnapshot } from "@ebbinghaus/application";
+import type { DictionarySnapshot, TaskItemSnapshot, TestSessionSnapshot } from "@ebbinghaus/application";
 import { navigate, routes } from "../router.tsx";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
@@ -44,7 +43,6 @@ export function TestPage(): ReactNode {
   } | null>(null);
   const [revealed, setRevealed] = useState<TestJudgementType | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
-  const [bookHint, setBookHint] = useState<string | null>(null);
 
   /** 仅当会话属于当前活动 Space 时才进入会话视图；否则等价于无会话。 */
   const session =
@@ -56,7 +54,6 @@ export function TestPage(): ReactNode {
   if (activeSpace?.id !== prevSpaceId) {
     setPrevSpaceId(activeSpace?.id);
     setTaskError(null);
-    setBookHint(null);
   }
 
   // 离开会话视图时无需清理：暂停是显式动作，直接关闭页面保留进行中的会话
@@ -76,12 +73,13 @@ export function TestPage(): ReactNode {
 
   const startTask = (task: TaskItemSnapshot): void => {
     setTaskError(null);
-    setBookHint(null);
     if (activeSpace === null) {
       return;
     }
     try {
-      const snapshot = services.regularLearning.startOrResumeRegularTest({ taskId: task.taskId });
+      const snapshot = activeSpace.learningMode === "常规模式"
+        ? services.regularLearning.startOrResumeRegularTest({ taskId: task.taskId })
+        : services.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: activeSpace.id });
       setSessionState({ spaceId: activeSpace.id, snapshot });
       setRevealed(null);
     } catch (cause) {
@@ -119,14 +117,16 @@ export function TestPage(): ReactNode {
     return (
       <PageShell title="测试" description={isRegularMode ? "完成一组再进入下一组，或到复习页朗读。" : undefined}>
         <section className="card test-completed" data-testid="test-completed">
-          <p className="empty-state-title">今天的测试完成了</p>
+          <p className="empty-state-title">{isRegularMode ? "今天的测试完成了" : "软件测试完成了"}</p>
           <p className="empty-state-description">
-            {hasOtherPending
+            {!isRegularMode
+              ? `现在请翻开纸质词书，复习 Unit ${session.unitNumber} · List ${session.listNumber}。`
+              : hasOtherPending
               ? "这一组测试完成了。可以继续下一组，或到复习页朗读刚刚测试过的条目。"
               : "可以到复习页朗读刚刚测试过的条目。"}
           </p>
           <div className="modal-actions">
-            {hasOtherPending ? (
+            {isRegularMode && hasOtherPending ? (
               <button
                 type="button"
                 className="btn btn-primary"
@@ -150,7 +150,7 @@ export function TestPage(): ReactNode {
               data-testid="test-back-to-list"
               onClick={exitSession}
             >
-              返回测试
+              {isRegularMode ? "返回测试" : "稍后复习"}
             </button>
           </div>
         </section>
@@ -158,11 +158,12 @@ export function TestPage(): ReactNode {
     );
   }
 
-  // ---- 逐词测试会话视图（常规模式） ----
+  // ---- 两种模式共用逐词揭示交互，最终判断由各自应用用例处理。 ----
   if (session !== null && session.currentWord !== null) {
     return (
       <RegularSessionView
         view={{ snapshot: session, revealed }}
+        isRegularMode={isRegularMode}
         onChange={(next) => {
           // 函数式更新（rerender-functional-setstate）：保留会话的 Space 归属标签，
           // 只推进快照；会话已被并发清空时（理论不可达）不复活。
@@ -178,10 +179,16 @@ export function TestPage(): ReactNode {
   return (
     <PageShell
       title="测试"
-      description="在软件里逐词检查记忆，完成后再翻开纸质词书复习。"
+      description={isRegularMode
+        ? "在软件里逐条检查记忆；完成后可以到复习页朗读。"
+        : "在软件里逐词检查记忆，完成后再翻开纸质词书复习。"}
     >
       {tasks.length === 0 ? (
-        <EmptyState title="今天没有需要测试的 List" description="新的测试到期后，会显示在这里。" />
+        // 常规模式没有 Unit/List；空态也必须沿用条目术语，否则新用户会误解学习对象。
+        <EmptyState
+          title={isRegularMode ? "今天没有需要测试的条目" : "今天没有需要测试的 List"}
+          description="新的测试到期后，会显示在这里。"
+        />
       ) : (
         <div className="row-list" data-testid="test-task-list">
           {tasks.map((task) => {
@@ -206,29 +213,9 @@ export function TestPage(): ReactNode {
                     </span>
                   </span>
                 </div>
-                {isRegularMode ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => startTask(task)}
-                    data-testid={`test-start-${task.listNumber}`}
-                  >
-                    {isResumable(task) ? "继续测试" : "开始测试"}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() =>
-                      setBookHint(
-                        "逐词测试将在后续更新中提供。当前版本请先在复习页完成纸质复习任务。",
-                      )
-                    }
-                    data-testid={`test-start-${task.listId}`}
-                  >
-                    开始测试
-                  </button>
-                )}
+                <button type="button" className="btn btn-primary" onClick={() => startTask(task)} data-testid={isRegularMode ? `test-start-${task.listNumber}` : `test-start-${task.listId}`}>
+                  {isResumable(task) ? "继续测试" : "开始测试"}
+                </button>
               </div>
             );
           })}
@@ -237,11 +224,6 @@ export function TestPage(): ReactNode {
       {taskError === null ? null : (
         <p className="field-error" role="alert" data-testid="test-task-error">
           {taskError}
-        </p>
-      )}
-      {bookHint === null ? null : (
-        <p className="field-hint" role="status" data-testid="test-book-hint">
-          {bookHint}
         </p>
       )}
     </PageShell>
@@ -259,10 +241,12 @@ export function TestPage(): ReactNode {
 
 function RegularSessionView({
   view,
+  isRegularMode,
   onChange,
   onExit,
 }: {
   view: SessionViewState;
+  isRegularMode: boolean;
   onChange(next: SessionViewState): void;
   onExit(): void;
 }): ReactNode {
@@ -272,6 +256,37 @@ function RegularSessionView({
   const remaining = Math.max(0, snapshot.totalCount - snapshot.currentPosition);
   /** 会话操作失败的就地错误（如重复确认同一词条），不中断会话视图。 */
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [dictionaryView, setDictionaryView] = useState<{ wordId: string; snapshot: DictionarySnapshot } | null>(null);
+  const lookupStarted = useRef(new Set<string>());
+  const lookupCancelled = useRef(false);
+  const currentWordId = currentWord?.wordId ?? null;
+  const currentWordIdRef = useRef(currentWordId);
+  currentWordIdRef.current = currentWordId;
+  const dictionaryEnabled = services.settings.getFeatureFlags().onlineDictionary;
+
+  useEffect(() => {
+    lookupCancelled.current = false;
+    return () => { lookupCancelled.current = true; };
+  }, []);
+
+  useEffect(() => {
+    if (currentWordId === null || !dictionaryEnabled) return;
+    const wordId = currentWordId;
+    const cached = services.dictionary.getSnapshot(wordId);
+    setDictionaryView({ wordId, snapshot: cached });
+    if (!cached.needsRefresh || lookupStarted.current.has(wordId)) return;
+    lookupStarted.current.add(wordId);
+    // V1 从单词出现时开始静默预拉，揭示答案只决定是否显示结果。失败不显示提示、
+    // 不阻断作答，也不产生失败审计事件；同一会话每词最多查询一次。
+    void services.dictionary.load(wordId, {
+      auditFailure: false,
+      isCancelled: () => lookupCancelled.current,
+    }).then((snapshot) => {
+      if (!lookupCancelled.current && currentWordIdRef.current === wordId) {
+        setDictionaryView({ wordId, snapshot });
+      }
+    }).catch(() => { /* 测试页的在线词典失败按 V1 静默降级。 */ });
+  }, [currentWordId, dictionaryEnabled, services]);
 
   // 会话被外部清空（理论不可达）时的防御：立即回到列表由上层处理。
   useEffect(() => {
@@ -283,11 +298,9 @@ function RegularSessionView({
   const confirmAnswer = useCallback(
     (initial: TestJudgementType, final: TestJudgementType) => {
       try {
-        const next = services.regularLearning.confirmRegularTestAnswer({
-          sessionId: snapshot.sessionId,
-          initialJudgement: initial,
-          finalJudgement: final,
-        });
+        const next = isRegularMode
+          ? services.regularLearning.confirmRegularTestAnswer({ sessionId: snapshot.sessionId, initialJudgement: initial, finalJudgement: final })
+          : services.bookLearning.confirmBookTestAnswer({ sessionId: snapshot.sessionId, initialJudgement: initial, finalJudgement: final });
         services.notifyChanged();
         // 最终判断完成：进入下一词；会话完成时 currentWord 为 null，上层渲染完成视图。
         onChange({ snapshot: next, revealed: null });
@@ -297,19 +310,20 @@ function RegularSessionView({
         setSessionError(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [services, snapshot, onChange],
+    [services, snapshot, onChange, isRegularMode],
   );
 
   const pause = useCallback(() => {
     try {
-      services.regularLearning.pauseRegularTest({ sessionId: snapshot.sessionId });
+      if (isRegularMode) services.regularLearning.pauseRegularTest({ sessionId: snapshot.sessionId });
+      else services.bookLearning.pauseBookTest({ sessionId: snapshot.sessionId });
       services.notifyChanged();
     } catch (cause) {
       setSessionError(cause instanceof Error ? cause.message : String(cause));
       return;
     }
     onExit();
-  }, [services, snapshot.sessionId, onExit]);
+  }, [services, snapshot.sessionId, onExit, isRegularMode]);
 
   // 初判：作答前选择"认识/不认识"，只揭示答案，不写任何学习事件。
   const initial = useCallback(
@@ -353,12 +367,14 @@ function RegularSessionView({
   if (currentWord === null) {
     return null;
   }
+  const onlineDefinitions = dictionaryEnabled && dictionaryView?.wordId === currentWord.wordId
+    ? dictionaryView.snapshot.definitions : [];
 
   return (
-    <PageShell title="逐词测试" description={`第 ${snapshot.listNumber ?? 1} 组`}>
+    <PageShell title="逐词测试" description={isRegularMode ? `第 ${snapshot.listNumber ?? 1} 组` : `Unit ${snapshot.unitNumber} · List ${snapshot.listNumber}`}>
       <div className="test-session" data-testid="test-session">
         <p className="test-session-remaining" data-testid="test-session-remaining">
-          本组尚余 {remaining} 个条目
+          {isRegularMode ? `本组尚余 ${remaining} 个条目` : `本 List 尚余 ${remaining} 个词`}
         </p>
         <p className="test-session-word" data-testid="session-word">
           {currentWord.originalSpelling}
@@ -394,6 +410,10 @@ function RegularSessionView({
               <p className="test-session-meaning" data-testid="session-meaning">
                 {currentWord.manualMeaning}
               </p>
+              {onlineDefinitions.length > 0 ? <div data-testid="session-online-dictionary">
+                <h3 className="card-section-title">在线词典</h3>
+                <p className="test-session-meaning">{onlineDefinitions.map((item) => `${item.partOfSpeech}：${item.definition}`).join("\n")}</p>
+              </div> : null}
             </div>
             <div className="test-session-actions">
               {revealed === TestJudgement.Recognized ? (

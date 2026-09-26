@@ -1,0 +1,29 @@
+{
+  "name": "@ebbinghaus/migration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "V1 正式 SQLite 数据只读审计与一次性迁移工具",
+  "scripts": {
+    "audit": "tsx src/audit.ts",
+    "backup": "tsx src/backup.ts",
+    "convert:check": "tsx src/convert.ts",
+    "import:v1": "tsx src/import.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ebbinghaus/application": "workspace:*",
+    "@ebbinghaus/domain": "workspace:*",
+    "@ebbinghaus/persistence": "workspace:*",
+    "@ebbinghaus/protocol": "workspace:*",
+    "better-sqlite3": "13.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.9.2",
+    "tsx": "4.23.13",
+    "typescript": "6.0.2",
+    "vitest": "5.0.0"
+  }
+}

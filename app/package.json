@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Ebbinghaus V2 React 应用（浏览器模式一等公民）：应用外壳、设计令牌、Space 管理页与设置页",
+  "description": "Ebbinghaus V2 React 与 Tauri 客户端：词书、常规学习及云端同步",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -11,10 +11,12 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "e2e": "vite build && playwright test",
+    "e2e:native": "wdio run wdio.conf.ts",
     "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-sql": "2.4.1",
     "liquid-glass-react": "1.1.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -31,6 +33,14 @@
     "@testing-library/user-event": "14.6.7",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@types/better-sqlite3": "9.6.0",
+    "@wdio/cli": "9.32.0",
+    "@wdio/globals": "9.31.3",
+    "@wdio/local-runner": "9.32.0",
+    "@wdio/mocha-framework": "9.32.0",
+    "@wdio/spec-reporter": "9.32.0",
+    "@wdio/tauri-plugin": "1.4.0",
+    "@wdio/tauri-service": "1.4.0",
     "@vitejs/plugin-react": "6.1.1",
     "jsdom": "30.1.0",
     "typescript": "6.0.2",

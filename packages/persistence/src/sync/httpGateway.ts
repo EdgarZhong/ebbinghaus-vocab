@@ -15,6 +15,10 @@
  */
 
 import {
+  contentPullQuerySchema,
+  contentPullResponseSchema,
+  contentPutRequestSchema,
+  contentPutResponseSchema,
   settingsGetResponseSchema,
   settingsPutRequestSchema,
   settingsPutResponseSchema,
@@ -23,6 +27,8 @@ import {
   syncPushRequestSchema,
   syncPushResponseSchema,
   type SettingEntry,
+  type ContentEntry,
+  type StoredContentEntry,
 } from "@ebbinghaus/protocol";
 import type { ApplicationEvent } from "@ebbinghaus/application";
 
@@ -38,6 +44,12 @@ export interface SyncGateway {
   }>;
   getSettings(): Promise<{ readonly settings: readonly SettingEntry[] }>;
   putSettings(entries: readonly SettingEntry[]): Promise<{ readonly settings: readonly SettingEntry[] }>;
+  putContent(entries: readonly ContentEntry[]): Promise<{ readonly contents: readonly StoredContentEntry[] }>;
+  pullContent(afterSeq: number, limit: number): Promise<{
+    readonly contents: readonly StoredContentEntry[];
+    readonly nextCursor: number;
+    readonly hasMore: boolean;
+  }>;
 }
 
 interface BuildSyncGatewayOptions {
@@ -150,6 +162,21 @@ export function buildHttpSyncGateway(options: BuildSyncGatewayOptions): SyncGate
         await requestJson("PUT", "/settings", parsedRequest),
       );
       return parsed;
+    },
+
+    async putContent(entries) {
+      const request = contentPutRequestSchema.parse({ contents: entries });
+      return contentPutResponseSchema.parse(await requestJson("PUT", "/content", request));
+    },
+
+    async pullContent(afterSeq, limit) {
+      const query = contentPullQuerySchema.parse({
+        after_seq: afterSeq,
+        limit: Math.min(limit, PULL_PAGE_LIMIT),
+      });
+      return contentPullResponseSchema.parse(
+        await requestJson("GET", `/content?after_seq=${query.after_seq}&limit=${query.limit}`),
+      );
     },
   };
 }

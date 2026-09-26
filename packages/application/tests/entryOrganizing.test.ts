@@ -80,7 +80,7 @@ class RecordingOrganizer implements LanguageModelOrganizerPort {
 
   constructor(private readonly result: EntryOrganizationResult) {}
 
-  organize(rawText: string): EntryOrganizationResult {
+  async organize(rawText: string): Promise<EntryOrganizationResult> {
     this.calls.push(rawText);
     return this.result;
   }
@@ -100,31 +100,31 @@ class ThrowingOrganizer implements LanguageModelOrganizerPort {
 
   constructor(private readonly error: unknown) {}
 
-  organize(rawText: string): EntryOrganizationResult {
+  async organize(rawText: string): Promise<EntryOrganizationResult> {
     this.calls.push(rawText);
     throw this.error;
   }
 }
 
 describe("统一整理入口：原样返回领域证据树", () => {
-  it("整理用例只接收原文，不接收学习模式、Space、Unit 或 List 等位置数据", () => {
+  it("整理用例只接收原文，不接收学习模式、Space、Unit 或 List 等位置数据", async () => {
     const rawText = "mentor 名词 导师";
     const expected = organizedResult(rawText, v3Payload());
     const organizer = new RecordingOrganizer(expected);
     const service = new EntryOrganizerService(organizer);
 
     // organize 的签名只有一个原文参数：位置数据没有进入模型请求的通道。
-    const actual = service.organize(rawText);
+    const actual = await service.organize(rawText);
 
     expect(actual).toBe(expected);
     expect(organizer.calls).toEqual([rawText]);
   });
 
-  it("候选证据树完整保留：词条、义项与原文引用不丢失", () => {
+  it("候选证据树完整保留：词条、义项与原文引用不丢失", async () => {
     const rawText = "mentor 名词 导师";
     const service = new EntryOrganizerService(new RecordingOrganizer(organizedResult(rawText, v3Payload())));
 
-    const result = service.organize(rawText);
+    const result = await service.organize(rawText);
 
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.title).toBe("mentor");
@@ -135,37 +135,37 @@ describe("统一整理入口：原样返回领域证据树", () => {
 });
 
 describe("统一整理入口：三道边界（两种模式共用）", () => {
-  it("空白原文先拒绝，绝不把空白转写发给模型", () => {
+  it("空白原文先拒绝，绝不把空白转写发给模型", async () => {
     const organizer = new RecordingOrganizer(organizedResult("mentor 名词 导师", v3Payload()));
     const service = new EntryOrganizerService(organizer);
 
-    expect(() => service.organize(" \n\t")).toThrow("请先输入要整理的内容");
+    await expect(service.organize(" \n\t")).rejects.toThrow("请先输入要整理的内容");
     expect(organizer.calls).toEqual([]);
   });
 
-  it("未配置整理端口时报 LanguageModelNotConfiguredError，两种模式同一文案", () => {
+  it("未配置整理端口时报 LanguageModelNotConfiguredError，两种模式同一文案", async () => {
     const service = new EntryOrganizerService(null);
 
-    expect(() => service.organize("mentor")).toThrow("未配置智能整理服务");
+    await expect(service.organize("mentor")).rejects.toThrow("未配置智能整理服务");
     try {
-      service.organize("mentor");
+      await service.organize("mentor");
     } catch (error) {
       expect(error).toBeInstanceOf(LanguageModelNotConfiguredError);
       expect(error).toBeInstanceOf(LanguageModelOrganizationError);
     }
   });
 
-  it("模型未识别到任何条目时报 LanguageModelOrganizationError", () => {
+  it("模型未识别到任何条目时报 LanguageModelOrganizationError", async () => {
     const rawText = "只有课堂噪声";
     const empty = organizedResult(rawText, v3Payload([]));
     const service = new EntryOrganizerService(new RecordingOrganizer(empty));
 
-    expect(() => service.organize(rawText)).toThrow("没有识别到可填写的条目");
+    await expect(service.organize(rawText)).rejects.toThrow("没有识别到可填写的条目");
   });
 });
 
 describe("失败不静默丢行：错误定位保留", () => {
-  it("模型结果校验失败原样传播：问题清单携带分类码与词条定位，不回退本地解析", () => {
+  it("模型结果校验失败原样传播：问题清单携带分类码与词条定位，不回退本地解析", async () => {
     const rawText = "完全无关的课堂转写";
     // 领域 v3 校验器对坏载荷抛出的问题清单：term 证据引用了原文中不存在的文本，
     // 每个字段值必须可追溯——证据定位失败的词条不能被静默丢弃或改写。
@@ -198,7 +198,7 @@ describe("失败不静默丢行：错误定位保留", () => {
     // 应用层把模型适配器的失败原样抛给界面：没有第二套"本地规范解析"可以补救。
     const organizer = new ThrowingOrganizer(domainError);
     const service = new EntryOrganizerService(organizer);
-    expect(() => service.organize(rawText)).toThrow(domainError as Error);
+    await expect(service.organize(rawText)).rejects.toThrow(domainError as Error);
     expect(organizer.calls).toEqual([rawText]);
   });
 });
@@ -295,7 +295,7 @@ describe("整理端口审计与生命周期", () => {
 
   it("端口未声明审计属性时返回统一缺省值（交互轮数按 1 处理）", () => {
     const bare: LanguageModelOrganizerPort = {
-      organize: () => organizedResult("mentor 名词 导师", v3Payload()),
+      organize: async () => organizedResult("mentor 名词 导师", v3Payload()),
     };
     const service = new EntryOrganizerService(bare);
 
@@ -318,7 +318,7 @@ describe("整理端口审计与生命周期", () => {
 
   it("端口未实现取消方法时静默跳过，不抛错", () => {
     const bare: LanguageModelOrganizerPort = {
-      organize: () => organizedResult("mentor 名词 导师", v3Payload()),
+      organize: async () => organizedResult("mentor 名词 导师", v3Payload()),
     };
     const service = new EntryOrganizerService(bare);
 
@@ -328,7 +328,7 @@ describe("整理端口审计与生命周期", () => {
     }).not.toThrow();
   });
 
-  it("replaceOrganizer 热替换：设置事务提交后的下一次请求立即使用新端口", () => {
+  it("replaceOrganizer 热替换：设置事务提交后的下一次请求立即使用新端口", async () => {
     const first = new RecordingOrganizer(organizedResult("mentor 名词 导师", v3Payload()));
     const second = new RecordingOrganizer(organizedResult("pupil 名词 学生", v3Payload([
       {
@@ -345,13 +345,13 @@ describe("整理端口审计与生命周期", () => {
     const service = new EntryOrganizerService(first);
 
     service.replaceOrganizer(second);
-    service.organize("pupil 名词 学生");
+    await service.organize("pupil 名词 学生");
 
     expect(first.calls).toEqual([]);
     expect(second.calls).toEqual(["pupil 名词 学生"]);
 
     // 替换为 null 等价未配置：下一次请求立即走未配置边界。
     service.replaceOrganizer(null);
-    expect(() => service.organize("mentor")).toThrow("未配置智能整理服务");
+    await expect(service.organize("mentor")).rejects.toThrow("未配置智能整理服务");
   });
 });
