@@ -28,6 +28,8 @@ import {
   type SchedulingService,
   type TaskItemSnapshot,
   type TestSessionExecutionStatus,
+  type ListCatalogRecord,
+  type WordContentRecord,
 } from "@ebbinghaus/application";
 import type { InMemoryRuntime } from "@ebbinghaus/persistence/src/adapters/inMemoryRuntime.ts";
 
@@ -66,6 +68,7 @@ export interface RegularReviewEntryView {
   readonly wordId: string;
   readonly originalSpelling: string;
   readonly manualMeaning: string;
+  readonly meanings: readonly StructuredMeaning[];
   readonly lastJudgement: TestJudgementType;
 }
 
@@ -88,7 +91,7 @@ export interface BookReviewTaskView {
   /** "今天到期" / "逾期 N 天"。 */
   readonly dueLabel: string;
   /** 展开朗读用的活动词（已掌握词不出现，规格 6.4）。 */
-  readonly words: readonly { wordId: string; originalSpelling: string; manualMeaning: string }[];
+  readonly words: readonly { wordId: string; originalSpelling: string; manualMeaning: string; meanings: readonly StructuredMeaning[] }[];
   /** 原始派生任务：完成纸质复习用例（BookReviewCompletionService）的输入。 */
   readonly task: PersistedListTask;
 }
@@ -122,9 +125,10 @@ function toBookTaskItem(
   task: PersistedListTask,
   deps: CreateLearningViewsDeps,
   states: ReadonlyMap<string, import("@ebbinghaus/domain").ReplayedWordState>,
+  listsById: ReadonlyMap<string, ListCatalogRecord>,
+  contentsById: ReadonlyMap<string, WordContentRecord>,
 ): TaskItemSnapshot {
-  const listRecord = deps.runtime.bookCatalogStore.getList(task.listId);
-  const unit = listRecord === null ? null : deps.runtime.bookCatalogStore.getUnit(listRecord.unitId);
+  const listRecord = listsById.get(task.listId);
   // 开放会话保护：会话开始时绑定任务标识，仅匹配的会话计入进度（scheduling.ts 口径）。
   const openSession = deps.runtime.testSessionStore.getOpenListSession(task.listId);
   const sessionMatches = openSession !== null && openSession.taskId === task.taskId;
@@ -136,19 +140,20 @@ function toBookTaskItem(
       ? task.payload.reviewDemands.map((demand) => demand.wordId)
       : task.payload.testDemands.map((demand) => demand.wordId);
   const activeWords = demandWordIds
-    .map((wordId) => deps.runtime.wordContentStore.getEntry(wordId))
-    .filter((content): content is NonNullable<typeof content> => content !== null)
+    .map((wordId) => contentsById.get(wordId))
+    .filter((content): content is WordContentRecord => content !== undefined && !content.removed)
     // 复习展开默认不显示已掌握词（规格 6.4）；测试需求本身只对未掌握词生成。
     .filter((content) => states.get(content.wordId)?.masteryStatus !== MasteryStatus.Mastered)
     .map((content) => ({
       wordId: content.wordId,
       originalSpelling: content.originalSpelling,
       manualMeaning: content.manualMeaning,
+      meanings: content.meanings,
     }));
   return {
     taskId: task.taskId,
     listId: task.listId,
-    unitNumber: unit?.number ?? 0,
+    unitNumber: listRecord?.unitNumber ?? 0,
     listNumber: listRecord?.listNumber ?? 0,
     taskType: task.taskType as TaskItemSnapshot["taskType"],
     dueReason: task.dueReason,
@@ -176,7 +181,9 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       const replayed = states();
       // 常规模式条目直接按 Space 查询；词书模式词的 spaceId 为 null，经 List 目录拼接。
       const contents = [...runtime.wordContentStore.listEntriesForSpace(spaceId)];
-      for (const listRecord of runtime.bookCatalogStore.listListsForSpace(spaceId)) {
+      const lists = runtime.bookCatalogStore.listListsForSpace(spaceId);
+      const listsById = new Map(lists.map((list) => [list.listId, list]));
+      for (const listRecord of lists) {
         contents.push(...runtime.wordContentStore.listEntriesForList(listRecord.listId));
       }
       const withIndex = contents.map((content, index) => ({ content, index }));
@@ -195,15 +202,16 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       });
       return withIndex.map(({ content }) => {
         const state = replayed.get(content.wordId);
-        const list = content.listId === null ? null : runtime.bookCatalogStore.getList(content.listId);
-        const unit = list === null ? null : runtime.bookCatalogStore.getUnit(list.unitId);
+        // List 查询已经在上方一次完成；逐词再查本地 SQLite 会让 60 词列表
+        // 产生上百次 WebView 主线程往返，切页和详情展开都会明显卡顿。
+        const list = content.listId === null ? undefined : listsById.get(content.listId);
         return {
           wordId: content.wordId,
           originalSpelling: content.originalSpelling,
           manualMeaning: content.manualMeaning,
           meanings: [...content.meanings],
           recordedAt: content.recordedAt,
-          unitNumber: unit?.number ?? null,
+          unitNumber: list?.unitNumber ?? null,
           listNumber: list?.listNumber ?? null,
           masteryStatus: state?.masteryStatus ?? MasteryStatus.Unmastered,
           lastJudgement: state?.lastJudgement ?? null,
@@ -241,12 +249,13 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       // 改判事件（answerRevised）不另立条目；最终判断以确认事件 metadata 为准。
       const orderedIds: string[] = [];
       const judgementById = new Map<string, TestJudgementType>();
+      const contentsById = new Map(runtime.wordContentStore.listEntriesForSpace(spaceId).map((content) => [content.wordId, content]));
       for (const event of runtime.eventStore.listAllEvents()) {
         if (event.eventType !== "testAnswered" || event.learningDay !== today) {
           continue;
         }
-        const content = runtime.wordContentStore.getEntry(event.targetId);
-        if (content === null || content.spaceId !== spaceId) {
+        const content = contentsById.get(event.targetId);
+        if (content === undefined) {
           continue;
         }
         if (judgementById.has(event.targetId)) {
@@ -266,12 +275,13 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       const groupSize = settings.getSpaceLearningSettings(spaceId).regularGroupSize;
       return splitRegularTestGroups(orderedIds, groupSize).map((wordIds, index) => {
         const entries: RegularReviewEntryView[] = wordIds.map((wordId) => {
-          const content = runtime.wordContentStore.getEntry(wordId);
+          const content = contentsById.get(wordId);
           const judgement = judgementById.get(wordId) ?? TestJudgement.Recognized;
           return {
             wordId,
             originalSpelling: content?.originalSpelling ?? "",
             manualMeaning: content?.manualMeaning ?? "",
+            meanings: content?.meanings ?? [],
             lastJudgement: judgement,
           };
         });
@@ -291,6 +301,8 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       const learningDaySettings = settings.getLearningDaySettings();
       const replayed = states();
       const refresh = scheduling.refreshSpaceTasks({ spaceId, learningDaySettings });
+      const listsById = new Map(runtime.bookCatalogStore.listListsForSpace(spaceId).map((list) => [list.listId, list]));
+      const contentsById = new Map(runtime.wordContentStore.listCatalogEntries().map((content) => [content.wordId, content]));
       // 进行中的软件测试仍留在测试页；测试完成的任务从会话启动快照恢复，
       // 防止答案改变调度投影后，纸质复习入口被新任务覆盖。
       const paperTasks = [
@@ -299,21 +311,21 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       ];
       return [...new Map(paperTasks.map((task) => [task.taskId, task])).values()]
         .map((task) => {
-          const listRecord = runtime.bookCatalogStore.getList(task.listId);
-          const unit = listRecord === null ? null : runtime.bookCatalogStore.getUnit(listRecord.unitId);
+          const listRecord = listsById.get(task.listId);
           const words = task.payload.reviewDemands
-            .map((demand) => runtime.wordContentStore.getEntry(demand.wordId))
-            .filter((content): content is NonNullable<typeof content> => content !== null)
+            .map((demand) => contentsById.get(demand.wordId))
+            .filter((content): content is WordContentRecord => content !== undefined && !content.removed)
             // 已掌握 Word 默认不出现在展开列表（规格 6.4）。
             .filter((content) => replayed.get(content.wordId)?.masteryStatus !== MasteryStatus.Mastered)
             .map((content) => ({
               wordId: content.wordId,
               originalSpelling: content.originalSpelling,
               manualMeaning: content.manualMeaning,
+              meanings: content.meanings,
             }));
           return {
             taskId: task.taskId,
-            title: `Unit ${unit?.number ?? "?"} · List ${listRecord?.listNumber ?? "?"}`,
+            title: `Unit ${listRecord?.unitNumber ?? "?"} · List ${listRecord?.listNumber ?? "?"}`,
             dueLabel: task.overdueDays > 0 ? `逾期 ${task.overdueDays} 天` : "今天到期",
             words,
             task,
@@ -325,7 +337,9 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       const replayed = states();
       const learningDaySettings = settings.getLearningDaySettings();
       const refresh = scheduling.refreshSpaceTasks({ spaceId, learningDaySettings });
-      return refresh.tasks.map((task) => toBookTaskItem(task, deps, replayed));
+      const listsById = new Map(runtime.bookCatalogStore.listListsForSpace(spaceId).map((list) => [list.listId, list]));
+      const contentsById = new Map(runtime.wordContentStore.listCatalogEntries().map((content) => [content.wordId, content]));
+      return refresh.tasks.map((task) => toBookTaskItem(task, deps, replayed, listsById, contentsById));
     },
   };
 }

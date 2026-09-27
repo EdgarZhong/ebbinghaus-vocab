@@ -108,6 +108,10 @@
   border-left: 4px solid var(--color-danger);
 }
 
+/* 测试列表用标题右侧的状态标签区分到期，不给整张卡片加红色竖线。 */
+.test-task-row.overdue { border-left-width: 1px; border-left-color: var(--color-border); }
+.test-task-row-bottom { display: flex; align-items: center; justify-content: space-between; gap: var(--group-gap); flex-wrap: wrap; }
+
 .task-row-main {
   display: flex;
   align-items: center;
@@ -201,7 +205,9 @@
   gap: var(--group-gap);
   align-items: center;
   /* 上方加倍留白：大字词条是会话的视觉中心，需要呼吸感。 */
-  padding: calc(var(--block-gap) * 2) 0 var(--block-gap);
+  width: min(100%, 760px);
+  margin-inline: auto;
+  padding: var(--block-gap);
 }
 
 .test-session-remaining {
@@ -221,6 +227,10 @@
   margin: 0;
   text-align: center;
   overflow-wrap: anywhere;
+  min-height: 112px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .test-session-body {
@@ -233,8 +243,10 @@
 
 .test-session-answer {
   width: 100%;
-  max-width: 560px;
-  background: var(--color-surface);
+  max-width: 640px;
+  height: clamp(160px, 25vh, 220px);
+  overflow-y: auto;
+  background: var(--color-surface-active);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-large);
   padding: var(--group-gap);
@@ -242,6 +254,11 @@
   flex-direction: column;
   gap: 8px;
 }
+
+.test-session-answer.pending { display: flex; align-items: center; justify-content: center; }
+.test-session-answer-placeholder { display: flex; flex-direction: column; gap: 12px; width: 65%; opacity: 0.5; }
+.test-session-answer-placeholder span { height: 12px; border-radius: 6px; background: var(--color-border-strong); }
+.test-session-answer-placeholder span:last-child { width: 72%; }
 
 .test-session-meaning {
   margin: 0;
@@ -254,6 +271,7 @@
   gap: 12px;
   flex-wrap: wrap;
   justify-content: center;
+  min-height: 44px;
 }
 
 /* 窄屏（缺陷 3 实证）：会话操作改竖排全宽——认识/不认识两枚 44px+ 按钮并排
@@ -281,7 +299,7 @@
 
 /* V1 录入页的两步流：候选摘要在上、单条编辑器在下，最终操作始终可见。 */
 .firstpass-textarea {
-  min-height: 160px;
+  min-height: 240px;
   resize: vertical;
   line-height: 1.6;
 }
@@ -485,12 +503,8 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* 60 词长列表性能（缺陷 4）：屏外卡片跳过渲染内部工作，DOM 保持挂载——
-     浏览器验收依赖"滚动前卡片已 attached"的断言，故禁用 JS 虚拟列表方案；
-     contain-intrinsic-size 的 76px ≈ 两行卡片实测高度，auto 让浏览器记住
-     已渲染真实高度，滚动条长度稳定不跳动。 */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 76px;
+  /* 词卡保持完整绘制。旧版 content-visibility 在 60 词滚动截图中让已进入视口
+     的卡片短暂只剩白底；列表读取已批量化，memo 足以避免无关重渲染。 */
 }
 
 .vocab-card:hover {
@@ -696,8 +710,8 @@
 /* 窄视口（≤900px，与外壳断点同口径）：列表保持单列全宽。
    词条详情改底部浮动 sheet（缺陷 2 实证：旧版"铺满整行"把列表顶出视口，
    412px 下详情与列表互相挤占不可读）。sheet 用 CSS 毛玻璃（浮动层签名语言），
-   四周 12px 外边距与抽屉同源；不设背景罩——规格 12.2 明确"点击详情外其他
-   区域不收起"，只经"收起"按钮或 Escape 关闭。 */
+   四周 12px 外边距与抽屉同源；点列表空白区域也可收起详情，词卡仍可直接
+   切换选中项。 */
 @media (max-width: 900px) {
   .vocab-layout.with-detail {
     grid-template-columns: minmax(0, 1fr);

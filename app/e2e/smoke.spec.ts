@@ -63,6 +63,25 @@ test("六个一级页面导航冒烟并输出全窗口截图", async ({ page }) 
   }
 });
 
+test("切页先显示骨架，再挂载本地内容；录入框有足够高度", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => {
+    const state = { seen: false };
+    (window as unknown as { __routeSkeletonState: typeof state }).__routeSkeletonState = state;
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('[data-testid="route-skeleton"]')) state.seen = true;
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+  await navTo(page, "nav-vocabulary");
+  expect(await page.evaluate(() => (window as unknown as { __routeSkeletonState: { seen: boolean } }).__routeSkeletonState.seen)).toBe(true);
+  await expect(page.getByTestId("empty-state")).toBeVisible();
+  await navTo(page, "nav-first-pass");
+  const input = page.getByTestId("firstpass-raw-input");
+  await expect(input).toBeVisible();
+  expect((await input.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(240);
+});
+
 test("Space 管理：创建、切换并返回原页面", async ({ page }) => {
   await page.goto("/");
   // 从设置页进入 Space 管理，验证"返回进入前页面"的语义。
@@ -181,7 +200,7 @@ async function seedRegularDueEntries(page: Page, count: number): Promise<void> {
           originalSpelling: `word${index}`,
           normalizedKey: `word${index}`,
           manualMeaning: `v. 释义${index}`,
-          meanings: [{ partOfSpeech: "v.", definition: `释义${index}`, usage: null }],
+          meanings: [{ partOfSpeech: "v.", definition: `释义${index}`, usage: index === 0 ? "用于上下文" : null }],
           removed: false,
           recordedAt: pastIso,
         },
@@ -230,11 +249,21 @@ test("逐词测试主路径：今日页 ≤2 次点击进入，作答到完成",
   await screenshot(page, "test-session");
 
   // 逐词作答：认识 → 下一个（三次），直至完成。
+  let usageSeen = false;
   for (let round = 0; round < 3; round += 1) {
+    const word = await page.getByTestId("session-word").textContent();
+    const pauseBefore = (await page.getByTestId("session-pause").boundingBox())?.y ?? 0;
     await page.getByTestId("session-recognized").click();
     await expect(page.getByTestId("session-meaning")).toBeVisible();
+    const pauseAfter = (await page.getByTestId("session-pause").boundingBox())?.y ?? 0;
+    expect(Math.abs(pauseAfter - pauseBefore)).toBeLessThanOrEqual(1);
+    if (word === "word0") {
+      await expect(page.getByTestId("session-meaning")).toContainText("用法：用于上下文");
+      usageSeen = true;
+    }
     await page.getByTestId("session-next").click();
   }
+  expect(usageSeen).toBe(true);
 
   // 完成反馈（规格 10.5）+ 去复习进入常规朗读分组。
   await expect(page.getByTestId("test-completed")).toBeVisible();

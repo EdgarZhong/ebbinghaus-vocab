@@ -41,20 +41,28 @@ describe("测试页：任务列表", () => {
     const spaceId = services.getActiveSpace()?.id ?? "";
     services.bookLearning.recordFirstPass({
       spaceId, unitNumber: 1, listNumber: 4,
-      entries: [new ConfirmedEntry("abandon", [{ partOfSpeech: "v.", definition: "放弃", usage: null }])],
+      entries: [new ConfirmedEntry("abandon", [{ partOfSpeech: "v.", definition: "放弃", usage: "abandon ship" }])],
     });
     mutable.setNow(FIXED_NOW);
     renderApp(services);
     await user.click(screen.getByTestId("nav-test"));
     const listId = services.runtime.bookCatalogStore.listListsForSpace(spaceId)[0]?.listId ?? "";
     expect(screen.getByTestId(`test-task-${listId}`)).toHaveTextContent("Unit 1 · List 4");
+    expect(screen.getByTestId(`test-task-${listId}`).classList).toContain("test-task-row");
     await user.click(screen.getByTestId(`test-start-${listId}`));
     expect(screen.getByTestId("session-word")).toHaveTextContent("abandon");
+    const answerPanel = screen.getByTestId("session-answer-panel");
+    expect(answerPanel).toHaveClass("pending");
     await user.click(screen.getByTestId("session-recognized"));
+    expect(screen.getByTestId("session-answer-panel")).toBe(answerPanel);
+    expect(answerPanel).not.toHaveClass("pending");
+    expect(screen.getByTestId("session-meaning")).toHaveTextContent("用法：abandon ship");
     await user.click(screen.getByTestId("session-next"));
     expect(screen.getByTestId("test-completed")).toHaveTextContent("软件测试完成了");
     await user.click(screen.getByTestId("test-go-review"));
     expect(screen.getByTestId("review-awaiting-Unit 1 · List 4")).toHaveTextContent("等待纸质复习");
+    await user.click(screen.getByTestId("review-expand-Unit 1 · List 4"));
+    expect(screen.getByTestId("review-words-Unit 1 · List 4")).toHaveTextContent("用法：abandon ship");
     await user.click(screen.getByTestId("review-complete-Unit 1 · List 4"));
     expect(services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "testFollowedByReviewCompleted")).toBe(true);
   });

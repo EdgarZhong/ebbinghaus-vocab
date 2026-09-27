@@ -365,3 +365,20 @@
   gap: 8px;
   flex: none;
 }
+
+/* 切页时先绘制稳定的页头和内容轮廓，下一帧才挂载本地数据视图。
+   仅以现有主题令牌做轻微明暗呼吸，避免深色模式闪白和强动效。 */
+.page-loading { display: flex; flex-direction: column; gap: var(--group-gap); width: 100%; }
+.page-loading-line, .page-loading-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-large);
+  animation: page-loading-pulse 1.2s ease-in-out infinite alternate;
+}
+.page-loading-line { width: min(52%, 380px); height: 18px; border: 0; }
+.page-loading-card { min-height: 160px; }
+.page-loading-card.short { min-height: 92px; }
+@keyframes page-loading-pulse { from { opacity: 0.55; } to { opacity: 0.9; } }
+@media (prefers-reduced-motion: reduce) {
+  .page-loading-line, .page-loading-card { animation: none; }
+}

@@ -7,16 +7,17 @@
  * - 点击整卡打开详情（不新开窗口、不覆盖侧边栏、不改变导航选中）：桌面端从主
  *   内容区右侧滑出并排面板（列表收窄为三行重排）；移动端（≤900px）改为底部
  *   浮动 sheet 毛玻璃覆盖层（第二轮重构：旧版铺满整行会把列表顶出视口）。
- *   两种形态都只通过"收起"按钮或 Escape 关闭，点击详情外其他区域不收起。
+ *   两种形态均可通过"收起"按钮、Escape 或主内容区的非卡片空白处关闭；
+ *   点击其他词卡替换详情，左侧导航栏不参与这一交互。
  * - 筛选面板位于标题区下方、列表上方；搜索框输入即实时搜索，同时匹配英文词条
  *   与中文释义，与掌握状态筛选组合生效；筛选与详情完全解耦（被过滤掉才收起）。
  * - 双向掌握直接提交事件；详情删除为“删除词条→确认删除”，卡片右滑后露出删除。
  * - 卡片只负责选中；掌握切换放在详情中。悬停时临时出现的卡片按钮曾在窄屏
  *   点击中央时抢走点击并误改掌握状态，属于用户旅程错误，不能保留。
  *
- * 性能与渲染口径（第二轮 React 重构）：卡片提取为 memo 组件（稳定 props）；
- * 详情可见性在渲染期派生（选中项被过滤掉即渲染期调整，不经 effect 同步）；
- * 长列表用 content-visibility 跳过屏外渲染（DOM 保持挂载，不用虚拟列表）。
+ * 性能与渲染口径：卡片提取为 memo 组件（稳定 props）；详情可见性在渲染期
+ * 派生；列表与目录批量读取。旧版 content-visibility 曾使快速滚动后的可见卡片
+ * 短暂空白，因此保持完整绘制。
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -28,6 +29,7 @@ import { EmptyState } from "../ui/EmptyState.tsx";
 import { PageShell } from "../ui/PageShell.tsx";
 import { useToast } from "../shell/ToastContext.tsx";
 import { formatUserDate } from "../ui/display.ts";
+import { formatManualMeaning } from "../ui/meaningDisplay.ts";
 
 /** V1 词汇页只按领域掌握状态过滤；今天是否到期属于“测试”页。 */
 type StatusFilter = "全部掌握状态" | "未掌握" | "已掌握";
@@ -75,7 +77,7 @@ const VocabCard = memo(function VocabCard({
         <span className="vocab-card-row">
           <span className="vocab-card-term">{entry.originalSpelling}</span>
           {mastered ? <span className="mastered-check" role="img" aria-label="已掌握">✓</span> : null}
-          <span className="vocab-card-meaning">{entry.manualMeaning}</span>
+          <span className="vocab-card-meaning">{formatManualMeaning(entry.manualMeaning, entry.meanings, "；")}</span>
           <span className="vocab-card-arrow" aria-hidden="true">›</span>
         </span>
         <span className="vocab-card-row meta">{entry.unitNumber === null ? entry.masteryStatus : `Unit ${entry.unitNumber} · List ${entry.listNumber}`}</span>
@@ -128,7 +130,7 @@ export function VocabularyPage(): ReactNode {
         return true;
       }
       // 中文释义模糊匹配：任一义项命中即保留。
-      return entry.meanings.some((meaning) => meaning.definition.includes(keyword) || meaning.definition.includes(query.trim()));
+      return entry.meanings.some((meaning) => meaning.definition.includes(keyword) || meaning.usage?.toLowerCase().includes(keyword));
     });
   }, [entries, query, statusFilter, unitFilter, listFilter]);
 
@@ -165,6 +167,29 @@ export function VocabularyPage(): ReactNode {
     setTimelineOpen(false);
   }, []);
 
+  const closeDetail = useCallback((): void => {
+    setDetailWordId(null);
+    setSelectedWordId(null);
+    setDetailDeleteArmed(false);
+  }, []);
+
+  useEffect(() => {
+    if (detailWordId === null) return;
+    // PageShell 有最大宽度；监听它只能覆盖页内间隙，无法接到主内容区两侧
+    // 的留白点击。将委托绑定到本页所在的 main，路由离开或详情收起时即移除，
+    // 避免影响导航栏及其他页面。卡片、详情、筛选面板和功能控件保留原动作。
+    const main = document.querySelector<HTMLElement>(".main-area");
+    if (main === null) return;
+    const closeOnMainBlankClick = (event: Event): void => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".vocab-card-row-wrap, .vocab-detail, .filter-panel, button, input, select, textarea, a, [role='button']")) return;
+      closeDetail();
+    };
+    main.addEventListener("click", closeOnMainBlankClick);
+    return () => main.removeEventListener("click", closeOnMainBlankClick);
+  }, [detailWordId, closeDetail]);
+
   const dictionaryEnabled = services.settings.getFeatureFlags().onlineDictionary;
   useEffect(() => {
     if (detailWordId === null || !dictionaryEnabled) {
@@ -182,7 +207,8 @@ export function VocabularyPage(): ReactNode {
     void services.dictionary.load(wordId, { isCancelled: () => cancelled }).then((snapshot) => {
       if (cancelled) return;
       setDictionaryView({ wordId, snapshot });
-      services.notifyChanged();
+      // 在线结果只更新当前详情的局部状态；缓存已由词典服务落地，后续页面
+      // 进入时会自行读取。广播全局 version 会把整张词表重新读库并重排。
     }).catch(() => {
       if (!cancelled) setDictionaryView({ wordId, snapshot: {
         status: "查询失败", provider: "在线词典", fetchedAt: null, definitions: [],
@@ -198,7 +224,6 @@ export function VocabularyPage(): ReactNode {
     setDictionaryBusy(true);
     void services.dictionary.load(wordId).then((snapshot) => {
       setDictionaryView({ wordId, snapshot });
-      services.notifyChanged();
     }).catch(() => setDictionaryView({ wordId, snapshot: {
       status: "查询失败", provider: "在线词典", fetchedAt: null, definitions: [],
       message: "在线释义暂时不可用，请检查网络后重试", needsRefresh: true,
@@ -238,7 +263,9 @@ export function VocabularyPage(): ReactNode {
 
   const detailEntry = detailWordId === null ? null : (entries.find((entry) => entry.wordId === detailWordId) ?? null);
   const statusOptions: readonly StatusFilter[] = ["全部掌握状态", "未掌握", "已掌握"];
-  const timeline = detailEntry === null ? [] : services.learningViews.listVocabularyTimeline(detailEntry.wordId);
+  // 学习记录默认折叠；只有展开后才读本地事件表，避免每次选词和输入筛选词
+  // 都同步扫描历史事件，尤其真实 SQLite 桥接会阻塞 WebView 主线程。
+  const timeline = detailEntry === null || !timelineOpen ? [] : services.learningViews.listVocabularyTimeline(detailEntry.wordId);
   const dictionarySnapshot = detailEntry !== null && dictionaryView?.wordId === detailEntry.wordId ? dictionaryView.snapshot : null;
   const dictionaryHasContent = (dictionarySnapshot?.definitions.length ?? 0) > 0;
   const dictionaryFailed = dictionarySnapshot?.status === "查询失败" && !dictionaryHasContent;
@@ -339,7 +366,7 @@ export function VocabularyPage(): ReactNode {
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setDetailWordId(null)}
+                  onClick={closeDetail}
                   aria-label="收起词汇详情"
                   data-testid="vocabulary-detail-close"
                 >
@@ -357,7 +384,7 @@ export function VocabularyPage(): ReactNode {
               </div>
               <section className="vocab-detail-section">
                 <h3 className="card-section-title">手录释义</h3>
-                <textarea className="vocab-detail-textarea" readOnly value={detailEntry.manualMeaning} aria-label="手录义项主数据" data-testid="vocabulary-manual-meaning" />
+                <textarea className="vocab-detail-textarea" readOnly value={formatManualMeaning(detailEntry.manualMeaning, detailEntry.meanings)} aria-label="手录义项主数据" data-testid="vocabulary-manual-meaning" />
               </section>
               {dictionaryEnabled && (dictionaryHasContent || dictionaryFailed) ? (
                 <section className="vocab-detail-section" data-testid="vocabulary-online-section">

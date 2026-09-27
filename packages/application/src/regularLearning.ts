@@ -373,6 +373,11 @@ export class RegularLearningService {
     const learningDay = this.learningDayOf(now);
     const groups = this.dueGroups({ spaceId });
     const openSession = this.deps.sessionStore.getOpenRegularSession(spaceId, learningDay);
+    // 任务组已经持有 Word 标识，页面展示内容只需一次 Space 批量查询。
+    // 逐词 getEntry 在真实桌面同步 SQLite 桥下会阻塞 WebView 主线程，
+    // 使切回“今日”和“测试”随到期词数线性变慢。
+    const contentsById = new Map(this.deps.wordContentStore.listEntriesForSpace(spaceId)
+      .map((content) => [content.wordId, content]));
     const items: TaskItemSnapshot[] = [];
     for (const group of groups) {
       let sessionStatus: TestSessionExecutionStatus | null = null;
@@ -383,12 +388,13 @@ export class RegularLearningService {
       }
       const activeWords: ReviewWordSnapshot[] = [];
       for (const wordId of group.wordIds) {
-        const content = this.deps.wordContentStore.getEntry(wordId);
-        if (content !== null) {
+        const content = contentsById.get(wordId);
+        if (content !== undefined) {
           activeWords.push({
             wordId: content.wordId,
             originalSpelling: content.originalSpelling,
             manualMeaning: content.manualMeaning,
+            meanings: content.meanings,
           });
         }
       }
@@ -644,6 +650,7 @@ export class RegularLearningService {
         wordId: content.wordId,
         originalSpelling: content.originalSpelling,
         manualMeaning: content.manualMeaning,
+        meanings: content.meanings,
       };
     }
     const spaceId = session.spaceId ?? this.deps.settings.getActiveSpaceId();

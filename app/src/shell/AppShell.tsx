@@ -142,7 +142,7 @@ function SidebarContent({
   );
 }
 
-export function AppShell({ children }: { children: ReactNode }): ReactNode {
+export function AppShell({ children, readyRoute }: { children: ReactNode; readyRoute: RoutePath | null }): ReactNode {
   const services = useServices();
   const activeSpace = useActiveSpace();
   const { mode, resolved, setMode } = useThemeMode(services.deviceLocal);
@@ -276,7 +276,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
             </span>
           </button>
         </header>
-        <main className="main-area">{children}</main>
+        <main className="main-area" data-ready-route={readyRoute ?? undefined}>{children}</main>
         {drawerOpen && (
           <div className="drawer-layer">
             {/* 背景罩：半透明压暗主内容，点击即关闭（移动端模态惯例）。 */}
@@ -312,7 +312,7 @@ export function AppShell({ children }: { children: ReactNode }): ReactNode {
           <aside className="sidebar">{sidebarContent}</aside>
         </Glass>
       </div>
-      <main className="main-area">{children}</main>
+      <main className="main-area" data-ready-route={readyRoute ?? undefined}>{children}</main>
     </div>
   );
 }

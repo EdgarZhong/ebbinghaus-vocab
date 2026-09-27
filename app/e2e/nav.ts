@@ -35,8 +35,14 @@ export async function ensureNavVisible(page: Page): Promise<void> {
 
 /** 一级导航到指定页面：移动端先开抽屉再点导航项（点击后抽屉自动关闭）。 */
 export async function navTo(page: Page, navTestId: string): Promise<void> {
+  const routeByNav: Readonly<Record<string, string>> = {
+    "nav-today": "/today", "nav-review": "/review", "nav-test": "/test",
+    "nav-first-pass": "/first-pass", "nav-vocabulary": "/vocabulary", "nav-settings": "/settings",
+  };
   await ensureNavVisible(page);
   await page.getByTestId(navTestId).click();
+  const route = routeByNav[navTestId];
+  if (route !== undefined) await expect(page.locator("main.main-area")).toHaveAttribute("data-ready-route", route);
 }
 
 /**
@@ -53,6 +59,7 @@ export async function openSpaceManagement(page: Page): Promise<void> {
   // 等待路由切换到位：调用方常紧跟截图，点击即返会拍到进入前页面
   // （space-management 截图曾实测拍到设置页 + 创建 toast 的竞态残影）。
   await expect(page.getByRole("heading", { level: 1, name: "Space 管理" })).toBeVisible();
+  await expect(page.locator("main.main-area")).toHaveAttribute("data-ready-route", "/spaces");
 }
 
 /** 断言当前活动 Space 名称：移动端读顶栏胶囊，桌面端读侧栏入口。 */

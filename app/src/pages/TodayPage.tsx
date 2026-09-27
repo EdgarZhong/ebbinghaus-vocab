@@ -31,34 +31,6 @@ export function TodayPage(): ReactNode {
 
   const isRegularMode = activeSpace?.learningMode === "常规模式";
 
-  // ---- 容量两段式：缓存读 + 后台刷新（绝不阻塞打开今日） ----
-  useEffect(() => {
-    if (activeSpace === null) {
-      return;
-    }
-    let cancelled = false;
-    const snapshot = services.dashboard.dashboardSnapshot();
-    if (!snapshot.capacityStale) {
-      return;
-    }
-    // 输入已变化：后台刷新容量计划（可能运行蒙特卡洛），完成后重读快照。
-    const timer = window.setTimeout(() => {
-      if (cancelled) {
-        return;
-      }
-      try {
-        services.dashboard.refreshCapacity();
-        services.notifyChanged();
-      } catch {
-        // 后台刷新失败不阻塞页面：继续显示缓存或默认建议（两段式语义）。
-      }
-    }, 0);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [services, version, activeSpace]);
-
   // ---- 数据读取（内存运行时同步快照） ----
   const snapshot = useMemo(() => {
     if (activeSpace === null) {
@@ -71,6 +43,30 @@ export function TodayPage(): ReactNode {
     }
     // eslint 语义：version 变化意味着需要重读快照。
   }, [services, version, activeSpace]);
+
+  // ---- 容量两段式：复用本次渲染的缓存快照，空闲时再刷新 ----
+  useEffect(() => {
+    if (activeSpace === null || snapshot === null || !snapshot.capacityStale) return;
+    let cancelled = false;
+    const refresh = (): void => {
+      if (cancelled) return;
+      try {
+        services.dashboard.refreshCapacity();
+        services.notifyChanged();
+      } catch {
+        // 容量预测失败只保留最近缓存，不妨碍今日页学习入口。
+      }
+    };
+    // 切页先完成骨架和缓存视图的绘制，蒙特卡洛在浏览器空闲时执行。
+    // WebKit 旧版本没有 requestIdleCallback，延迟计时器保持相同语义。
+    const idle = window.requestIdleCallback?.(refresh, { timeout: 2000 });
+    const timer = idle === undefined ? window.setTimeout(refresh, 250) : null;
+    return () => {
+      cancelled = true;
+      if (idle !== undefined) window.cancelIdleCallback?.(idle);
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [services, snapshot, activeSpace]);
 
   const regularReviewGroups = useMemo(() => {
     if (activeSpace === null || activeSpace.learningMode !== "常规模式") {

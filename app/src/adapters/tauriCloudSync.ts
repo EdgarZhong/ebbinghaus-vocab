@@ -106,6 +106,9 @@ export function createTauriCloudSync(
     if (!currentToken) return null;
     lastAttemptAt = clock.now().toISOString();
     try {
+      // 只有云端事实真正改变本机工作库时才通知学习页面重读。以前每轮同步
+      // 开始/结束都广播，30 秒定时器和回前台会让今日/词汇在无变化时重算。
+      const settingsBefore = JSON.stringify(runtime.syncedSettingsStore.getAll());
       const engine = new SyncEngine({
         gateway: buildHttpSyncGateway({
           baseUrl: CLOUD_SYNC_ENDPOINT,
@@ -120,10 +123,12 @@ export function createTauriCloudSync(
         pullCursor: desktop.pullCursor,
       });
       const result = await engine.runCycle();
+      const settingsChanged = settingsBefore !== JSON.stringify(runtime.syncedSettingsStore.getAll());
       // 同步引擎先拉目录再拉事件，按页写入；中途刷新会让界面读取到
       // 尚未齐备的学习状态。整轮结束后由 syncNow 统一通知一次。
       lastError = result.errors.length > 0 ? result.errors.join("；") : null;
       if (result.errors.length === 0) lastSuccessAt = clock.now().toISOString();
+      if (settingsChanged || result.pulledContentCount > 0 || result.pulledEventCount > 0) notifyChanged();
       return result;
     } catch {
       // 端口意外异常也不外抛：用户写入早已进入本地 SQLite/outbox，等待下轮重试。
@@ -140,10 +145,7 @@ export function createTauriCloudSync(
     if (inFlight) return inFlight;
     inFlight = runCycle().finally(() => {
       inFlight = null;
-      notifyChanged();
     });
-    // 页面同步状态在开始和结束都可观测；无令牌与异常路径也走同一收尾。
-    notifyChanged();
     return inFlight;
   }
 

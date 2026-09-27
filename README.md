@@ -36,7 +36,7 @@ React + TypeScript + Vite
 
 ## 架构原则（稳定口径）
 
-- **云端数据库是权威副本；客户端 SQLite 是完整本地副本 + 工作数据库；React UI 永远直接访问本地数据**。禁止 `React → HTTP → Server → DB` 的读路径；断网只是同步暂停，不是模式切换。
+- **云端数据库是权威副本；客户端 SQLite 是完整本地副本 + 工作数据库；React UI 永远直接访问本地数据**。禁止 `React → HTTP → Server → DB` 的读路径；切换页面先呈现页面骨架，再读取本地视图，同步在后台运行且不阻塞切换。断网只是同步暂停，不是模式切换。
 - **服务器保持"哑"**：只做鉴权、schema 校验、`event_id` 去重、分配 `server_seq`、存储、增量查询、settings 存储和备份；所有业务规则（FSRS、调度、容量、词书、首过）都在客户端。
 - `server_seq` 只是同步游标；领域重放按 `occurredAt → deviceSeq → deviceId/eventId` 排序。
 - React 页面禁止直接 import Tauri API；平台能力经 Ports/Adapters（`BrowserTestAdapter` / `TauriProductionAdapter`）注入，浏览器模式与 Tauri 模式共用同一套业务逻辑。
@@ -76,9 +76,9 @@ Ebbinghaus-v2/
 
 ## 数据边界
 
-- 当前云端与 V2 本地数据库均为验收测试数据；V1 演练备份也不是已确认的生产源。正式生产库切换必须在识别源库并完成在线备份、核对后另行执行。
+- 验收测试库与正式生产库必须区分；正式生产库切换须先识别源库、保留经核验的在线备份并完成数量与完整性核对。当前库的身份和切换进度见 `CLAUDE.md`。
 - V2 桌面客户端 SQLite 位于 macOS 应用数据目录，服务器权威 SQLite 位于 `/opt/ebbinghaus/data`；仓库内不得提交数据库文件、密钥或个人数据。
-- 仓库 `data/` 目录当前只承载 V1 口径的说明文件，待 Phase 2 重写为 V2 数据边界。
+- Space、Unit、List、词条内容、录入草稿、学习事件、全局及各 Space 学习设置是同步业务数据。活动 Space 选择、服务连接配置与密钥、在线词典和容量预测缓存、设备身份、同步游标及进行中测试会话的位置留在本机；已确认的学习结果通过事件同步。
 
 ## 运行环境与开发命令
 
@@ -94,7 +94,7 @@ Ebbinghaus-v2/
   - Playwright 浏览器矩阵（桌面、紧凑、WebKit 桌面及手机视口，全窗口截图）：`rtk pnpm --filter @ebbinghaus/app e2e`。
 - macOS 原生自动验收：先在 `app/` 启动 `rtk pnpm dev --host 127.0.0.1`，再在 `app/src-tauri/` 执行 `rtk cargo build --features wdio-test`，最后在 `app/` 执行 `rtk pnpm e2e:native`。`wdio-test` 仅用于测试构建；正式包不启用内嵌 WebDriver。
 - 同步服务器（本地）：`rtk pnpm server:start`（CLI `--db= --token= --port=`，缺省 127.0.0.1:8787）、在线备份 `rtk pnpm server:backup`；部署口径见 `docs/服务器部署留档.md`。
-- 正式 macOS 桌面包：`rtk pnpm --filter @ebbinghaus/app tauri build`；产物位于 `app/src-tauri/target/release/bundle/macos/Ebbinghaus.app` 与相邻 `dmg/` 目录。本机验收安装路径为 `/Applications/Ebbinghaus V2.app`，与 V1 `/Applications/Ebbinghaus.app` 分开。
+- 正式 macOS 应用包：`rtk pnpm --filter @ebbinghaus/app tauri build --bundles app`，产物位于 `app/src-tauri/target/release/bundle/macos/Ebbinghaus.app`。需要磁盘映像时运行 `rtk pnpm --filter @ebbinghaus/app tauri build`，产物位于相邻 `dmg/` 目录。本机验收安装路径为 `/Applications/Ebbinghaus V2.app`，与 V1 `/Applications/Ebbinghaus.app` 分开。
 
 ## 重要文档索引
 

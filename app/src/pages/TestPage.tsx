@@ -21,6 +21,7 @@ import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { PageShell } from "../ui/PageShell.tsx";
 import { formatDueLabel } from "../ui/display.ts";
+import { formatManualMeaning } from "../ui/meaningDisplay.ts";
 
 /** 会话视图的本地交互状态：会话快照 + 当前条目的答案揭示状态。 */
 interface SessionViewState {
@@ -197,25 +198,25 @@ export function TestPage(): ReactNode {
               : `Unit ${task.unitNumber} · List ${task.listNumber}`;
             const testId = isRegularMode ? `test-group-${task.listNumber}` : `test-task-${task.listId}`;
             return (
-              <div className={`task-row${task.overdueDays > 0 ? " overdue" : ""}`} key={task.taskId} data-testid={testId}>
+              <div className={`task-row test-task-row${task.overdueDays > 0 ? " overdue" : ""}`} key={task.taskId} data-testid={testId}>
                 <div className="task-row-main">
                   <span className="task-row-title">{title}</span>
-                  <span className="task-row-meta">
-                    {task.overdueDays > 0 ? <span className="badge badge-overdue">{formatDueLabel(task.overdueDays)}</span> : <span className="badge">今天到期</span>}
-                    <span>
-                      {isRegularMode
-                        ? remainingOf(task) > 0
-                          ? `${remainingOf(task)} 个条目待测`
-                          : "继续未完成的会话"
-                        : sessionMatchesTask(task)
-                          ? `本 List 尚余 ${remainingOf(task)} 个词`
-                          : `本 List 有 ${task.totalCount} 个词`}
-                    </span>
-                  </span>
+                  {task.overdueDays > 0 ? <span className="badge badge-overdue">{formatDueLabel(task.overdueDays)}</span> : <span className="badge">今天到期</span>}
                 </div>
-                <button type="button" className="btn btn-primary" onClick={() => startTask(task)} data-testid={isRegularMode ? `test-start-${task.listNumber}` : `test-start-${task.listId}`}>
-                  {isResumable(task) ? "继续测试" : "开始测试"}
-                </button>
+                <div className="test-task-row-bottom">
+                  <span className="task-row-meta">
+                    {isRegularMode
+                      ? remainingOf(task) > 0
+                        ? `${remainingOf(task)} 个条目待测`
+                        : "继续未完成的会话"
+                      : sessionMatchesTask(task)
+                        ? `本 List 尚余 ${remainingOf(task)} 个词`
+                        : `本 List 有 ${task.totalCount} 个词`}
+                  </span>
+                  <button type="button" className="btn btn-primary" onClick={() => startTask(task)} data-testid={isRegularMode ? `test-start-${task.listNumber}` : `test-start-${task.listId}`}>
+                    {isResumable(task) ? "继续测试" : "开始测试"}
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -372,91 +373,47 @@ function RegularSessionView({
 
   return (
     <PageShell title="逐词测试" description={isRegularMode ? `第 ${snapshot.listNumber ?? 1} 组` : `Unit ${snapshot.unitNumber} · List ${snapshot.listNumber}`}>
-      <div className="test-session" data-testid="test-session">
+      <section className="card test-session" data-testid="test-session">
         <p className="test-session-remaining" data-testid="test-session-remaining">
           {isRegularMode ? `本组尚余 ${remaining} 个条目` : `本 List 尚余 ${remaining} 个词`}
         </p>
         <p className="test-session-word" data-testid="session-word">
           {currentWord.originalSpelling}
         </p>
-        {revealed === null ? (
-          <div className="test-session-body">
-            <div className="test-session-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => initial(TestJudgement.NotRecognized)}
-                data-testid="session-not-recognized"
-              >
-                不认识（Backspace）
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => initial(TestJudgement.Recognized)}
-                data-testid="session-recognized"
-              >
-                认识（Enter）
-              </button>
-            </div>
-            <button type="button" className="btn btn-secondary" onClick={pause} data-testid="session-pause">
-              暂停并返回
-            </button>
+        <div className="test-session-body">
+          <div className={`test-session-answer${revealed === null ? " pending" : ""}`} data-testid="session-answer-panel">
+            {revealed === null ? <div className="test-session-answer-placeholder" aria-hidden="true"><span /><span /></div> : (
+              <>
+                <h3 className="card-section-title">你的释义</h3>
+                <p className="test-session-meaning" data-testid="session-meaning">
+                  {formatManualMeaning(currentWord.manualMeaning, currentWord.meanings)}
+                </p>
+                {onlineDefinitions.length > 0 ? <div data-testid="session-online-dictionary">
+                  <h3 className="card-section-title">在线词典</h3>
+                  <p className="test-session-meaning">{onlineDefinitions.map((item) => `${item.partOfSpeech}：${item.definition}`).join("\n")}</p>
+                </div> : null}
+              </>
+            )}
           </div>
-        ) : (
-          <div className="test-session-body">
-            <div className="test-session-answer">
-              <h3 className="card-section-title">你的释义</h3>
-              <p className="test-session-meaning" data-testid="session-meaning">
-                {currentWord.manualMeaning}
-              </p>
-              {onlineDefinitions.length > 0 ? <div data-testid="session-online-dictionary">
-                <h3 className="card-section-title">在线词典</h3>
-                <p className="test-session-meaning">{onlineDefinitions.map((item) => `${item.partOfSpeech}：${item.definition}`).join("\n")}</p>
-              </div> : null}
-            </div>
-            <div className="test-session-actions">
-              {revealed === TestJudgement.Recognized ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => confirmAnswer(TestJudgement.Recognized, TestJudgement.NotRecognized)}
-                    data-testid="session-mark-forgot"
-                  >
-                    标记为忘记（Backspace）
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => confirmAnswer(TestJudgement.Recognized, TestJudgement.Recognized)}
-                    data-testid="session-next"
-                  >
-                    下一个（Enter）
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => confirmAnswer(TestJudgement.NotRecognized, TestJudgement.NotRecognized)}
-                  data-testid="session-confirm-not-recognized"
-                >
-                  确认不认识，下一个（Enter）
-                </button>
-              )}
-            </div>
-            <button type="button" className="btn btn-secondary" onClick={pause} data-testid="session-pause">
-              暂停并返回
-            </button>
+          <div className="test-session-actions">
+            {revealed === null ? (
+              <>
+                <button type="button" className="btn btn-secondary" onClick={() => initial(TestJudgement.NotRecognized)} data-testid="session-not-recognized">不认识（Backspace）</button>
+                <button type="button" className="btn btn-primary" onClick={() => initial(TestJudgement.Recognized)} data-testid="session-recognized">认识（Enter）</button>
+              </>
+            ) : revealed === TestJudgement.Recognized ? (
+              <>
+                <button type="button" className="btn btn-secondary" onClick={() => confirmAnswer(TestJudgement.Recognized, TestJudgement.NotRecognized)} data-testid="session-mark-forgot">标记为忘记（Backspace）</button>
+                <button type="button" className="btn btn-primary" onClick={() => confirmAnswer(TestJudgement.Recognized, TestJudgement.Recognized)} data-testid="session-next">下一个（Enter）</button>
+              </>
+            ) : (
+              <button type="button" className="btn btn-primary" onClick={() => confirmAnswer(TestJudgement.NotRecognized, TestJudgement.NotRecognized)} data-testid="session-confirm-not-recognized">确认不认识，下一个（Enter）</button>
+            )}
           </div>
-        )}
-        {sessionError === null ? null : (
-          <p className="field-error" role="alert" data-testid="session-error">
-            {sessionError}
-          </p>
-        )}
-      </div>
+          <button type="button" className="btn btn-secondary" onClick={pause} data-testid="session-pause">暂停并返回</button>
+          {sessionError === null ? null : <p className="field-error" role="alert" data-testid="session-error">{sessionError}</p>}
+        </div>
+      </section>
     </PageShell>
   );
 }

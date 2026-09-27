@@ -338,7 +338,7 @@ export class BookLearningService {
     return {
       sessionId: session.sessionId, taskId: session.taskId ?? "", status: session.status,
       currentPosition: session.currentPosition, totalCount: session.words.length,
-      currentWord: content === null ? null : { wordId: content.wordId, originalSpelling: content.originalSpelling, manualMeaning: content.manualMeaning },
+      currentWord: content === null ? null : { wordId: content.wordId, originalSpelling: content.originalSpelling, manualMeaning: content.manualMeaning, meanings: content.meanings },
       unitNumber: list?.unitNumber ?? null,
       listNumber: list?.listNumber ?? null,
     };

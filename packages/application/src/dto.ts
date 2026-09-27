@@ -6,7 +6,7 @@
  * 承载可变执行状态。快照中的中文枚举值与领域枚举逐字一致。
  */
 
-import type { LearningMode, TaskType, TestJudgement } from "@ebbinghaus/domain";
+import type { LearningMode, StructuredMeaning, TaskType, TestJudgement } from "@ebbinghaus/domain";
 import type { TestSessionExecutionStatus } from "./ports.ts";
 
 /** 纸质复习展开和测试答案页共同使用的只读词条内容。 */
@@ -14,6 +14,8 @@ export interface ReviewWordSnapshot {
   readonly wordId: string;
   readonly originalSpelling: string;
   readonly manualMeaning: string;
+  /** 展示层按义项附上用法；可选以兼容既有会话快照与测试夹具。 */
+  readonly meanings?: readonly StructuredMeaning[];
 }
 
 /**

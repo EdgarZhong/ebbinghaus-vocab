@@ -13,6 +13,7 @@
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { BookReviewTaskView, RegularReviewGroupView } from "../services/learningViews.ts";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
+import { formatManualMeaning } from "../ui/meaningDisplay.ts";
 import { useToast } from "../shell/ToastContext.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { PageShell } from "../ui/PageShell.tsx";
@@ -136,7 +137,7 @@ function BookReviewView({ tasks }: { tasks: readonly BookReviewTaskView[] }): Re
                     {view.words.map((word) => (
                       <li key={word.wordId}>
                         <span className="word-hint-term">{word.originalSpelling}</span>
-                        <span className="word-hint-meaning">{word.manualMeaning}</span>
+                        <span className="word-hint-meaning">{formatManualMeaning(word.manualMeaning, word.meanings, "；")}</span>
                       </li>
                     ))}
                   </ul>
@@ -199,7 +200,7 @@ function RegularReviewView({ groups }: { groups: readonly RegularReviewGroupView
                             <li key={entry.wordId} className="word-hint-forgotten">
                               <span className="word-hint-marker" aria-hidden="true">!</span>
                               <span className="word-hint-term">{entry.originalSpelling}</span>
-                              <span className="word-hint-meaning">{entry.manualMeaning}</span>
+                              <span className="word-hint-meaning">{formatManualMeaning(entry.manualMeaning, entry.meanings, "；")}</span>
                               <span className="badge badge-overdue">刚刚忘记</span>
                             </li>
                           ))}
@@ -213,7 +214,7 @@ function RegularReviewView({ groups }: { groups: readonly RegularReviewGroupView
                           {group.others.map((entry) => (
                             <li key={entry.wordId}>
                               <span className="word-hint-term">{entry.originalSpelling}</span>
-                              <span className="word-hint-meaning">{entry.manualMeaning}</span>
+                              <span className="word-hint-meaning">{formatManualMeaning(entry.manualMeaning, entry.meanings, "；")}</span>
                             </li>
                           ))}
                         </ul>

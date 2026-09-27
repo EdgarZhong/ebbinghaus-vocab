@@ -72,6 +72,9 @@ describe("Tauri 云同步适配器", () => {
     window.dispatchEvent(new Event("focus"));
     expect((await controller.syncNow())?.errors).toEqual([]);
     expect(invoke).toHaveBeenCalledTimes(6);
+    // 云端没有新增内容/事件/设置时，后台定时与回前台同步不能广播全页重读；
+    // changed 只来自上方 configureToken 的一次本机配置变化。
+    expect(changed).toHaveBeenCalledTimes(1);
     expect(controller.getStatus().lastSuccessAt).toBe(clock.now().toISOString());
     expect(vi.mocked(invoke).mock.calls.every(([command, args]) => {
       const request = args as { authToken: string; path: string };

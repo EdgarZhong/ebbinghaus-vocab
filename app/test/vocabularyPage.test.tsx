@@ -3,7 +3,7 @@
  * 双向手动掌握、详情确认删除、实时搜索与掌握状态筛选。
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { screen, within } from "@testing-library/react";
 import { ConfirmedEntry } from "@ebbinghaus/application";
@@ -46,6 +46,31 @@ function seedVocabulary(): { services: AppServices; spaceId: string } {
 }
 
 describe("词汇页", () => {
+  it("手录用法随释义显示；点击列表空白收起，点击其他卡片直接换详情", async () => {
+    const user = userEvent.setup();
+    const services = createTestServicesWithClock({ now: () => new Date(FIXED_NOW) });
+    const space = services.spaces.createAndActivate({ name: "用法验收", learningMode: "常规模式" });
+    services.regularLearning.recordEntries({ spaceId: space.id, entries: [
+      new ConfirmedEntry("abandon", [{ partOfSpeech: "v.", definition: "放弃", usage: "abandon ship" }]),
+      new ConfirmedEntry("elaborate", [{ partOfSpeech: "a.", definition: "详尽的", usage: null }]),
+    ] });
+    const timeline = vi.spyOn(services.learningViews, "listVocabularyTimeline");
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-vocabulary"));
+    expect(screen.getByTestId("vocab-card-abandon")).toHaveTextContent("用法：abandon ship");
+    await user.click(screen.getByTestId("vocab-card-abandon"));
+    expect(screen.getByTestId("vocabulary-manual-meaning")).toHaveValue("v. 放弃 · 用法：abandon ship");
+    expect(timeline).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("vocab-card-elaborate"));
+    expect(screen.getByTestId("vocabulary-detail")).toHaveTextContent("elaborate");
+    // main 的非卡片留白可收起；旧监听只绑在有最大宽度的 PageShell，
+    // 页面容器外的主内容区留白不会触发，此处专门覆盖那个边界。
+    const main = document.querySelector<HTMLElement>(".main-area");
+    if (main === null) throw new Error("缺少主内容区");
+    await user.click(main);
+    expect(screen.queryByTestId("vocabulary-detail")).not.toBeInTheDocument();
+  });
+
   it("空 Space 显示规格空状态", async () => {
     renderApp();
     await userEvent.setup().click(screen.getByTestId("nav-vocabulary"));

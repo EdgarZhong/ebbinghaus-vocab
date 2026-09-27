@@ -80,7 +80,7 @@ export function createTestServices(options: TestServicesOptions = {}): AppServic
 export function renderApp(services: AppServices = createTestServices()): RenderResult {
   return render(
     <StrictMode>
-      <App services={services} />
+      <App services={services} deferPageMount={false} />
     </StrictMode>,
   );
 }
