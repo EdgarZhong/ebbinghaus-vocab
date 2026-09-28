@@ -78,7 +78,7 @@ Ebbinghaus-v2/
 
 - 验收测试库与正式生产库必须区分；正式生产库切换须先识别源库、保留经核验的在线备份并完成数量与完整性核对。当前库的身份和切换进度见 `CLAUDE.md`。
 - V2 桌面客户端 SQLite 位于 macOS 应用数据目录，服务器权威 SQLite 位于 `/opt/ebbinghaus/data`；仓库内不得提交数据库文件、密钥或个人数据。
-- Space、Unit、List、词条内容、录入草稿、学习事件、全局及各 Space 学习设置是同步业务数据。活动 Space 选择、服务连接配置与密钥、在线词典和容量预测缓存、设备身份、同步游标及进行中测试会话的位置留在本机；已确认的学习结果通过事件同步。
+- Space、Unit、List、已保存的词条内容、学习事件、全局及各 Space 学习设置是同步业务数据。录入草稿（原始文本与未提交表单）、活动 Space 选择、服务连接配置与密钥、在线词典和容量预测缓存、设备身份、同步游标及进行中测试会话的位置留在本机；已确认的学习结果通过事件同步，进行中测试会话须按远端已确认事件收敛。
 
 ## 运行环境与开发命令
 
@@ -93,6 +93,7 @@ Ebbinghaus-v2/
   - Testing Library：`rtk pnpm test`（与各包一起由根 Vitest 聚合）；
   - Playwright 浏览器矩阵（桌面、紧凑、WebKit 桌面及手机视口，全窗口截图）：`rtk pnpm --filter @ebbinghaus/app e2e`。
 - macOS 原生自动验收：先在 `app/` 启动 `rtk pnpm dev --host 127.0.0.1`，再在 `app/src-tauri/` 执行 `rtk cargo build --features wdio-test`，最后在 `app/` 执行 `rtk pnpm e2e:native`。`wdio-test` 仅用于测试构建；正式包不启用内嵌 WebDriver。
+- Android 模拟器开发命令：在 `app/` 执行 `rtk bash src-tauri/android-medium-phone.sh`，脚本使用 mise 管理的 JDK 21，在本次进程设置 Android 工具链，构建、安装并启动 `medium_phone` 上的调试包，不修改系统全局 Java 设置。
 - 同步服务器（本地）：`rtk pnpm server:start`（CLI `--db= --token= --port=`，缺省 127.0.0.1:8787）、在线备份 `rtk pnpm server:backup`；部署口径见 `docs/服务器部署留档.md`。
 - 正式 macOS 应用包：`rtk pnpm --filter @ebbinghaus/app tauri build --bundles app`，产物位于 `app/src-tauri/target/release/bundle/macos/Ebbinghaus.app`。需要磁盘映像时运行 `rtk pnpm --filter @ebbinghaus/app tauri build`，产物位于相邻 `dmg/` 目录。本机验收安装路径为 `/Applications/Ebbinghaus V2.app`，与 V1 `/Applications/Ebbinghaus.app` 分开。
 
@@ -110,6 +111,8 @@ Ebbinghaus-v2/
 | 录入整理故障报告、基础日志设计与整理校验机制整改口径（v1 行为规格参考） | `docs/录入整理故障报告与日志设计.md` |
 | 同步服务器的实际部署、检查与备份操作 | `docs/服务器部署留档.md` |
 | 自主执行轮次记录 | `docs/autonomous-runs/` |
+| 第四轮 Android 双端学习漏验复盘与现场证据 | `docs/autonomous-runs/20260927-1138-第四轮Android用户级验收记录.md` |
+| Android 模拟器独立验收能力需求 | `docs/Android模拟器验收能力需求.md` |
 
 ## 代码规范与开发测试闭环
 

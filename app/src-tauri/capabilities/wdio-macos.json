@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "wdio-macos",
+  "description": "仅 macOS 原生端到端验收可用的 WebDriver 权限；Android 构建不加载该能力。",
+  "platforms": ["macOS"],
+  "windows": ["main"],
+  "permissions": ["wdio:default", "wdio-webdriver:default"]
+}

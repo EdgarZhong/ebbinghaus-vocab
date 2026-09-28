@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "主窗口仅开放 Tauri core 与本地 SQL 插件读写能力；网络、文件系统和通知权限须在对应适配器接入时单独授予。",
   "windows": ["main"],
-  "permissions": ["core:default", "sql:default", "sql:allow-execute", "wdio:default", "wdio-webdriver:default"]
+  "permissions": ["core:default", "sql:default", "sql:allow-execute"]
 }

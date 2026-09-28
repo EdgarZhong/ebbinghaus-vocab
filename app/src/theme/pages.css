@@ -92,6 +92,14 @@
   text-align: center;
 }
 
+/* 360px 左右的今日顺序行若同时放序号、名称、状态和按钮，状态会被压到
+   单字折行。仅小手机让按钮独占下一行，状态保留完整阅读宽度。 */
+@media (max-width: 375px) {
+  .order-row > .btn {
+    flex-basis: 100%;
+  }
+}
+
 /* 任务行（测试列表 / 复习列表共用）。 */
 .task-row {
   display: flex;
@@ -298,6 +306,26 @@
 }
 
 /* V1 录入页的两步流：候选摘要在上、单条编辑器在下，最终操作始终可见。 */
+/* 词书的 Unit/List 编号在手机上仍须各有独立的触控与输入区域。此前两个
+   label 按行内元素排布，100% 宽的输入框会侵入相邻标签；只收口该字段组，
+   不改变设置页复用的内联时间输入布局。 */
+.firstpass-book-location {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.firstpass-book-location .field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.firstpass-book-location .field-input {
+  width: 100%;
+}
+
 .firstpass-textarea {
   min-height: 240px;
   resize: vertical;

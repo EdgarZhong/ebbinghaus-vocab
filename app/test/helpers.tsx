@@ -13,7 +13,7 @@ import { render, type RenderResult } from "@testing-library/react";
 import {StrictMode} from "react";
 import type { Clock, DeviceLocalStore, IdGenerator } from "@ebbinghaus/application";
 import { App } from "../src/App.tsx";
-import { createAppServices, type AppServices } from "../src/composition.ts";
+import { createAppServices, type AppServices, type CloudSyncPort } from "../src/composition.ts";
 
 /** 固定时刻时钟：2026-09-19 12:00:00 UTC（当日学习日与换日边界均确定）。 */
 export const FIXED_NOW = new Date("2026-09-19T12:00:00.000Z");
@@ -50,6 +50,7 @@ export function createSequenceIdGenerator(): IdGenerator {
 export interface TestServicesOptions {
   readonly clock?: Clock;
   readonly deviceLocal?: DeviceLocalStore;
+  readonly cloudSync?: CloudSyncPort;
 }
 
 /**
@@ -74,6 +75,7 @@ export function createTestServices(options: TestServicesOptions = {}): AppServic
     clock: options.clock ?? fixedClock,
     deviceLocal: options.deviceLocal ?? new MemoryDeviceLocalStore(),
     idGenerator: createSequenceIdGenerator(),
+    cloudSync: options.cloudSync,
   });
 }
 

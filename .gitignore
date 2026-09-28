@@ -42,9 +42,12 @@ node_modules/
 # Vite 前端构建产物。
 app/dist/
 
+# 自动化与原生验收截图留在本机，按时间戳命名。
+app/e2e/__screenshots__/
+
 # Tauri 平台壳：Rust 构建产物与生成的工程文件。
 app/src-tauri/target/
-app/src-tauri/gen/
+app/src-tauri/gen/schemas/
 
 # 同步服务器运行时：数据库、备份与日志不得进入版本控制。
 server/var/

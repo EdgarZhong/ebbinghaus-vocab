@@ -59,6 +59,11 @@ test("六个一级页面导航冒烟并输出全窗口截图", async ({ page }) 
   for (const item of NAV_PAGES) {
     await navTo(page, item.navTestId);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(item.heading);
+    // 手机浏览器允许纵向滚动，但任一一级页都不应把内容挤出视口右缘；
+    // 这个几何断言补足截图肉眼难辨的少量横向溢出。
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      await page.evaluate(() => window.innerWidth),
+    );
     await screenshot(page, item.key);
   }
 });
@@ -80,6 +85,42 @@ test("切页先显示骨架，再挂载本地内容；录入框有足够高度",
   const input = page.getByTestId("firstpass-raw-input");
   await expect(input).toBeVisible();
   expect((await input.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(240);
+});
+
+test("词书录入两步的 Unit 与 List 编号在手机宽度下互不遮挡", async ({ page }) => {
+  await page.goto("/");
+  await navTo(page, "nav-first-pass");
+
+  // 两步共用同一字段组，但位于不同容器。逐步检查真实布局盒，防止 label
+  // 的行内排版让 100% 宽输入框侵入隔壁字段；尤其覆盖 412px 手机视口。
+  const expectSeparateFields = async () => {
+    const group = await page.getByTestId("firstpass-book-location").boundingBox();
+    const unit = await page.getByTestId("firstpass-unit-number").boundingBox();
+    const list = await page.getByTestId("firstpass-list-number").boundingBox();
+    expect(group).not.toBeNull();
+    expect(unit).not.toBeNull();
+    expect(list).not.toBeNull();
+    expect(unit!.x + unit!.width).toBeLessThanOrEqual(list!.x);
+    expect(unit!.x).toBeGreaterThanOrEqual(group!.x);
+    expect(list!.x + list!.width).toBeLessThanOrEqual(group!.x + group!.width);
+    expect(unit!.height).toBeGreaterThanOrEqual(40);
+    expect(list!.height).toBeGreaterThanOrEqual(40);
+  };
+
+  await expectSeparateFields();
+  await screenshot(page, "first-pass-book-location-input");
+  await page.getByTestId("firstpass-raw-input").fill("词汇、词性、释义与用法。".repeat(80));
+  // 长文本应在输入框内部滚动，不撑出页面横向滚动或挡住下一步入口。
+  expect(await page.getByTestId("firstpass-raw-input").evaluate((input) => input.scrollHeight > input.clientHeight)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    await page.evaluate(() => window.innerWidth),
+  );
+  await expect(page.getByTestId("firstpass-direct-manual")).toBeVisible();
+  await screenshot(page, "first-pass-long-input");
+  await page.getByTestId("firstpass-direct-manual").click();
+  await expect(page.getByTestId("firstpass-step-label")).toBeVisible();
+  await expectSeparateFields();
+  await screenshot(page, "first-pass-book-location-check");
 });
 
 test("Space 管理：创建、切换并返回原页面", async ({ page }) => {

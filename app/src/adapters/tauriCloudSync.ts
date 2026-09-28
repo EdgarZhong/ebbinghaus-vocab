@@ -1,5 +1,5 @@
 /**
- * 正式桌面端云同步装配：本地 SQLite 始终是 UI 工作库；共享 SyncEngine 负责
+ * Tauri 双端云同步装配：本地 SQLite 始终是 UI 工作库；共享 SyncEngine 负责
  * outbox、幂等拉取与退避，此处只接本机加密令牌、固定 HTTPS 出口和触发时机。
  */
 import { invoke } from "@tauri-apps/api/core";
@@ -11,7 +11,9 @@ import { SyncEngine, type SyncCycleResult } from "@ebbinghaus/persistence/src/sy
 
 export const CLOUD_SYNC_ENDPOINT = "https://eb-data.edgarzhong.fyi";
 const TOKEN_STORE_KEY = "cloud_sync_auth_token_cipher_v1";
-const SYNC_INTERVAL_MS = 30_000;
+// 前台轮询遵循技术决策中的 5–10 秒窗口；本地写入仍由独立的短合并窗口优先触发。
+const SYNC_INTERVAL_MS = 10_000;
+const LOCAL_CHANGE_DEBOUNCE_MS = 350;
 
 interface SyncHttpResponse { readonly status: number; readonly body: string }
 interface PullCursor { read(): number; write(value: number): void }
@@ -32,10 +34,15 @@ export interface CloudSyncController {
   hasToken(): boolean;
   /** 空字符串清除本机令牌；非空令牌独立保存，不依赖设置页的统一保存按钮。 */
   configureToken(token: string): void;
-  /** 未配置时返回 null；网络失败收敛到结果与状态，不抛出阻塞本地操作。 */
+  /** 用户显式重试：跳过出站退避；未配置时返回 null，网络失败收敛到结果。 */
   syncNow(): Promise<SyncCycleResult | null>;
   /** 幂等启动：立即执行一次，随后在回前台和定时器触发。 */
   start(): void;
+  /** 本地学习数据已落盘后合并短时间内的通知，尽快异步推送。 */
+  requestSyncSoon(): void;
+  /** 只订阅同步运行状态，不触发学习页面重读。 */
+  subscribeStatus(listener: () => void): () => void;
+  getStatusVersion(): number;
   getStatus(): CloudSyncStatus;
   stop(): void;
 }
@@ -85,8 +92,22 @@ export function createTauriCloudSync(
   let lastSuccessAt: string | null = null;
   let lastAttemptAt: string | null = null;
   let inFlight: Promise<SyncCycleResult | null> | null = null;
+  let manualQueued = false;
+  let manualWaiters: Array<(result: SyncCycleResult | null) => void> = [];
   let interval: ReturnType<typeof setInterval> | null = null;
+  let localChangeTimer: ReturnType<typeof setTimeout> | null = null;
+  let localChangeQueued = false;
   let started = false;
+  let statusVersion = 0;
+  const statusListeners = new Set<() => void>();
+
+  const notifyStatus = (): void => {
+    statusVersion += 1;
+    // 状态显示失败不能中断已经开始的同步或 outbox 清队。
+    for (const listener of statusListeners) {
+      try { listener(); } catch { /* 其余订阅者仍需收到状态。 */ }
+    }
+  };
 
   try {
     const stored = runtime.deviceLocalStore.getString(TOKEN_STORE_KEY);
@@ -101,7 +122,7 @@ export function createTauriCloudSync(
     try { onChanged(); } catch { /* 同步状态仍由本地库与下一轮同步恢复。 */ }
   };
 
-  async function runCycle(): Promise<SyncCycleResult | null> {
+  async function runCycle(forcePush: boolean): Promise<SyncCycleResult | null> {
     const currentToken = token;
     if (!currentToken) return null;
     lastAttemptAt = clock.now().toISOString();
@@ -122,10 +143,10 @@ export function createTauriCloudSync(
         clock,
         pullCursor: desktop.pullCursor,
       });
-      const result = await engine.runCycle();
+      const result = await engine.runCycle({ forcePush });
       const settingsChanged = settingsBefore !== JSON.stringify(runtime.syncedSettingsStore.getAll());
       // 同步引擎先拉目录再拉事件，按页写入；中途刷新会让界面读取到
-      // 尚未齐备的学习状态。整轮结束后由 syncNow 统一通知一次。
+      // 尚未齐备的学习状态。整轮结束后统一通知一次。
       lastError = result.errors.length > 0 ? result.errors.join("；") : null;
       if (result.errors.length === 0) lastSuccessAt = clock.now().toISOString();
       if (settingsChanged || result.pulledContentCount > 0 || result.pulledEventCount > 0) notifyChanged();
@@ -141,16 +162,52 @@ export function createTauriCloudSync(
     }
   }
 
-  function syncNow(): Promise<SyncCycleResult | null> {
+  function startCycle(forcePush: boolean): Promise<SyncCycleResult | null> {
     if (inFlight) return inFlight;
-    inFlight = runCycle().finally(() => {
+    inFlight = runCycle(forcePush).finally(() => {
       inFlight = null;
+      // 错误与待同步数量在完整一轮结束后才确定；此通知只刷新设置页状态。
+      notifyStatus();
+      // 写入可能发生在一轮拉取或推送期间；该轮是否包含新条目并不确定，
+      // 因此在结束后再补一轮，确保无需用户打开设置页手动同步。
+      if (manualQueued) {
+        // 用户点击发生在自动同步期间时，原循环可能已读过出站队列；必须
+        // 再跑一次强制重试，并把这一轮的真实结果交还给点击者。
+        manualQueued = false;
+        localChangeQueued = false;
+        const waiters = manualWaiters;
+        manualWaiters = [];
+        void startCycle(true).then((result) => {
+          for (const resolve of waiters) resolve(result);
+        });
+      } else if (localChangeQueued && started && token) {
+        localChangeQueued = false;
+        void startCycle(false);
+      }
     });
+    notifyStatus();
     return inFlight;
   }
 
-  const onWindowFocus = (): void => { void syncNow(); };
-  const onVisible = (): void => { if (document.visibilityState === "visible") void syncNow(); };
+  function syncNow(): Promise<SyncCycleResult | null> {
+    if (!inFlight) return startCycle(true);
+    manualQueued = true;
+    return new Promise((resolve) => { manualWaiters.push(resolve); });
+  }
+
+  const onWindowFocus = (): void => { void startCycle(false); };
+  const flushLocalChange = (): void => {
+    if (!started || !token || !localChangeTimer) return;
+    clearTimeout(localChangeTimer);
+    localChangeTimer = null;
+    // 移动系统可能在 350 毫秒合并窗口内暂停 WebView；退后台前尽早发出。
+    if (inFlight) localChangeQueued = true;
+    else void startCycle(false);
+  };
+  const onVisible = (): void => {
+    if (document.visibilityState === "visible") void startCycle(false);
+    else flushLocalChange();
+  };
 
   return {
     hasToken: () => Boolean(token),
@@ -163,32 +220,56 @@ export function createTauriCloudSync(
       runtime.deviceLocalStore.setString(TOKEN_STORE_KEY, next ? cipher.encrypt(next) : "");
       token = next || null;
       lastError = null;
-      notifyChanged();
-      if (started && token) void syncNow();
+      notifyStatus();
+      if (started && token) void startCycle(false);
     },
     syncNow,
+    requestSyncSoon() {
+      if (!started || !token) return;
+      if (localChangeTimer) clearTimeout(localChangeTimer);
+      // 一次业务操作可能先更新事件、再更新视图；合并通知以免重复请求。
+      localChangeTimer = setTimeout(() => {
+        localChangeTimer = null;
+        if (inFlight) {
+          localChangeQueued = true;
+        } else {
+          void startCycle(false);
+        }
+      }, LOCAL_CHANGE_DEBOUNCE_MS);
+    },
     start() {
       if (started) return;
       started = true;
       window.addEventListener("focus", onWindowFocus);
+      window.addEventListener("pagehide", flushLocalChange);
       document.addEventListener("visibilitychange", onVisible);
-      interval = setInterval(() => { void syncNow(); }, SYNC_INTERVAL_MS);
-      void syncNow();
+      interval = setInterval(() => { void startCycle(false); }, SYNC_INTERVAL_MS);
+      void startCycle(false);
     },
+    subscribeStatus(listener) {
+      statusListeners.add(listener);
+      return () => { statusListeners.delete(listener); };
+    },
+    getStatusVersion: () => statusVersion,
     getStatus() {
       return {
         configured: Boolean(token), running: inFlight !== null,
         lastSuccessAt, lastAttemptAt, lastError,
-        pendingOutboxCount: runtime.outbox.pendingCount(),
+        // 内容目录使用独立 content_outbox；漏算会造成界面显示 0 但词条仍待上传。
+        pendingOutboxCount: runtime.outbox.pendingCount() + runtime.contentSyncStore.pendingCount(),
       };
     },
     stop() {
       if (!started) return;
       started = false;
       window.removeEventListener("focus", onWindowFocus);
+      window.removeEventListener("pagehide", flushLocalChange);
       document.removeEventListener("visibilitychange", onVisible);
       if (interval) clearInterval(interval);
       interval = null;
+      if (localChangeTimer) clearTimeout(localChangeTimer);
+      localChangeTimer = null;
+      localChangeQueued = false;
     },
   };
 }

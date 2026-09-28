@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- WebView 的 SQLite 桥只监听设备自身随机端口。Google Trust Services 证书
+         通过 HTTP 发布带 CA 签名的 CRL；Android 系统证书校验器必须能读取该列表，
+         否则 rustls-platform-verifier 会将可用证书误报为 Revoked。业务 API 仍只用 HTTPS。 -->
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">c.pki.goog</domain>
+    </domain-config>
+</network-security-config>

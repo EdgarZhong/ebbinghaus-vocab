@@ -146,3 +146,20 @@
   --ambient-blob-2: rgb(25 46 38 / 0.45);
   --ambient-blob-3: rgb(28 42 52 / 0.35);
 }
+
+/* 约 360 CSS px 的 Android 手机需要保留 44px 控件点击区，因此只压缩字号与
+   页面留白。辅助文字继续保持 13px 可读下限；较宽手机和桌面沿用上方令牌。 */
+@media (max-width: 375px) {
+  /* 明暗主题根节点有更高特异度，必须同时匹配，才能让断点令牌在两套主题
+     下真正覆盖基础值；只写 :root 会被上方主题选择器抢先。 */
+  :root,
+  :root[data-theme] {
+    --font-size-body: 14px;
+    --font-size-item: 15px;
+    --font-size-section: 17px;
+    --font-size-page-title: 23px;
+    --page-margin: 16px;
+    --block-gap: 16px;
+    --topbar-height: 48px;
+  }
+}

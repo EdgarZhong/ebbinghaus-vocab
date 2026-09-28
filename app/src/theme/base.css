@@ -44,3 +44,11 @@ body {
   outline: none;
   box-shadow: none;
 }
+
+/* Android WebView 的粗指针点击默认会短暂铺蓝色高亮，掩盖森色按钮反馈。
+   只关闭触控高亮；键盘焦点仍由上方 :focus-visible 绘制清晰焦点环。 */
+@media (pointer: coarse) {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+}

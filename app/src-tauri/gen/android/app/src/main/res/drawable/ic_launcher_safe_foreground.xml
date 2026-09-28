@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher_foreground"
+    android:insetLeft="6dp"
+    android:insetRight="6dp"
+    android:insetTop="13dp">
+    <!-- 原始书页/新芽保持桌面图案；只把前景压入自适应图标中央安全区，
+         防止不同厂商的圆形或方形遮罩截断芽尖与书页边缘。底色仍铺满外形。 -->
+</inset>

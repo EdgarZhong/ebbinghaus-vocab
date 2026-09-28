@@ -4,11 +4,11 @@
  * 客户端校验失败时的就地提示。
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { createTestServices, renderApp } from "./helpers.tsx";
-import type { AppServices } from "../src/composition.ts";
+import { createAppServices, type AppServices, type CloudSyncPort } from "../src/composition.ts";
 
 async function openSettings(user: ReturnType<typeof userEvent.setup>): Promise<AppServices> {
   const services = createTestServices();
@@ -18,6 +18,48 @@ async function openSettings(user: ReturnType<typeof userEvent.setup>): Promise<A
 }
 
 describe("设置页：同步设置", () => {
+  it("云端托管位于设置页末尾，后台恢复成功后自动清除同步错误", async () => {
+    const user = userEvent.setup();
+    const listeners = new Set<() => void>();
+    let statusVersion = 0;
+    let lastError: string | null = "网络暂时不可用";
+    const cloudSync: CloudSyncPort = {
+      hasToken: () => true,
+      configureToken: () => {},
+      syncNow: async () => null,
+      requestSyncSoon: () => {},
+      subscribeStatus(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      getStatusVersion: () => statusVersion,
+      getStatus: () => ({ configured: true, running: false, lastSuccessAt: null,
+        lastAttemptAt: null, lastError, pendingOutboxCount: 0 }),
+      start: () => {}, stop: () => {},
+    };
+    const services = createAppServices({ cloudSync });
+    const businessChanged = vi.fn();
+    services.subscribeChanged(businessChanged);
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-settings"));
+    const cloudSection = screen.getByRole("heading", { name: "云端数据托管" }).closest("section");
+    // 云端操作独立于“保存设置”；它的卡片必须排在该按钮之后且是最后一个页面分区。
+    expect(cloudSection).not.toBeNull();
+    if (cloudSection === null) throw new Error("云端数据托管卡片缺失");
+    expect(screen.getByTestId("settings-save").compareDocumentPosition(cloudSection)
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(cloudSection.nextElementSibling).toBeNull();
+    expect(cloudSection).toHaveTextContent("待同步项目：0");
+    expect(screen.getByText("网络暂时不可用")).toBeInTheDocument();
+    // 导航到设置页本身会更新活动路由；这里只核对随后静默恢复的增量通知。
+    businessChanged.mockClear();
+    // 模拟静默轮询成功：只推进状态版本，不经全局业务通知刷新所有页面。
+    act(() => {
+      lastError = null;
+      statusVersion += 1;
+      for (const listener of listeners) listener();
+    });
+    expect(screen.queryByText("网络暂时不可用")).not.toBeInTheDocument();
+    expect(businessChanged).not.toHaveBeenCalled();
+  });
+
   it("初始展示默认值：东八区、04:00 换日、联网辅助开启且无来源选择", async () => {
     const user = userEvent.setup();
     const services = await openSettings(user);

@@ -9,13 +9,13 @@
  *   API 密钥只以脱敏形态展示，不提供查看明文入口，仅提供"清空并重新填写"。
  *
  * 保存语义按 V1 实际页面：密钥行独立保存，目标保持率需两次确认并独立保存；
- * 底部“保存设置”提交其余设置。失败保留用户当前输入。
+ * “保存设置”按钮提交其余设置。失败保留用户当前输入。
  *
  * 当前按正式 V1 桌面设置页提供联网辅助总开关，不暴露词典来源选择；两源并发
  * 的选择属于后台适配器行为。
  */
 
-import { useState, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import type { LlmConfigurationSnapshot } from "@ebbinghaus/application";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
 import { PageShell } from "../ui/PageShell.tsx";
@@ -36,6 +36,10 @@ type ConnectionState = { readonly busy: boolean; readonly message: string; reado
 type ApiKeyState =
   | { readonly phase: "masked" }
   | { readonly phase: "refill"; readonly draft: string };
+
+/** 浏览器验收环境没有云端控制器，仍保持 Hook 调用顺序与订阅函数稳定。 */
+const subscribeNoCloudStatus = (): (() => void) => () => {};
+const getNoCloudStatusVersion = (): number => 0;
 
 export function SettingsPage(): ReactNode {
   const services = useServices();
@@ -73,6 +77,12 @@ export function SettingsPage(): ReactNode {
   const [cloudTokenDraft, setCloudTokenDraft] = useState("");
   const [cloudTokenEditing, setCloudTokenEditing] = useState(false);
   const [cloudMessage, setCloudMessage] = useState("");
+  // 后台同步仅刷新本卡片状态；输入草稿和其他页面不受空轮询影响。
+  useSyncExternalStore(
+    services.cloudSync?.subscribeStatus ?? subscribeNoCloudStatus,
+    services.cloudSync?.getStatusVersion ?? getNoCloudStatusVersion,
+    getNoCloudStatusVersion,
+  );
   const cloudStatus = services.cloudSync?.getStatus();
 
   /** 任一字段编辑后清除全局保存状态，避免过期提示。 */
@@ -192,9 +202,8 @@ export function SettingsPage(): ReactNode {
       services.cloudSync.configureToken(token);
       setCloudTokenDraft("");
       setCloudTokenEditing(false);
-      setCloudMessage("访问令牌已保存在本机，正在同步…");
-      services.notifyChanged();
-      void services.cloudSync.syncNow().then(() => services.notifyChanged());
+      // 控制器在已启动时自行发起同步；结果由专属状态订阅回显。
+      setCloudMessage("");
     } catch {
       setCloudMessage("访问令牌保存失败，请重试。");
     }
@@ -202,14 +211,9 @@ export function SettingsPage(): ReactNode {
 
   const syncCloudNow = (): void => {
     if (services.cloudSync === null) return;
-    setCloudMessage("正在同步…");
-    void services.cloudSync.syncNow().then(
-      () => {
-        services.notifyChanged();
-        setCloudMessage(services.cloudSync?.getStatus().lastError ?? "云端数据已同步。");
-      },
-      () => setCloudMessage("同步失败，本机数据已保留，请稍后重试。"),
-    );
+    // 同步错误与恢复直接取控制器最新状态，避免一次手动失败留下过期红字。
+    setCloudMessage("");
+    void services.cloudSync.syncNow();
   };
 
   const save = (): void => {
@@ -340,45 +344,6 @@ export function SettingsPage(): ReactNode {
           查询在线词典
         </label>
       </section>
-
-      {services.cloudSync === null ? null : (
-        <section className="card settings-section" aria-labelledby="settings-cloud-heading">
-          <h2 className="card-section-title" id="settings-cloud-heading">云端数据托管</h2>
-          <p className="field-hint">数据端点：eb-data.edgarzhong.fyi。本机仍可离线使用，联网后自动同步。</p>
-          {cloudStatus?.configured && !cloudTokenEditing ? (
-            <div className="settings-row">
-              <span>访问令牌已保存在本机</span>
-              <button type="button" className="btn btn-secondary" onClick={() => setCloudTokenEditing(true)}
-                data-testid="cloud-change-token">更新访问令牌</button>
-            </div>
-          ) : (
-            <div className="field">
-              <label className="field-label" htmlFor="cloud-sync-token">云端访问令牌</label>
-              <input id="cloud-sync-token" className="field-input" type="password"
-                value={cloudTokenDraft} onChange={(event) => setCloudTokenDraft(event.target.value)}
-                autoComplete="off" data-testid="cloud-sync-token" />
-              <div className="settings-row">
-                <button type="button" className="btn btn-primary" onClick={saveCloudToken}
-                  data-testid="cloud-save-token">保存并同步</button>
-                {cloudStatus?.configured ? <button type="button" className="btn btn-secondary"
-                  onClick={() => { setCloudTokenEditing(false); setCloudTokenDraft(""); }}>
-                  取消
-                </button> : null}
-              </div>
-            </div>
-          )}
-          {cloudStatus?.configured ? (
-            <div className="settings-row">
-              <button type="button" className="btn btn-secondary" onClick={syncCloudNow}
-                disabled={cloudStatus.running} data-testid="cloud-sync-now">立即同步</button>
-              <span>待同步事件：{cloudStatus.pendingOutboxCount}</span>
-            </div>
-          ) : null}
-          {cloudStatus?.lastSuccessAt ? <p className="field-hint">上次同步：{new Date(cloudStatus.lastSuccessAt).toLocaleString()}</p> : null}
-          {cloudStatus?.lastError ? <p className="field-error" role="status">{cloudStatus.lastError}</p> : null}
-          {cloudMessage ? <p className="field-hint" role="status" data-testid="cloud-sync-status">{cloudMessage}</p> : null}
-        </section>
-      )}
 
       <section className="card settings-section" aria-labelledby="settings-llm">
         <h2 className="card-section-title" id="settings-llm">
@@ -520,6 +485,46 @@ export function SettingsPage(): ReactNode {
           </p>
         ) : null}
       </div>
+      {/* 云端托管有独立令牌保存和同步操作，放在普通设置保存区之后，避免误以为底部按钮会提交云端配置。 */}
+      {services.cloudSync === null ? null : (
+        <section className="card settings-section" aria-labelledby="settings-cloud-heading">
+          <h2 className="card-section-title" id="settings-cloud-heading">云端数据托管</h2>
+          <p className="field-hint">数据端点：eb-data.edgarzhong.fyi。本机仍可离线使用，联网后自动同步。</p>
+          {cloudStatus?.configured && !cloudTokenEditing ? (
+            <div className="settings-row">
+              <span>访问令牌已保存在本机</span>
+              <button type="button" className="btn btn-secondary" onClick={() => setCloudTokenEditing(true)}
+                data-testid="cloud-change-token">更新访问令牌</button>
+            </div>
+          ) : (
+            <div className="field">
+              <label className="field-label" htmlFor="cloud-sync-token">云端访问令牌</label>
+              <input id="cloud-sync-token" className="field-input" type="password"
+                value={cloudTokenDraft} onChange={(event) => setCloudTokenDraft(event.target.value)}
+                autoComplete="off" data-testid="cloud-sync-token" />
+              <div className="settings-row">
+                <button type="button" className="btn btn-primary" onClick={saveCloudToken}
+                  data-testid="cloud-save-token">保存并同步</button>
+                {cloudStatus?.configured ? <button type="button" className="btn btn-secondary"
+                  onClick={() => { setCloudTokenEditing(false); setCloudTokenDraft(""); }}>
+                  取消
+                </button> : null}
+              </div>
+            </div>
+          )}
+          {cloudStatus?.configured ? (
+            <div className="settings-row">
+              <button type="button" className="btn btn-secondary" onClick={syncCloudNow}
+                disabled={cloudStatus.running} data-testid="cloud-sync-now">立即同步</button>
+              <span>待同步项目：{cloudStatus.pendingOutboxCount}</span>
+            </div>
+          ) : null}
+          {cloudStatus?.lastSuccessAt ? <p className="field-hint">上次同步：{new Date(cloudStatus.lastSuccessAt).toLocaleString()}</p> : null}
+          {cloudStatus?.running ? <p className="field-hint" role="status" data-testid="cloud-sync-status">正在同步…</p> : null}
+          {cloudStatus?.lastError ? <p className="field-error" role="status">{cloudStatus.lastError}</p> : null}
+          {cloudMessage ? <p className="field-error" role="status">{cloudMessage}</p> : null}
+        </section>
+      )}
       {retentionConfirmation > 0 ? (
         <Modal title="确认修改目标保持率" onClose={() => setRetentionConfirmation(0)}>
           <p>{retentionConfirmation === 1

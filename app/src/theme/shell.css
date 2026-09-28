@@ -172,15 +172,16 @@
    移动端：顶栏（≤900px，JS 分流渲染）
    --------------------------------------------------------------------------- */
 
-/* 顶栏：CSS 毛玻璃（半透底 + backdrop-filter），高度取 --topbar-height 令牌；
+/* 顶栏：Android WebView 全屏绘制时，毛玻璃背景延伸到透明状态栏后方；
+   控件整体留在状态栏下，其他平台没有注入变量时沿用原高度。
    主区域在其下滚动时内容从顶栏背后透出柔化。 */
 .topbar {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  height: var(--topbar-height);
-  padding: 0 8px;
+  height: calc(var(--topbar-height) + var(--android-status-inset, 0px));
+  padding: var(--android-status-inset, 0px) 8px 0;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(20px) saturate(1.2);
   backdrop-filter: blur(20px) saturate(1.2);
@@ -277,15 +278,21 @@
   animation: drawer-backdrop-fade-in 200ms ease-out;
 }
 
-/* 抽屉框架：Glass 的已定位祖先；浮动面板形态（上下左各 12px，与桌面侧栏同源），
-   宽度 min(300px, 视口宽 - 48px)——最窄 320px 视口下也给背景罩留可点区域。 */
+/* 抽屉框架：Glass 的已定位祖先；浮动面板形态。Android 顶部再避开状态栏，
+   面板内控件不会落到系统时钟下；底边保持 12px，不引入导航栏留白。 */
 .drawer-frame {
   position: absolute;
-  top: 12px;
+  top: calc(12px + var(--android-status-inset, 0px));
   bottom: 12px;
   left: 12px;
   width: min(300px, calc(100vw - 48px));
   animation: drawer-slide-in 200ms ease-out;
+}
+
+/* 只抬高抽屉底部的主题控件：玻璃背板仍延伸到导航栏后方，页面和抽屉不产生
+   全局底部空白。非 Android 环境未注入变量时保持原位置。 */
+.drawer-frame .sidebar-nav-footer {
+  padding-bottom: var(--android-nav-inset, 0px);
 }
 
 @keyframes drawer-slide-in {
@@ -381,4 +388,32 @@
 @keyframes page-loading-pulse { from { opacity: 0.55; } to { opacity: 0.9; } }
 @media (prefers-reduced-motion: reduce) {
   .page-loading-line, .page-loading-card { animation: none; }
+}
+
+/* 小手机上的顶栏保持汉堡按钮与 Space 入口各有至少 44px 点击区；应用名
+   靠近汉堡按钮并左对齐，剩余宽度优先让当前 Space 名称用省略号截断。抽屉
+   仅缩小状态栏以下的额外留白，仍始终避开 Android 状态栏。 */
+@media (max-width: 375px) {
+  .topbar-app-name {
+    text-align: left;
+  }
+
+  .topbar-space {
+    min-width: 0;
+    min-height: 44px;
+    margin-left: auto;
+    max-width: 40%;
+  }
+
+  .topbar-space .topbar-space-label {
+    min-width: 0;
+  }
+
+  .drawer-frame {
+    top: calc(4px + var(--android-status-inset, 0px));
+  }
+
+  .drawer-frame .nav-link {
+    min-height: 44px;
+  }
 }

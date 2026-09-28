@@ -4,10 +4,14 @@
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use tokio::sync::oneshot;
 
 const MAX_REQUEST_BYTES: usize = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+// 正式整理可能包含较长模型推理；探测只访问模型列表，应更快给出失败反馈。
+const POST_TIMEOUT: Duration = Duration::from_secs(90);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 enum RequestSlot {
     Active(oneshot::Sender<()>),
@@ -35,6 +39,7 @@ pub(crate) fn llm_http_cancel(request_id: String) {
 
 #[tauri::command]
 pub(crate) async fn llm_http_post(
+    webview: tauri::Webview,
     request_id: String,
     endpoint: String,
     api_key: String,
@@ -57,7 +62,11 @@ pub(crate) async fn llm_http_post(
     }
 
     let network = async {
-        let client = reqwest::Client::builder()
+        let client = crate::http_client::builder(&webview, &url).await
+            .map_err(|_| "llm:网络客户端初始化失败".to_string())?
+            .timeout(POST_TIMEOUT)
+            // 模型凭据只发往用户配置的 HTTPS 端点；重定向不能携带它去第二个地址。
+            .redirect(reqwest::redirect::Policy::none())
             .build().map_err(|_| "llm:网络客户端初始化失败".to_string())?;
         let response = client.post(url)
             .header(ACCEPT, "application/json")
@@ -105,17 +114,23 @@ pub(crate) async fn llm_http_post(
 
 /// V1 连通性测试只验证模型列表端点可达与鉴权成功，不读取或返回响应正文。
 #[tauri::command]
-pub(crate) async fn llm_http_probe(endpoint: String, api_key: String) -> Result<(), String> {
+pub(crate) async fn llm_http_probe(webview: tauri::Webview, endpoint: String, api_key: String) -> Result<(), String> {
     if api_key.trim().is_empty() { return Err("llm:未配置大语言模型 API Key".into()); }
     let url = reqwest::Url::parse(&endpoint).map_err(|_| "llm:大语言模型地址无效".to_string())?;
     if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
         return Err("llm:大语言模型地址必须使用 HTTPS".into());
     }
-    let client = reqwest::Client::builder()
+    let client = crate::http_client::builder(&webview, &url).await
+        .map_err(|_| "llm:网络客户端初始化失败".to_string())?
+        .timeout(PROBE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
         .build().map_err(|_| "llm:网络客户端初始化失败".to_string())?;
     let response = client.get(url)
         .header(AUTHORIZATION, format!("Bearer {api_key}"))
-        .send().await.map_err(|_| "llm:无法连接大语言模型服务".to_string())?;
+        .send().await.map_err(|error| {
+            if error.is_timeout() { "llm:大语言模型请求超时".to_string() }
+            else { "llm:无法连接大语言模型服务".to_string() }
+        })?;
     match response.status().as_u16() {
         200..=299 => Ok(()),
         401 | 403 => Err("llm:大语言模型 API Key 认证失败".into()),

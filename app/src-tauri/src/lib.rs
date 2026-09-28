@@ -4,9 +4,10 @@
 // 异步 API 访问。其余平台能力在客户端同步端口完成异步迁移后逐项接入。
 
 // mobile cfg 由 cargo-mobile2 在 Android/iOS 工程中注入；桌面构建下该属性不生效，
-// 由 src/main.rs 调用本函数。移动端工程在 Phase 4 闸门通过后再生成。
+// 由 src/main.rs 调用本函数。Android Gradle 工程已经生成在 gen/android。
 mod sqlite_transaction;
 mod sqlite_bridge;
+mod http_client;
 mod dictionary_http;
 mod llm_http;
 mod sync_http;
@@ -16,7 +17,7 @@ pub fn run() {
     let builder = tauri::Builder::default();
     // macOS 没有可直接驱动 WKWebView 的系统 WebDriver；仅验收构建启用内嵌驱动。
     // 正式发布构建不启用 wdio-test，因此不会监听测试端口。
-    #[cfg(feature = "wdio-test")]
+    #[cfg(all(feature = "wdio-test", target_os = "macos"))]
     let builder = builder
         .plugin(tauri_plugin_wdio_webdriver::init())
         .plugin(tauri_plugin_wdio::init());

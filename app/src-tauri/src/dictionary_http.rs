@@ -9,7 +9,7 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 #[tauri::command]
-pub(crate) async fn dictionary_http_get(source: String, normalized_word: String) -> Result<String, String> {
+pub(crate) async fn dictionary_http_get(webview: tauri::Webview, source: String, normalized_word: String) -> Result<String, String> {
     if normalized_word.is_empty() || !normalized_word.bytes().all(|byte| byte.is_ascii_lowercase()) {
         return Err("response:在线词典只接受小写英文规范键".into());
     }
@@ -18,11 +18,14 @@ pub(crate) async fn dictionary_http_get(source: String, normalized_word: String)
         "wiktionary" => ("https://zh.wiktionary.org/w/api.php", 8),
         _ => return Err("response:未知在线词典来源".into()),
     };
-    let client = reqwest::Client::builder()
+    let url = reqwest::Url::parse(endpoint)
+        .map_err(|_| "network:在线词典地址无效".to_string())?;
+    let client = crate::http_client::builder(&webview, &url).await
+        .map_err(|_| "network:在线词典网络客户端初始化失败".to_string())?
         .timeout(Duration::from_secs(timeout_seconds))
-        .user_agent("Ebbinghaus/0.1 local-desktop-dictionary")
+        .user_agent("Ebbinghaus/0.1 local-dictionary")
         .build().map_err(|_| "network:在线词典网络客户端初始化失败".to_string())?;
-    let request = client.get(endpoint).header(ACCEPT, "application/json");
+    let request = client.get(url).header(ACCEPT, "application/json");
     let request = if source == "youdao" {
         request.query(&[("q", normalized_word.as_str())])
     } else {

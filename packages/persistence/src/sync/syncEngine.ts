@@ -4,8 +4,10 @@
  * 语义铁律（AGENTS.md "数据与同步"）：
  * - **断网不改变应用模式**：runCycle 绝不向调用方抛错——所有失败折叠为结果对象
  *   里的错误摘要，由界面决定展示与否；调用时机（启动/回前台/轮询）由组合根控制。
- * - **推送**：只消费 outbox 到期条目（退避由数据表达，见 outboxStore.ts）；事件批量
- *   单往返，settings 批量单 PUT；服务器 accepted/duplicated 都算成功并清队。
+ * - **推送**：自动轮先消费 outbox 到期条目（退避由数据表达，见 outboxStore.ts）；
+ *   用户显式重试可跳过到期时间，但失败后仍按真实时间退避。
+ *   避免手机随时进入后台时把本地写入排在多页拉取之后；事件批量单往返，
+ *   settings 批量单 PUT；服务器 accepted/duplicated 都算成功并清队。
  * - **拉取**：以 pull_cursor（sync_state）为高水位逐页推进，页间落盘游标——任意
  *   时刻崩溃/断线，重启后从断点继续（断点续传硬性要求）。事件经 applyPulledEvents
  *   幂等落库（本机已推事件的服务器回声不重复），新事件落地后触发 onEventsApplied
@@ -28,6 +30,13 @@ const PUSH_BATCH_SIZE = 200;
 const PULL_PAGE_SIZE = 500;
 /** outbox 单轮消费上限：防止单轮占用过久，剩余条目留给下一轮。 */
 const DRAIN_LIMIT = 500;
+/** 显式同步读取全部待推内容时使用的上界；失败收尾仍以真实时钟重新计算退避。 */
+const MANUAL_RETRY_CUTOFF = "9999-12-31T23:59:59.999Z";
+
+export interface SyncCycleOptions {
+  /** 用户主动重试时跳过出站退避；定时轮询与本地写入触发保持原退避规则。 */
+  readonly forcePush?: boolean;
+}
 
 /** 一轮同步的结果摘要（runCycle 永不抛错，失败折叠于此）。 */
 export interface SyncCycleResult {
@@ -84,11 +93,11 @@ export class SyncEngine {
   }
 
   /**
-   * 执行一轮完整同步：settings 对账 → 事件拉取 → outbox 推送。
-   * 顺序考量：先拉后推让本机尽快获得其他设备的事实（推送稍后由退避保证收敛）；
-   * 任一阶段失败不影响后续阶段（各自独立降级）。
+   * 执行一轮完整同步：本地待发送内容与事件 → settings 对账 → 增量拉取。
+   * 手机写入后可能很快失去网络，先处理已落盘的出站队列可避免弱网中的多次
+   * 拉取延迟推送；各阶段仍独立降级，失败条目按原退避规则保留。
    */
-  async runCycle(): Promise<SyncCycleResult> {
+  async runCycle(options: SyncCycleOptions = {}): Promise<SyncCycleResult> {
     const errors: string[] = [];
     let settingsReconciled = false;
     let pulledEventCount = 0;
@@ -96,7 +105,38 @@ export class SyncEngine {
     let pushedEntryCount = 0;
     let pushedContentCount = 0;
 
-    // 1) settings 全量对账。
+    // 1) 内容先于事件推送：其他设备获得学习事实时，其身份目录应已存在于云端。
+    if (this.deps.contentStore !== undefined) {
+      const nowIso = this.deps.clock.now().toISOString();
+      // 内容仓储的到期查询同时覆盖 SQLite 与浏览器内存实现。显式重试用最晚
+      // ISO 时间读取待推项目，但 markFailed 始终传真实 nowIso，失败后仍继续退避。
+      const due = this.deps.contentStore.dueEntries(
+        options.forcePush ? MANUAL_RETRY_CUTOFF : nowIso, DRAIN_LIMIT,
+      );
+      for (let offset = 0; offset < due.length; offset += PUSH_BATCH_SIZE) {
+        const batch = due.slice(offset, offset + PUSH_BATCH_SIZE);
+        try {
+          const response = await this.deps.gateway.putContent(batch.map((item) => item.entry));
+          this.deps.contentStore.applyRemote(response.contents);
+          for (const item of batch) {
+            this.deps.contentStore.markSucceeded(item);
+            pushedContentCount += 1;
+          }
+        } catch (error) {
+          for (const item of batch) this.deps.contentStore.markFailed(item, describeSyncError(error), nowIso);
+          errors.push(`内容推送失败：${describeSyncError(error)}`);
+        }
+      }
+    }
+
+    // 2) 学习事件与 settings 出站；内容失败不阻断学习操作，失败留在本地重试。
+    try {
+      pushedEntryCount = await this.drainOutbox(errors, options.forcePush === true);
+    } catch (error) {
+      errors.push(`推送失败：${describeSyncError(error)}`);
+    }
+
+    // 3) settings 全量对账。出站完成后再拉取权威合并结果，减少设备切换等待。
     try {
       const remote = await this.deps.gateway.getSettings();
       this.deps.settingsStore.applyMerged(remote.settings);
@@ -105,7 +145,7 @@ export class SyncEngine {
       errors.push(`settings 对账失败：${describeSyncError(error)}`);
     }
 
-    // 2) 内容先于事件拉取：领域重放需要已齐备的 Space/Word 目录作为输入。
+    // 4) 内容先于事件拉取：领域重放需要已齐备的 Space/Word 目录作为输入。
     if (this.deps.contentStore !== undefined) {
       try {
         for (;;) {
@@ -121,7 +161,7 @@ export class SyncEngine {
       }
     }
 
-    // 3) 事件增量拉取（断点续传：逐页推进并落盘游标）。
+    // 5) 事件增量拉取（断点续传：逐页推进并落盘游标）。
     try {
       for (;;) {
         const page = await this.deps.gateway.pull(this.readCursor(), PULL_PAGE_SIZE);
@@ -139,40 +179,17 @@ export class SyncEngine {
       errors.push(`事件拉取失败：${describeSyncError(error)}`);
     }
 
-    // 4) 内容先于事件推送：其他设备获得学习事实时，其身份目录应已存在于云端。
-    if (this.deps.contentStore !== undefined) {
-      const nowIso = this.deps.clock.now().toISOString();
-      const due = this.deps.contentStore.dueEntries(nowIso, DRAIN_LIMIT);
-      for (let offset = 0; offset < due.length; offset += PUSH_BATCH_SIZE) {
-        const batch = due.slice(offset, offset + PUSH_BATCH_SIZE);
-        try {
-          const response = await this.deps.gateway.putContent(batch.map((item) => item.entry));
-          this.deps.contentStore.applyRemote(response.contents);
-          for (const item of batch) {
-            this.deps.contentStore.markSucceeded(item);
-            pushedContentCount += 1;
-          }
-        } catch (error) {
-          for (const item of batch) this.deps.contentStore.markFailed(item, describeSyncError(error), nowIso);
-          errors.push(`内容推送失败：${describeSyncError(error)}`);
-        }
-      }
-    }
-
-    // 5) 学习事件与 settings 出站；内容失败不阻断学习操作，但失败会留在本地待重试。
-    try {
-      pushedEntryCount = await this.drainOutbox(errors);
-    } catch (error) {
-      errors.push(`推送失败：${describeSyncError(error)}`);
-    }
-
     return { pulledEventCount, pulledContentCount, pushedEntryCount, pushedContentCount, settingsReconciled, errors };
   }
 
-  /** 消费到期条目：事件与 settings 各自批量单往返；失败逐条退避，绝不清队。 */
-  private async drainOutbox(errors: string[]): Promise<number> {
+  /** 自动取到期条目，手动取待发条目；失败逐条退避，绝不清队。 */
+  private async drainOutbox(errors: string[], forcePush: boolean): Promise<number> {
     const nowIso = this.deps.clock.now().toISOString();
-    const due = this.deps.outbox.dueEntries(nowIso, DRAIN_LIMIT);
+    // 事件与设置队列已有完整待发视图；手动模式只绕过时间门，不改变单轮
+    // 上限、服务器幂等回执和失败条目的退避收尾。
+    const due = forcePush
+      ? this.deps.outbox.listPending().slice(0, DRAIN_LIMIT)
+      : this.deps.outbox.dueEntries(nowIso, DRAIN_LIMIT);
     if (due.length === 0) {
       return 0;
     }

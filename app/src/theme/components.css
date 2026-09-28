@@ -545,6 +545,16 @@ div.space-row-select {
   font-weight: 600;
 }
 
+/* 小手机缩紧字号与留白时不能连带缩小可点区域：常见按钮、输入框和抽屉底部
+   的主题选项维持至少 44px。较宽窗口延续既有桌面/紧凑尺寸。 */
+@media (max-width: 375px) {
+  .btn,
+  .field-input,
+  .theme-toggle button {
+    min-height: 44px;
+  }
+}
+
 /* 设置页布局 */
 .settings-section {
   display: flex;

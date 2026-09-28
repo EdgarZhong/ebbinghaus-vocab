@@ -1,5 +1,5 @@
 /**
- * 正式桌面运行时：复用 Node 侧经过集成测试的同步 SQLite 仓储实现，仅数据库
+ * Tauri 生产运行时：macOS 与 Android 复用 Node 侧经过集成测试的同步 SQLite 仓储实现，仅数据库
  * 连接由 Tauri 本机桥提供。页面与应用层用例完全不感知底层差异。
  */
 import type Database from "better-sqlite3";

@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { userEvent } from "@testing-library/user-event";
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import { createTestServices, renderApp } from "./helpers.tsx";
 import type { AppServices } from "../src/composition.ts";
 
@@ -113,6 +113,29 @@ describe("Space 管理页", () => {
     expect(screen.getByTestId("space-archive-error")).toHaveTextContent(
       "请先切换到另一个 Space，再归档“必考词”。",
     );
+  });
+
+  it("其他设备归档本机当前 Space 后，自动切到首个可用 Space 且不产生出站设置", () => {
+    const services = createTestServices();
+    renderApp(services);
+    const current = services.getActiveSpace();
+    expect(screen.getByTestId("space-switcher")).toHaveTextContent("必考词");
+    expect(current).not.toBeNull();
+    const pendingBefore = services.runtime.outbox.pendingCount();
+
+    // 模拟同步引擎已把另一设备的归档结果写入本地目录，再通知界面刷新。
+    // 活动 Space 是设备本地选择，修复它不能生成同步 settings 回声。
+    act(() => {
+      services.runtime.spaceStore.updateSpace({
+        ...current!, archivedAt: services.clock.now().toISOString(),
+        updatedAt: services.clock.now().toISOString(),
+      });
+      services.notifyChanged();
+    });
+
+    expect(screen.getByTestId("space-switcher")).toHaveTextContent("常考词");
+    expect(services.getActiveSpace()?.id).toBe("a1f0c3d4-0000-4000-8000-000000000002");
+    expect(services.runtime.outbox.pendingCount()).toBe(pendingBefore);
   });
 
   it("空 Space 可删除：确认后从列表移除", async () => {

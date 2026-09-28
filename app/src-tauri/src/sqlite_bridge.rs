@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+#[cfg(not(target_os = "android"))]
 use scrypt::{scrypt, Params as ScryptParams};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection, SqliteRow};
 use sqlx::{Column, Connection, Row, TypeInfo, ValueRef};
@@ -17,12 +18,17 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::Manager;
+#[cfg(target_os = "android")]
+use std::os::unix::fs::OpenOptionsExt;
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 const DATABASE_FILE: &str = "ebbinghaus-v2.sqlite3";
+#[cfg(not(target_os = "android"))]
 const SECRET_SALT: &[u8] = b"ebbinghaus-v2-llm-api-key";
 const SECRET_AAD: &[u8] = b"ebbinghaus-v2-llm-key-cipher-v1";
 static BRIDGE: OnceLock<BridgeInfo> = OnceLock::new();
+#[cfg(target_os = "android")]
+static ANDROID_SECRET_KEY: OnceLock<[u8; 32]> = OnceLock::new();
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +54,10 @@ pub(crate) async fn start_sqlite_bridge(app: tauri::AppHandle) -> Result<BridgeI
     }
     let directory = app.path().app_config_dir().map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    // Android 没有 macOS 的 /bin/hostname；密钥只在应用私有目录首次生成，
+    // 后续进程启动从同一文件读取，才能解密已保存的设备本地连接配置。
+    #[cfg(target_os = "android")]
+    initialize_android_secret_key(&directory)?;
     let options = SqliteConnectOptions::new()
         .filename(directory.join(DATABASE_FILE))
         .create_if_missing(true)
@@ -174,6 +184,7 @@ async fn execute(connection: &mut SqliteConnection, request: Request) -> Result<
 
 /// 与 V1 一样使用本机主机名做机器绑定，scrypt 提高离线猜测成本；该标识只在内存
 /// 中参与派生。用户更改主机名后须重新填写密钥，学习数据本身不受影响。
+#[cfg(not(target_os = "android"))]
 fn machine_key() -> Result<[u8; 32], String> {
     let output = std::process::Command::new("/bin/hostname")
         .output().map_err(|_| "无法读取本机标识")?;
@@ -186,6 +197,57 @@ fn machine_key() -> Result<[u8; 32], String> {
     scrypt(hostname.as_bytes(), SECRET_SALT, &params, &mut key)
         .map_err(|_| "无法派生本机密钥")?;
     Ok(key)
+}
+
+/// Android 应用沙盒内先获取私有锁，完整写入同目录临时文件，再以 rename 原子发布。
+/// 发布前中断不会留下半写的正式密钥；并发进程持锁重查后只读取已完整发布的文件。
+/// 系统安全随机源提供 256 位密钥，文件权限限定当前应用读写，自动备份已关闭。
+#[cfg(target_os = "android")]
+fn initialize_android_secret_key(directory: &std::path::Path) -> Result<(), String> {
+    if ANDROID_SECRET_KEY.get().is_some() { return Ok(()); }
+    let path = directory.join("device-secret-key-v1");
+    // Android SELinux 禁止应用数据文件之间的 hard_link，因此使用跨进程文件锁
+    // 串行化首次创建；进程异常退出时系统会释放锁，下一次启动可重新生成。
+    let lock_path = directory.join("device-secret-key-v1.lock");
+    let lock_file = std::fs::OpenOptions::new().write(true).create(true).mode(0o600)
+        .open(&lock_path).map_err(|_| "无法创建 Android 本机密钥锁")?;
+    lock_file.lock().map_err(|_| "无法锁定 Android 本机密钥")?;
+    let key = if path.exists() {
+        read_android_secret_key(&path)?
+    } else {
+        let temporary = directory.join(format!(".device-secret-key-v1-{}.tmp", uuid::Uuid::new_v4()));
+        let mut key = [0u8; 32];
+        getrandom::fill(&mut key).map_err(|_| "无法生成 Android 本机密钥")?;
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600)
+            .open(&temporary).map_err(|_| "无法创建 Android 本机密钥临时文件")?;
+        file.write_all(&key).map_err(|_| "无法保存 Android 本机密钥")?;
+        file.sync_all().map_err(|_| "无法持久化 Android 本机密钥")?;
+        drop(file);
+        std::fs::rename(&temporary, &path).map_err(|_| "无法发布 Android 本机密钥")?;
+        std::fs::File::open(directory).and_then(|dir| dir.sync_all())
+            .map_err(|_| "无法确认 Android 本机密钥已持久化")?;
+        key
+    };
+    drop(lock_file);
+    let _ = ANDROID_SECRET_KEY.set(key);
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn read_android_secret_key(path: &std::path::Path) -> Result<[u8; 32], String> {
+    let mut file = std::fs::File::open(path).map_err(|_| "无法读取 Android 本机密钥")?;
+    let mut key = [0u8; 32];
+    file.read_exact(&mut key).map_err(|_| "Android 本机密钥长度无效")?;
+    let mut extra = [0u8; 1];
+    if file.read(&mut extra).map_err(|_| "无法核验 Android 本机密钥")? != 0 {
+        return Err("Android 本机密钥长度无效".into());
+    }
+    Ok(key)
+}
+
+#[cfg(target_os = "android")]
+fn machine_key() -> Result<[u8; 32], String> {
+    ANDROID_SECRET_KEY.get().copied().ok_or_else(|| "Android 本机密钥未初始化".into())
 }
 
 fn encrypt_secret(plaintext: &str) -> Result<String, String> {

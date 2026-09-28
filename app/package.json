@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p .",
     "e2e": "vite build && playwright test",
     "e2e:native": "wdio run wdio.conf.ts",
+    "android:medium-phone": "bash src-tauri/android-medium-phone.sh",
     "tauri": "tauri"
   },
   "dependencies": {

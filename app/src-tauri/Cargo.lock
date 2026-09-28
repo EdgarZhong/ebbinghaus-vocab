@@ -1012,7 +1012,11 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
+ "getrandom 0.4.3",
+ "jni 0.21.1",
+ "jni 0.22.4",
  "reqwest",
+ "rustls-platform-verifier",
  "scrypt",
  "serde",
  "serde_json",

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 底色填满系统外形；前景保留桌面 SVG 的书页与新芽，不叠加方形外框。 -->
+    <background android:drawable="@drawable/ic_launcher_forest_background" />
+    <foreground android:drawable="@drawable/ic_launcher_safe_foreground" />
+</adaptive-icon>

@@ -92,6 +92,107 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
     };
   }
 
+  it("本地写入先于增量拉取发往云端，弱网拉取不会延误手机推送", async () => {
+    const requests: string[] = [];
+    const local = createInMemoryRuntime({
+      clock,
+      idGenerator: { nextId: () => "22222222-2222-4222-8222-222222222221" },
+      secretCipher: new TransparentSecretCipher(),
+      gateway: {
+        async push(events) {
+          requests.push("push");
+          return new Set(events.map((event) => event.eventId));
+        },
+        async pull(afterSeq) {
+          requests.push("pull");
+          return { events: [], nextCursor: afterSeq, hasMore: false };
+        },
+        async getSettings() {
+          requests.push("getSettings");
+          return { settings: [] };
+        },
+        async putSettings() {
+          requests.push("putSettings");
+          return { settings: [] };
+        },
+        async putContent() {
+          requests.push("putContent");
+          return { contents: [] };
+        },
+        async pullContent(afterSeq) {
+          requests.push("pullContent");
+          return { contents: [], nextCursor: afterSeq, hasMore: false };
+        },
+      },
+    });
+    const event = makeEvent(901, local.deviceIdentity.getDeviceId(), "prompt-push");
+    local.unitOfWork.run(() => { local.eventStore.appendEvents([event]); });
+
+    const cycle = await local.syncEngine!.runCycle();
+    expect(cycle.errors).toEqual([]);
+    expect(cycle.pushedEntryCount).toBe(1);
+    expect(requests).toEqual(["push", "getSettings", "pullContent", "pull"]);
+    expect(local.outbox.pendingCount()).toBe(0);
+  });
+
+  it("手动同步立即重试未到期的事件与内容，失败后自动同步仍遵守退避", async () => {
+    let rejectPush = true;
+    let eventAttempts = 0;
+    let contentAttempts = 0;
+    const local = createInMemoryRuntime({
+      clock,
+      idGenerator: { nextId: () => "22222222-2222-4222-8222-222222222222" },
+      secretCipher: new TransparentSecretCipher(),
+      gateway: {
+        async push(events) {
+          eventAttempts += 1;
+          if (rejectPush) throw new Error("测试断网");
+          return new Set(events.map((event) => event.eventId));
+        },
+        async pull(afterSeq) { return { events: [], nextCursor: afterSeq, hasMore: false }; },
+        async getSettings() { return { settings: [] }; },
+        async putSettings() { return { settings: [] }; },
+        async putContent(entries) {
+          contentAttempts += 1;
+          if (rejectPush) throw new Error("测试断网");
+          return { contents: entries.map((entry, index) => ({ ...entry, serverSeq: index + 1 })) };
+        },
+        async pullContent(afterSeq) { return { contents: [], nextCursor: afterSeq, hasMore: false }; },
+      },
+    });
+    local.spaceStore.addSpace({
+      id: "22222222-2222-4222-8222-222222222223", kind: null,
+      displayOrder: 9, name: "手动重试测试", archivedAt: null,
+      createdAt: CLOCK_ISO, updatedAt: CLOCK_ISO, learningMode: "词书模式",
+    });
+    local.eventStore.appendEvents([makeEvent(902, local.deviceIdentity.getDeviceId(), "manual-retry")]);
+
+    const failed = await local.syncEngine!.runCycle();
+    expect(failed.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining("内容推送失败"), expect.stringContaining("事件推送失败"),
+    ]));
+    expect(local.contentSyncStore.pendingCount()).toBe(1);
+    expect(local.outbox.pendingCount()).toBe(1);
+    expect([contentAttempts, eventAttempts]).toEqual([1, 1]);
+
+    // 注入时钟不前进：自动循环不能提前破坏退避；用户显式重试则两队列都要尝试。
+    await local.syncEngine!.runCycle();
+    expect([contentAttempts, eventAttempts]).toEqual([1, 1]);
+    const forcedFailure = await local.syncEngine!.runCycle({ forcePush: true });
+    expect(forcedFailure.errors.length).toBeGreaterThan(0);
+    expect([contentAttempts, eventAttempts]).toEqual([2, 2]);
+    await local.syncEngine!.runCycle();
+    expect([contentAttempts, eventAttempts]).toEqual([2, 2]);
+
+    rejectPush = false;
+    const recovered = await local.syncEngine!.runCycle({ forcePush: true });
+    expect(recovered.errors).toEqual([]);
+    expect(recovered).toMatchObject({ pushedContentCount: 1, pushedEntryCount: 1 });
+    expect([contentAttempts, eventAttempts]).toEqual([3, 3]);
+    expect(local.contentSyncStore.pendingCount()).toBe(0);
+    expect(local.outbox.pendingCount()).toBe(0);
+  });
+
   it("A 推送事件与设置 → B 拉取收敛；幂等：重复循环零重复", async () => {
     // A 本地写入：设置（经门面走 outbox）+ 事件（append + outbox 同事务入队）。
     const settings = new SettingsService({

@@ -278,9 +278,8 @@ function RegularSessionView({
     if (!cached.needsRefresh || lookupStarted.current.has(wordId)) return;
     lookupStarted.current.add(wordId);
     // V1 从单词出现时开始静默预拉，揭示答案只决定是否显示结果。失败不显示提示、
-    // 不阻断作答，也不产生失败审计事件；同一会话每词最多查询一次。
+    // 不阻断作答；查询只是设备本地缓存操作，同一会话每词最多查询一次。
     void services.dictionary.load(wordId, {
-      auditFailure: false,
       isCancelled: () => lookupCancelled.current,
     }).then((snapshot) => {
       if (!lookupCancelled.current && currentWordIdRef.current === wordId) {

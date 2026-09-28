@@ -227,12 +227,13 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
         shortTermPassCountChanged: "短期通过次数变更", longTermValidationCompleted: "长期验证完成",
         wordMastered: "已掌握", wordManuallyMarkedMastered: "手动标记为已掌握",
         wordManuallyMarkedUnmastered: "手动标记为未掌握",
-        dictionaryFetched: "在线释义已查询", dictionaryFetchFailed: "在线释义查询失败",
       };
-      // 只取当前 Word 的审计事实；V2 派生任务不持久化，因此计划项由调度器另行
-      // 计算，不能把“当前计划”伪装成已经发生的历史记录。
+      // 历史库中可能已有 dictionaryFetched/dictionaryFetchFailed；这些事件
+      // 保留原样供协议兼容与旧数据审计，但查询结果不是学习行为，不在学习记录
+      // 展示。V2 派生任务也不持久化，不能把“当前计划”伪装成已发生的历史。
       return runtime.eventStore.listAllEvents()
-        .filter((event) => event.targetId === wordId)
+        .filter((event) => event.targetId === wordId &&
+          event.eventType !== "dictionaryFetched" && event.eventType !== "dictionaryFetchFailed")
         .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.deviceSeq - b.deviceSeq)
         .map((event) => ({
           eventId: event.eventId,

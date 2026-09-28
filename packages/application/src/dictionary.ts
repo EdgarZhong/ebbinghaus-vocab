@@ -5,9 +5,8 @@
  */
 import type {
   Clock, DictionaryCacheRecord, DictionaryCacheStore, DictionaryDefinition,
-  IdGenerator, LearningEventStore, OnlineDictionaryPort, UnitOfWork, WordContentStore,
+  IdGenerator, OnlineDictionaryPort, UnitOfWork, WordContentStore,
 } from "./ports.ts";
-import type { LearningEventRecorder } from "./eventRecorder.ts";
 import { DictionaryLookupCancelledError, DictionaryLookupResponseError } from "./errors.ts";
 
 export const DICTIONARY_CACHE_MAX_BYTES = 100 * 1024 * 1024;
@@ -25,8 +24,6 @@ export interface DictionaryServiceDeps {
   readonly wordContentStore: WordContentStore;
   readonly cacheStore: DictionaryCacheStore;
   readonly dictionary: OnlineDictionaryPort;
-  readonly eventStore: LearningEventStore;
-  readonly eventRecorder: LearningEventRecorder;
   readonly unitOfWork: UnitOfWork;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
@@ -64,11 +61,12 @@ export class DictionaryService {
 
   /**
    * 页面打开详情或测试揭示答案时调用。缓存命中不联网；force 仅供用户显式重新查询。
-   * 失败返回临时快照并记一次失败事件；取消只结束当前请求，绝不产生事件或缓存。
+   * 失败返回临时快照供界面重试；取消只结束当前请求。词典查询只是本机补充
+   * 能力，成功/失败均不形成 LearningEvent，也不进入同步 outbox。
    */
   async load(
     wordId: string,
-    options: { readonly force?: boolean; readonly isCancelled?: () => boolean; readonly auditFailure?: boolean } = {},
+    options: { readonly force?: boolean; readonly isCancelled?: () => boolean } = {},
   ): Promise<DictionarySnapshot> {
     const word = this.deps.wordContentStore.getEntry(wordId);
     if (word === null || word.removed) throw new Error("词条不存在");
@@ -89,16 +87,8 @@ export class DictionaryService {
         throw new DictionaryLookupCancelledError("在线词典查询已取消");
       }
       const message = error instanceof Error ? error.message : "在线词典查询失败";
-      // V1 测试页预拉失败完全静默，不污染学习审计；词汇详情显式查询失败才记录。
-      if (options.auditFailure !== false) {
-        this.deps.unitOfWork.run(() => {
-          this.deps.eventStore.appendEvents([this.deps.eventRecorder.record({
-            eventType: "dictionaryFetchFailed", targetType: "Word", targetId: wordId,
-            source: "在线词典", metadata: { message },
-          })]);
-        });
-      }
-      // 显式重查失败时保留原有成功释义；仅无内容时呈现 V1 的失败及重试入口。
+      // 失败不写缓存或事件；显式重查失败时保留原有成功释义，仅无内容时
+      // 呈现临时失败快照与重试入口。下次打开仍能再次联网查询。
       if (existing !== null) return cachedSnapshot(existing);
       return {
         status: "查询失败", provider: "在线词典", fetchedAt: this.deps.clock.now().toISOString(),
@@ -117,11 +107,9 @@ export class DictionaryService {
       definitions: result.definitions, rawResponseSummary: result.rawResponseSummary,
       fetchedAt: this.deps.clock.now().toISOString(), cacheStatus: "有效",
     };
+    // 成功缓存是设备本地补充数据；短事务只替换缓存并按体积淘汰旧条目，
+    // 不把网络请求结果伪装成用户学习行为，也不触发云端学习事件同步。
     this.deps.unitOfWork.run(() => {
-      this.deps.eventStore.appendEvents([this.deps.eventRecorder.record({
-        eventType: "dictionaryFetched", targetType: "Word", targetId: wordId,
-        source: record.provider, metadata: { definitionCount: record.definitions.length },
-      })]);
       this.deps.cacheStore.replace(record);
       this.deps.cacheStore.pruneBySize(DICTIONARY_CACHE_MAX_BYTES);
     });

@@ -120,6 +120,11 @@ export interface CloudSyncPort {
   hasToken(): boolean;
   configureToken(token: string): void;
   syncNow(): Promise<unknown>;
+  /** 本地内容或事件已落盘后的非阻塞触发；短时间多次写入由控制器合并。 */
+  requestSyncSoon(): void;
+  /** 独立的同步状态版本；后台轮询只更新设置页，不广播业务数据变化。 */
+  subscribeStatus(listener: () => void): () => void;
+  getStatusVersion(): number;
   getStatus(): {
     readonly configured: boolean;
     readonly running: boolean;
@@ -351,8 +356,7 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     wordContentStore: runtime.wordContentStore,
     cacheStore: runtime.dictionaryCacheStore,
     dictionary: runtime.onlineDictionary,
-    eventStore: runtime.eventStore,
-    eventRecorder,
+    // 在线释义只在本机缓存；学习事件端口不注入词典用例，防止网络结果入 outbox。
     unitOfWork: runtime.unitOfWork,
     idGenerator,
     clock,
@@ -378,7 +382,19 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
   // ---- 变化通知（简单版本号 + 订阅者集合） ----
   let version = 0;
   const listeners = new Set<() => void>();
+  const ensureActiveSpaceAvailable = (): void => {
+    const activeId = settings.getActiveSpaceIdOrNull();
+    const active = activeId === null ? null : runtime.spaceStore.getSpace(activeId);
+    if (active !== null && !isSpaceArchived(active)) return;
+    // 活动 Space 只存在本设备。另一终端归档当前 Space 后，目录虽已增量拉取，
+    // 本机选择仍可能指向已归档项；改选首个可用项只写设备本地设置，不能把
+    // 远端归档结果或本机选择重新送进同步 outbox。若目录暂无可用项，保留原值
+    // 等待后续增量拉取，避免凭空创建或恢复云端业务数据。
+    const fallback = runtime.spaceStore.listSpaces().find((space) => !isSpaceArchived(space));
+    if (fallback !== undefined && fallback.id !== activeId) settings.setActiveSpaceId(fallback.id);
+  };
   const notifyChanged = (): void => {
+    ensureActiveSpaceAvailable();
     version += 1;
     for (const listener of listeners) {
       listener();
@@ -393,13 +409,9 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     unitOfWork: runtime.unitOfWork,
   });
 
-  // 浏览器模式修补：localStorage 里遗留的活动 Space 可能指向已不存在的自定义
-  // Space（内存 Space 集每次刷新重建为默认值）；此时回退到第一个默认 Space，
-  // 避免界面停在"无活动 Space"的悬挂状态。
-  const activeSpaceIdOrNull = settings.getActiveSpaceIdOrNull();
-  if (activeSpaceIdOrNull !== null && runtime.spaceStore.getSpace(activeSpaceIdOrNull) === null) {
-    settings.setActiveSpaceId(runtime.spaceStore.listSpaces()[0]?.id ?? "");
-  }
+  // 首启修复浏览器遗留的已删除选择，也修复 Android/桌面重启时远端已经归档
+  // 本机上次活动 Space 的情况；后续增量拉取由 notifyChanged 再次执行同一守卫。
+  ensureActiveSpaceAvailable();
 
   const services: AppServices = {
     cloudSync: options.cloudSync ?? null,

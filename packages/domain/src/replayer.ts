@@ -21,8 +21,8 @@
  * - 手动掌握反馈沿用 V1 的状态转换：词书模式已掌握退出调度、重置未掌握重新开始
  *   短期周期；常规模式手动不认识保留 FSRS Again 的到期时间。
  * - `taskDeferred` 在协议层尚未固化字段、`testSessionPaused/Resumed` 属于会话
- *   执行状态、`dictionaryFetched/FetchFailed` 属于词典缓存审计——均不产生调度
- *   派生状态，重放时忽略；
+ *   执行状态属于会话事实；历史 `dictionaryFetched/FetchFailed` 属于已停用的
+ *   词典查询记录——均不产生调度派生状态，重放时忽略；
  * - 常规模式条目的完整 FSRS 卡片快照（稳定性/难度）不在事件 metadata 中，重放
  *   只派生事件实际承载的到期时间、掌握状态与累计认识次数。
  *

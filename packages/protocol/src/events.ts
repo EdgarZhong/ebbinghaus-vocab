@@ -203,14 +203,14 @@ const testSessionPauseMetadataSchema = z.looseObject({
 });
 
 /**
- * dictionaryFetched：成功查询仅记释义条数，不把词典响应复制进事件
- * （V1 口径：词典内容落 dictionary_entries 缓存表，事件只做审计）。
+ * dictionaryFetched 是旧版本已持久化的词典查询事件。仅保留 schema 以读取历史
+ * 数据；新查询只写设备本地缓存，不再生成学习事件或同步此类记录。
  */
 const dictionaryFetchedMetadataSchema = z.looseObject({
   definitionCount: z.number().int(),
 });
 
-/** dictionaryFetchFailed：只记失败原因文本（失败不写缓存，事件是唯一审计痕迹）。 */
+/** dictionaryFetchFailed 也是历史兼容类型；新版本失败只返回临时重试状态。 */
 const dictionaryFetchFailedMetadataSchema = z.looseObject({
   message: z.string().min(1),
 });

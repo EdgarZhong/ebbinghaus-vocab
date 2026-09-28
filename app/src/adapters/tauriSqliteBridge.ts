@@ -1,5 +1,5 @@
 /**
- * Tauri 桌面专用 SQLite 同步桥。业务仓储继续使用既有同步事务接口，实际 SQL
+ * Tauri 平台 SQLite 同步桥（macOS 与 Android 共用）。业务仓储继续使用既有同步事务接口，实际 SQL
  * 在 Rust 持有的单一连接上执行；每次 XHR 都只走 127.0.0.1 随机端口并带随机令牌。
  * 仅组合根可创建此桥，React 页面不得直接调用 SQL。
  */
@@ -92,7 +92,7 @@ class DesktopSqliteDatabase {
   }
 }
 
-/** 生产密钥端口只能从已启动的桌面 SQLite 桥创建；测试运行时另行注入测试密码器。 */
+/** 生产密钥端口只能从已启动的 Tauri SQLite 桥创建；测试运行时另行注入测试密码器。 */
 export function createTauriSecretCipher(db: Database.Database): SecretCipher {
   const bridge = db as unknown as DesktopSqliteDatabase;
   return {
@@ -118,6 +118,6 @@ export async function openTauriBusinessDatabase(): Promise<Database.Database> {
     })();
   }
   // 类型逃逸只限于桥的组合根；上层沿用同一个 SQLite 仓储合同，实体与事件
-  // 操作、嵌套事务和回滚通过真实桌面 App 的端到端验收再验证。
+  // 操作、嵌套事务和回滚分别通过真实桌面 App 与 Android WebView 验收验证。
   return db as unknown as Database.Database;
 }

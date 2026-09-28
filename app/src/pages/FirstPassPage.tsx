@@ -221,6 +221,9 @@ export function FirstPassPage(): ReactNode {
       unresolvedDescription: organizationWarning,
     });
     draftId.current = saved.id;
+    // 草稿虽不是已确认学习事件，仍属于跨端内容。它在本机落盘后立即排入
+    // 后台同步；不发全局界面通知，避免自动保存 effect 被重绘反复触发。
+    services.cloudSync?.requestSyncSoon();
   }, [activeSpace, entries, isRegularMode, listNumber, organizeError, organizationWarning, rawText, services, smartOrganizingEnabled, step, unitNumber]);
 
   if (activeSpace === null) {
@@ -375,7 +378,7 @@ export function FirstPassPage(): ReactNode {
         <p className="firstpass-steps">步骤 1 / 2 · 输入</p>
         <section className="card section" data-testid="firstpass-input-step">
           {!isRegularMode ? (
-            <div className="settings-inline-row" data-testid="firstpass-book-location">
+            <div className="firstpass-book-location" data-testid="firstpass-book-location">
               <label className="field-label">Unit 编号
                 <input className="field-input" type="number" min="1" value={unitNumber} onChange={(event) => setUnitNumber(event.target.value)} data-testid="firstpass-unit-number" />
               </label>
@@ -440,7 +443,7 @@ export function FirstPassPage(): ReactNode {
   return (
     <PageShell title={isRegularMode ? "录入条目" : "录入词汇"} description="第二步检查并保存。">
       {!isRegularMode ? (
-        <div className="settings-inline-row" data-testid="firstpass-book-location">
+        <div className="firstpass-book-location" data-testid="firstpass-book-location">
           <label className="field-label">Unit 编号
             <input className="field-input" type="number" min="1" value={unitNumber} onChange={(event) => setUnitNumber(event.target.value)} data-testid="firstpass-unit-number" />
           </label>

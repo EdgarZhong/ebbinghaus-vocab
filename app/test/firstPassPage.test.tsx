@@ -3,7 +3,7 @@
  * 降级、本地表单校验、保存写入与冲突三态交互（覆盖 / 本次不录入 / 取消）。
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { act, screen } from "@testing-library/react";
 import { validateEntryOrganizerPayload, type EntryOrganizationResult } from "@ebbinghaus/domain";
@@ -12,6 +12,26 @@ import { createTestServices } from "./helpers.tsx";
 import { seedRegularDueServices } from "./seed.ts";
 
 describe("录入页：Space 模式分流", () => {
+  it("词书草稿落盘后立即请求后台同步，无须等待下一次前台轮询", async () => {
+    const requestSyncSoon = vi.fn();
+    const services = createTestServices({ cloudSync: {
+      hasToken: () => true, configureToken: () => {}, syncNow: async () => null,
+      requestSyncSoon,
+      subscribeStatus: () => () => {}, getStatusVersion: () => 0,
+      getStatus: () => ({ configured: true, running: false, lastSuccessAt: null,
+        lastAttemptAt: null, lastError: null, pendingOutboxCount: 0 }),
+      start: () => {}, stop: () => {},
+    } });
+    const user = userEvent.setup();
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-first-pass"));
+    requestSyncSoon.mockClear();
+    const pendingBefore = services.runtime.contentSyncStore.pendingCount();
+    await user.type(screen.getByTestId("firstpass-raw-input"), "abandon");
+    expect(services.runtime.contentSyncStore.pendingCount()).toBeGreaterThan(pendingBefore);
+    expect(requestSyncSoon).toHaveBeenCalled();
+  });
+
   it("词书模式手动录入 Unit/List 后保存首过内容与不可变事件", async () => {
     const user = userEvent.setup();
     const services = createTestServices();

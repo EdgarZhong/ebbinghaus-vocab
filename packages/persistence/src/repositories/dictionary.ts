@@ -23,8 +23,8 @@ export class SqliteDictionaryCacheStore implements DictionaryCacheStore {
              raw_response_summary, fetched_at, cache_status
       FROM dictionary_entries WHERE word_id = ?
     `);
-    // REPLACE 针对 word_id 唯一约束，保持每词至多一条；调用方用 UnitOfWork 把它
-    // 与 dictionaryFetched 审计事件包在同一短事务内。
+    // REPLACE 针对 word_id 唯一约束，保持每词至多一条；调用方在本机短事务
+    // 内写入并按体积淘汰，不再为词典查询生成学习事件。
     this.replaceStmt = db.prepare(`
       INSERT INTO dictionary_entries
         (id, word_id, provider, normalized_word, structured_definition_json,

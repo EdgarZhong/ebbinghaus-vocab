@@ -34,12 +34,23 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "query"] }
-tokio = { version = "1", features = ["sync", "macros"] }
+tokio = { version = "1", features = ["sync", "macros", "time"] }
 aes-gcm = "=0.10.3"
 scrypt = "=0.11.0"
 base64 = "=0.22.1"
+# 这两项插件仅供 macOS 原生验收。上游 1.4.0 的 Android 源码无法编译，
+# 因此 Android target 不能解析到它们；是否初始化仍由 wdio-test 控制。
+[target.'cfg(target_os = "macos")'.dependencies]
 tauri-plugin-wdio = "=1.4.0"
 tauri-plugin-wdio-webdriver = "=1.4.0"
+
+[target.'cfg(target_os = "android")'.dependencies]
+getrandom = "=0.4.3"
+jni = "=0.21.1"
+# Tauri/Wry 使用 JNI 0.21；reqwest 的 Android 系统证书验证器使用 JNI 0.22。
+# 通过 JNI 原始指针在本机回调内转移新建的局部引用，不混用两个版本的包装类型。
+jni_verifier = { package = "jni", version = "=0.22.4" }
+rustls-platform-verifier = "=0.7.1"
 
 # 其余插件接线占位（Phase 4 闸门测试时启用）：
 # 接入顺序与验收闸门见 CLAUDE.md「闸门测试清单（Phase 4）」与 docs/V2迁移技术决策.md。
