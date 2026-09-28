@@ -112,7 +112,7 @@ Ebbinghaus-v2/
 | 同步服务器的实际部署、检查与备份操作 | `docs/服务器部署留档.md` |
 | 自主执行轮次记录 | `docs/autonomous-runs/` |
 | 第四轮 Android 双端学习漏验复盘与现场证据 | `docs/autonomous-runs/20260927-1138-第四轮Android用户级验收记录.md` |
-| Android 模拟器独立验收能力需求 | `docs/Android模拟器验收能力需求.md` |
+| Android 模拟器操纵与输入需求 | `docs/Android模拟器验收能力需求.md` |
 
 ## 代码规范与开发测试闭环
 
