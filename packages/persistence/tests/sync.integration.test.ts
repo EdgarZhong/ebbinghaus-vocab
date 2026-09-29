@@ -21,7 +21,7 @@ import type Database from "better-sqlite3";
 
 import { buildApp } from "@ebbinghaus/server/app";
 import { openDatabase } from "@ebbinghaus/server/db";
-import type { ApplicationEvent, Space, WordContentRecord } from "@ebbinghaus/application";
+import type { ApplicationEvent, FirstPassDraftRecord, Space, WordContentRecord } from "@ebbinghaus/application";
 import { DEFAULT_SPACE_DEFINITIONS, initializeDefaultApplicationData, SettingsService } from "@ebbinghaus/application";
 import {
   createInMemoryRuntime,
@@ -284,6 +284,59 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
       }]);
     expect(stale.contents[0]?.deleted).toBe(true);
     expect(clientA.spaceStore.getSpace(space.id)).toBeNull();
+  });
+
+  it("旧版远端草稿通过协议校验后忽略，本机正文保留且内容游标继续推进", async () => {
+    const id = "legacy-draft-local-only";
+    const local: FirstPassDraftRecord = {
+      id, spaceId: "space-local-only", unitNumber: 1, listNumber: 1,
+      rawText: "本机未提交内容", useLanguageModel: false, status: "草稿",
+      lastError: null, candidatesJson: null, auditJson: null, unresolvedDescription: null,
+      updatedAt: CLOCK_ISO, deviceId: clientB.deviceIdentity.getDeviceId(),
+    };
+    clientB.firstPassDraftStore.upsertDraft(local);
+    const remote = { ...local, rawText: "旧版远端内容", deviceId: clientA.deviceIdentity.getDeviceId() };
+    const gateway = (await import("../src/index.ts")).buildHttpSyncGateway({ baseUrl, authToken: TOKEN });
+    const cursorBefore = clientB.contentSyncStore.readCursor();
+    await gateway.putContent([{
+      entityType: "draft", entityId: id, value: remote, deleted: false,
+      updatedAt: "2026-07-16T09:00:00.000Z", deviceId: remote.deviceId,
+    }]);
+    const pulled = await clientB.syncEngine!.runCycle();
+    expect(pulled.errors).toEqual([]);
+    expect(clientB.contentSyncStore.readCursor()).toBeGreaterThan(cursorBefore);
+    expect(clientB.firstPassDraftStore.getDraft(id)?.rawText).toBe(local.rawText);
+
+    const cursorAfterUpdate = clientB.contentSyncStore.readCursor();
+    await gateway.putContent([{
+      entityType: "draft", entityId: id, value: null, deleted: true,
+      updatedAt: "2026-07-17T09:00:00.000Z", deviceId: remote.deviceId,
+    }]);
+    const pulledDeletion = await clientB.syncEngine!.runCycle();
+    expect(pulledDeletion.errors).toEqual([]);
+    expect(clientB.contentSyncStore.readCursor()).toBeGreaterThan(cursorAfterUpdate);
+    expect(clientB.firstPassDraftStore.getDraft(id)?.rawText).toBe(local.rawText);
+
+    // 删除墓碑同样不能清掉本机录入；内存底座与 SQLite 落地语义一致。
+    const memory = createInMemoryRuntime({
+      clock,
+      idGenerator: { nextId: () => "22222222-2222-4222-8222-222222222229" },
+      secretCipher: new TransparentSecretCipher(),
+    });
+    memory.firstPassDraftStore.upsertDraft(local);
+    memory.contentSyncStore.recordLocal("draft", id, local);
+    // 新客户端的直接误调用也不得生成待推草稿；旧记录的过滤由 SQLite 遗留行测试覆盖。
+    expect(memory.contentSyncStore.pendingCount()).toBe(0);
+    expect(memory.contentSyncStore.dueEntries(CLOCK_ISO, 10)).toEqual([]);
+    expect(memory.contentSyncStore.applyRemote([{
+      entityType: "draft", entityId: id, value: remote, deleted: false,
+      updatedAt: "2026-07-16T09:00:00.000Z", deviceId: remote.deviceId, serverSeq: 1,
+    }])).toBe(0);
+    expect(memory.contentSyncStore.applyRemote([{
+      entityType: "draft", entityId: id, value: null, deleted: true,
+      updatedAt: "2026-07-17T09:00:00.000Z", deviceId: remote.deviceId, serverSeq: 2,
+    }])).toBe(0);
+    expect(memory.firstPassDraftStore.getDraft(id)?.rawText).toBe(local.rawText);
   });
 
   it("断线：outbox 退避不清队、循环不抛错；恢复后自动补推收敛", async () => {

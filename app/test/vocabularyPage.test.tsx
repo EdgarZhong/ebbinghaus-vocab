@@ -38,6 +38,8 @@ function seedVocabulary(): { services: AppServices; spaceId: string } {
     });
     services.regularLearning.confirmRegularTestAnswer({
       sessionId: session.sessionId,
+      // 最终确认绑定会话此刻的 Word，避免同步后旧页面判断落到下一条目。
+      expectedWordId: session.currentWord?.wordId ?? "",
       initialJudgement: TestJudgement.Recognized,
       finalJudgement: TestJudgement.Recognized,
     });

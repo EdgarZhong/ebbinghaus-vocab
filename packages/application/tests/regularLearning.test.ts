@@ -15,7 +15,7 @@
  * - 测试会话闭环：开始/暂停/恢复、开放会话唯一性、确认即调 FSRS、改判审计、
  *   会话进度推进与完成。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ENTRY_ORGANIZER_SCHEMA_VERSION,
@@ -158,7 +158,10 @@ function seedDueEntry(
     entries: [confirmedFromOrganized(`${input.term} 名词 释义`, input.term, "释义")],
   });
   const wordId = records[0]!.wordId;
-  const cardJson = world.scheduler.newCardSnapshotJson({ createdAt: input.recordedAtIso });
+  // 历史事件的 afterState.dueAt 已是本轮计划到期时间；测试卡片快照必须
+  // 与这一已确认事实一致，才能模拟真实客户端的 beforeState.dueAt。
+  const initialCardJson = world.scheduler.newCardSnapshotJson({ createdAt: input.recordedAtIso });
+  const cardJson = JSON.stringify({ ...JSON.parse(initialCardJson), due: input.dueAtIso });
   world.fsrsCardStore.upsert({
     wordId,
     cardJson,
@@ -541,6 +544,44 @@ describe("测试会话闭环", () => {
     return { wordIds: [first, second], learningDay: "2026-07-16" };
   }
 
+  /** 用另一终端已确认的结果模拟拉取落库；会话游标仍停留在本机旧快照。 */
+  function appendConfirmedAnswer(world: World, wordId: string, beforeDueAt: string): void {
+    const event = world.eventRecorder.record({
+      eventType: "testAnswered",
+      targetType: "条目",
+      targetId: wordId,
+      source: "常规模式测试",
+      occurredAt: world.clock.now(),
+      metadata: {
+        sessionId: "remote-session",
+        groupOrdinal: 1,
+        wordId,
+        initialJudgement: TestJudgement.Recognized,
+        finalJudgement: TestJudgement.Recognized,
+        answerRevised: false,
+        beforeState: { dueAt: beforeDueAt },
+        afterState: { dueAt: "2026-07-20T09:00:00.000Z", masteryStatus: "未掌握", nextIntervalDays: 4 },
+        workload: 1,
+        algorithmVersion: world.scheduler.algorithmVersion,
+      },
+    });
+    world.eventStore.appendEvents([event]);
+  }
+
+  /** 三条同到期时间条目，便于检验非连续远端作答后的稳定分区。 */
+  function seedThreeDueEntries(world: World): readonly string[] {
+    const seeded = seedTwoDueEntries(world);
+    const third = seedDueEntry(world, {
+      term: "gamma",
+      recordedAtIso: CLOCK_ISO,
+      judgedAtIso: "2026-07-15T12:00:00.000Z",
+      dueAtIso: "2026-07-16T09:00:00.000Z",
+      finalJudgement: TestJudgement.Recognized,
+      cumulativeRecognizedCount: 1,
+    });
+    return [...seeded.wordIds, third];
+  }
+
   it("开始会话：成员顺序快照定格、任务标识稳定、当前词指向队首", () => {
     const world = buildWorld();
     const seeded = seedTwoDueEntries(world);
@@ -609,6 +650,7 @@ describe("测试会话闭环", () => {
 
     const afterFirst = world.service.confirmRegularTestAnswer({
       sessionId: started.sessionId,
+      expectedWordId: seeded.wordIds[0]!,
       initialJudgement: TestJudgement.Recognized,
       finalJudgement: TestJudgement.Recognized,
     });
@@ -642,6 +684,7 @@ describe("测试会话闭环", () => {
 
     const afterSecond = world.service.confirmRegularTestAnswer({
       sessionId: started.sessionId,
+      expectedWordId: seeded.wordIds[1]!,
       initialJudgement: TestJudgement.Recognized,
       finalJudgement: TestJudgement.Recognized,
     });
@@ -650,6 +693,30 @@ describe("测试会话闭环", () => {
     expect(afterSecond.currentWord).toBeNull();
     // 完成后会话不再开放：同 Space 当日可以开启新的会话。
     expect(world.sessionStore.getOpenRegularSession(SPACE_ID, seeded.learningDay)).toBeNull();
+  });
+
+  it("点错了暂缓当前条目且不写事件；下一条答完后回到该条目", () => {
+    const world = buildWorld();
+    const seeded = seedTwoDueEntries(world);
+    world.clock.setInstant("2026-07-16T09:00:00Z");
+    const taskId = `regular-group|${SPACE_ID}|${seeded.learningDay}|1`;
+    const started = world.service.startOrResumeRegularTest({ taskId });
+    const eventCount = world.eventStore.listAllEvents().length;
+    const deferred = world.service.deferRegularTestWord({
+      sessionId: started.sessionId, expectedWordId: seeded.wordIds[0]!,
+    });
+    expect(deferred.currentWord?.wordId).toBe(seeded.wordIds[1]);
+    expect(deferred.currentPosition).toBe(0);
+    expect(world.sessionStore.getSession(started.sessionId)?.words.map((word) => word.wordId)).toEqual([
+      seeded.wordIds[1], seeded.wordIds[0],
+    ]);
+    expect(world.eventStore.listAllEvents()).toHaveLength(eventCount);
+    const afterSecond = world.service.confirmRegularTestAnswer({
+      sessionId: started.sessionId, expectedWordId: seeded.wordIds[1]!,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(afterSecond.currentWord?.wordId).toBe(seeded.wordIds[0]);
+    expect(afterSecond.status).toBe(TestSessionExecutionStatus.InProgress);
   });
 
   it("改判：认识改不认识追加 answerRevised 审计事件；不认识不得改回认识", () => {
@@ -663,6 +730,7 @@ describe("测试会话闭环", () => {
     expect(() =>
       world.service.confirmRegularTestAnswer({
         sessionId: started.sessionId,
+        expectedWordId: seeded.wordIds[0]!,
         initialJudgement: TestJudgement.NotRecognized,
         finalJudgement: TestJudgement.Recognized,
       }),
@@ -670,6 +738,7 @@ describe("测试会话闭环", () => {
 
     const revised = world.service.confirmRegularTestAnswer({
       sessionId: started.sessionId,
+      expectedWordId: seeded.wordIds[0]!,
       initialJudgement: TestJudgement.Recognized,
       finalJudgement: TestJudgement.NotRecognized,
     });
@@ -699,6 +768,7 @@ describe("测试会话闭环", () => {
     expect(() =>
       world.service.confirmRegularTestAnswer({
         sessionId: started.sessionId,
+        expectedWordId: seeded.wordIds[0]!,
         initialJudgement: TestJudgement.Recognized,
         finalJudgement: TestJudgement.Recognized,
       }),
@@ -707,6 +777,7 @@ describe("测试会话闭环", () => {
     expect(() =>
       world.service.confirmRegularTestAnswer({
         sessionId: "00000000-0000-4000-8000-000000000099",
+        expectedWordId: seeded.wordIds[0]!,
         initialJudgement: TestJudgement.Recognized,
         finalJudgement: TestJudgement.Recognized,
       }),
@@ -735,6 +806,115 @@ describe("测试会话闭环", () => {
         taskId: `regular-group|${SPACE_ID}|${seeded.learningDay}|9`,
       }),
     ).toThrow("该测试组没有到期条目");
+  });
+
+  it("远端确认队首后，读取、任务行及恢复都跳过旧条目，旧确认请求不产生事件", () => {
+    const world = buildWorld();
+    const wordIds = seedThreeDueEntries(world);
+    world.clock.setInstant("2026-07-16T09:00:01Z");
+    const taskId = `regular-group|${SPACE_ID}|2026-07-16|1`;
+    const started = world.service.startOrResumeRegularTest({ taskId });
+    const updates = vi.spyOn(world.sessionStore, "updateSession");
+    expect(world.sessionStore.getSession(started.sessionId)?.words.map((word) => word.plannedTestAt)).toEqual([
+      "2026-07-16T09:00:00.000Z",
+      "2026-07-16T09:00:00.000Z",
+      "2026-07-16T09:00:00.000Z",
+    ]);
+    appendConfirmedAnswer(world, wordIds[0]!, "2026-07-16T09:00:00.000Z");
+    const eventCount = world.eventStore.listAllEvents().length;
+
+    const snapshot = world.service.getRegularTestSessionSnapshot(started.sessionId);
+    expect(updates).toHaveBeenCalledTimes(1);
+    expect(snapshot.currentPosition).toBe(1);
+    expect(snapshot.currentWord?.wordId).toBe(wordIds[1]);
+    expect(world.service.regularTaskItems()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        taskId,
+        totalCount: 3,
+        completedCount: 1,
+        activeWords: expect.arrayContaining([expect.objectContaining({ wordId: wordIds[1] })]),
+      }),
+    ]));
+    expect(world.service.regularTaskItems().find((item) => item.taskId === taskId)?.activeWords.map((word) => word.wordId)).toEqual(wordIds.slice(1));
+    expect(world.service.startOrResumeRegularTest({ taskId }).currentWord?.wordId).toBe(wordIds[1]);
+    // 仅首次发现远端事实时更新本机会话；重复刷新不得产生额外持久化写入。
+    expect(updates).toHaveBeenCalledTimes(1);
+    expect(() => world.service.confirmRegularTestAnswer({
+      sessionId: started.sessionId,
+      expectedWordId: wordIds[0]!,
+      initialJudgement: TestJudgement.Recognized,
+      finalJudgement: TestJudgement.Recognized,
+    })).toThrow("当前条目已变化");
+    expect(world.eventStore.listAllEvents()).toHaveLength(eventCount);
+    expect(world.sessionStore.getSession(started.sessionId)?.answeredWordIds).toEqual([wordIds[0]]);
+  });
+
+  it("非连续远端结果按原会话顺序移到已答前缀，暂停会话保留暂停态，全答后关闭", () => {
+    const world = buildWorld();
+    const wordIds = seedThreeDueEntries(world);
+    world.clock.setInstant("2026-07-16T09:00:01Z");
+    const started = world.service.startOrResumeRegularTest({ taskId: `regular-group|${SPACE_ID}|2026-07-16|1` });
+    world.service.pauseRegularTest({ sessionId: started.sessionId });
+    appendConfirmedAnswer(world, wordIds[2]!, "2026-07-16T09:00:00.000Z");
+    appendConfirmedAnswer(world, wordIds[0]!, "2026-07-16T09:00:00.000Z");
+
+    const paused = world.service.getRegularTestSessionSnapshot(started.sessionId);
+    expect(paused.status).toBe(TestSessionExecutionStatus.Paused);
+    expect(paused.currentPosition).toBe(2);
+    expect(paused.currentWord?.wordId).toBe(wordIds[1]);
+    expect(world.sessionStore.getSession(started.sessionId)?.words.map((word) => word.wordId)).toEqual([
+      wordIds[0], wordIds[2], wordIds[1],
+    ]);
+    expect(world.service.regularTaskItems().find((item) => item.taskId === started.taskId)?.activeWords.map((word) => word.wordId)).toEqual([wordIds[1]]);
+    expect(world.service.startOrResumeRegularTest({ taskId: started.taskId }).status).toBe(TestSessionExecutionStatus.InProgress);
+    appendConfirmedAnswer(world, wordIds[1]!, "2026-07-16T09:00:00.000Z");
+    const count = world.eventStore.listAllEvents().length;
+    // 任务列表首次读取时就应完成收敛并移除旧组；不能先闪现完成行再消失。
+    expect(world.service.regularTaskItems()).toEqual([]);
+    expect(world.service.getRegularTestSessionSnapshot(started.sessionId)).toEqual(expect.objectContaining({
+      status: TestSessionExecutionStatus.Completed,
+      currentPosition: 3,
+      currentWord: null,
+    }));
+    expect(world.sessionStore.getOpenRegularSession(SPACE_ID, "2026-07-16")).toBeNull();
+    expect(world.eventStore.listAllEvents()).toHaveLength(count);
+  });
+
+  it("不同计划到期时间的测试事件不能提前跳过当前条目；旧快照仅按启动后事件降级收敛", () => {
+    const world = buildWorld();
+    const wordIds = seedTwoDueEntries(world).wordIds;
+    world.clock.setInstant("2026-07-16T09:00:01Z");
+    const started = world.service.startOrResumeRegularTest({ taskId: `regular-group|${SPACE_ID}|2026-07-16|1` });
+    appendConfirmedAnswer(world, wordIds[0]!, "2026-07-16T08:00:00.000Z");
+    expect(world.service.getRegularTestSessionSnapshot(started.sessionId).currentWord?.wordId).toBe(wordIds[0]);
+
+    // 旧版本所有 plannedTestAt 都等于 startedAt，无法识别 dueAt，只能用启动时间作保守边界。
+    const persisted = world.sessionStore.getSession(started.sessionId)!;
+    world.sessionStore.updateSession({
+      ...persisted,
+      words: persisted.words.map((word) => ({ ...word, plannedTestAt: persisted.startedAt })),
+    });
+    expect(world.service.getRegularTestSessionSnapshot(started.sessionId).currentWord?.wordId).toBe(wordIds[1]);
+  });
+
+  it("到期组已被远端结果清空但旧会话尚未收敛时，任务行仍显示原计划及未答条目", () => {
+    const world = buildWorld();
+    const wordIds = seedTwoDueEntries(world).wordIds;
+    world.clock.setInstant("2026-07-16T09:00:01Z");
+    const started = world.service.startOrResumeRegularTest({ taskId: `regular-group|${SPACE_ID}|2026-07-16|1` });
+    // 这两条事件来自另一轮到期计划，故只能改变当前到期组，不能替本会话代答。
+    for (const wordId of wordIds) {
+      appendConfirmedAnswer(world, wordId, "2026-07-16T08:00:00.000Z");
+    }
+    expect(world.service.dueGroups({ spaceId: SPACE_ID })).toHaveLength(0);
+
+    const row = world.service.regularTaskItems().find((item) => item.taskId === started.taskId);
+    expect(row).toEqual(expect.objectContaining({
+      totalCount: 2,
+      completedCount: 0,
+      sessionStatus: TestSessionExecutionStatus.InProgress,
+    }));
+    expect(row?.activeWords.map((word) => word.wordId)).toEqual(wordIds);
   });
 });
 

@@ -11,7 +11,7 @@
  */
 
 import {
-  contentEntrySchema, isContentEntryNewer, mergeSettings,
+  contentEntrySchema, isContentEntryNewer, mergeSettings, storedContentEntrySchema,
   type ContentEntry, type ContentEntityType, type StoredContentEntry, type SettingEntry,
 } from "@ebbinghaus/protocol";
 import type {
@@ -223,15 +223,13 @@ export class InMemoryWordContentStore implements WordContentStore {
   removeEntryForSync(wordId: string): void { this.entries.delete(wordId); }
 }
 
-/** 浏览器草稿仓储；确认墓碑保留在 Map 中，使两个客户端同步后不会再出现。 */
+/** 浏览器草稿仓储；仅供当前运行时恢复未提交输入，确认状态也只在本机保留。 */
 export class InMemoryFirstPassDraftStore implements FirstPassDraftStore {
   private readonly drafts = new Map<string, FirstPassDraftRecord>();
 
-  constructor(private readonly contentSync?: ContentSyncStore) {}
-
   upsertDraft(draft: FirstPassDraftRecord): void {
+    // 原文和模型候选都可能含未提交内容，不能借内容同步通道发往服务器。
     this.drafts.set(draft.id, { ...draft });
-    this.contentSync?.recordLocal("draft", draft.id, draft);
   }
 
   getDraft(id: string): FirstPassDraftRecord | null {
@@ -348,7 +346,7 @@ export class InMemoryContentSyncStore implements ContentSyncStore {
   private readonly pending = new Map<string, { payloadJson: string; attempts: number; nextAttemptAt: string; lastError: string | null }>();
   private cursor = 0;
   private suppressRecord = false;
-  private stores: { space: InMemorySpaceStore; book: InMemoryBookCatalogStore; word: InMemoryWordContentStore; draft: InMemoryFirstPassDraftStore } | null = null;
+  private stores: { space: InMemorySpaceStore; book: InMemoryBookCatalogStore; word: InMemoryWordContentStore } | null = null;
 
   constructor(
     private readonly clock: Clock,
@@ -356,13 +354,15 @@ export class InMemoryContentSyncStore implements ContentSyncStore {
     private readonly backoff: OutboxBackoffOptions = DEFAULT_OUTBOX_BACKOFF,
   ) {}
 
-  attachStores(stores: { space: InMemorySpaceStore; book: InMemoryBookCatalogStore; word: InMemoryWordContentStore; draft: InMemoryFirstPassDraftStore }): void {
+  attachStores(stores: { space: InMemorySpaceStore; book: InMemoryBookCatalogStore; word: InMemoryWordContentStore }): void {
     this.stores = stores;
   }
 
   private key(type: ContentEntityType, id: string): string { return `${type}\u0000${id}`; }
 
   recordLocal(entityType: ContentEntityType, entityId: string, value: unknown, initialVersionAt?: string): void {
+    // 与 SQLite 底座保持同一隐私边界：旧协议类型仍可解析，但新草稿不能出站。
+    if (entityType === "draft") return;
     if (this.suppressRecord) return;
     const key = this.key(entityType, entityId);
     const previous = this.versions.get(key);
@@ -383,8 +383,11 @@ export class InMemoryContentSyncStore implements ContentSyncStore {
   applyRemote(entries: readonly StoredContentEntry[]): number {
     if (this.stores === null) throw new Error("内容同步仓储尚未装配");
     let changed = 0;
-    for (const { serverSeq: _serverSeq, ...incoming } of entries) {
-      const entry = contentEntrySchema.parse(incoming);
+    for (const stored of entries) {
+      const { serverSeq: _serverSeq, ...entry } = storedContentEntrySchema.parse(stored);
+      // 先按共享协议验证旧记录，再跳过整个草稿实体；远端更新与墓碑都不得
+      // 改写当前设备尚未提交的表单。同步引擎仍按拉取响应推进内容游标。
+      if (entry.entityType === "draft") continue;
       const key = this.key(entry.entityType, entry.entityId);
       const previous = this.versions.get(key);
       if (previous !== undefined && !isContentEntryNewer(entry, previous)) continue;
@@ -395,7 +398,6 @@ export class InMemoryContentSyncStore implements ContentSyncStore {
           if (entry.entityType === "unit") this.stores.book.removeUnitForSync(entry.entityId);
           if (entry.entityType === "list") this.stores.book.removeListForSync(entry.entityId);
           if (entry.entityType === "word") this.stores.word.removeEntryForSync(entry.entityId);
-          if (entry.entityType === "draft") this.stores.draft.removeForSync(entry.entityId);
         } else {
           switch (entry.entityType) {
             case "space":
@@ -405,7 +407,6 @@ export class InMemoryContentSyncStore implements ContentSyncStore {
             case "unit": this.stores.book.addUnit(entry.value); break;
             case "list": this.stores.book.addList(entry.value); break;
             case "word": this.stores.word.upsertEntries([entry.value as WordContentRecord]); break;
-            case "draft": this.stores.draft.upsertDraft(entry.value); break;
           }
         }
       } finally {
@@ -419,10 +420,11 @@ export class InMemoryContentSyncStore implements ContentSyncStore {
   }
 
   dueEntries(nowIso: string, limit: number): PendingContentEntry[] {
-    return [...this.pending.values()]
-      .filter((row) => row.nextAttemptAt <= nowIso)
+    return [...this.pending.entries()]
+      // 旧浏览器会话可能在升级前已排入草稿；只筛出站集合，保留本机正文。
+      .filter(([key, row]) => !key.startsWith("draft\u0000") && row.nextAttemptAt <= nowIso)
       .slice(0, limit)
-      .map((row) => ({ entry: contentEntrySchema.parse(JSON.parse(row.payloadJson)), payloadJson: row.payloadJson }));
+      .map(([, row]) => ({ entry: contentEntrySchema.parse(JSON.parse(row.payloadJson)), payloadJson: row.payloadJson }));
   }
 
   markSucceeded(item: PendingContentEntry): void {
@@ -438,7 +440,9 @@ export class InMemoryContentSyncStore implements ContentSyncStore {
     row.nextAttemptAt = new Date(Date.parse(nowIso) + computeBackoffDelayMs(row.attempts, this.backoff)).toISOString();
   }
 
-  pendingCount(): number { return this.pending.size; }
+  pendingCount(): number {
+    return [...this.pending.keys()].filter((key) => !key.startsWith("draft\u0000")).length;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -460,6 +464,18 @@ export class InMemoryTestSessionStore implements TestSessionStore {
       throw new Error(`测试会话不存在：${session.sessionId}`);
     }
     this.sessions.set(session.sessionId, { ...session });
+  }
+
+  reorderSessionWords(session: TestSessionRecord): void {
+    const existing = this.sessions.get(session.sessionId);
+    if (existing === undefined) {
+      throw new Error(`测试会话不存在：${session.sessionId}`);
+    }
+    this.sessions.set(session.sessionId, {
+      ...existing,
+      words: [...session.words],
+      lastActiveAt: session.lastActiveAt,
+    });
   }
 
   getSession(sessionId: string): TestSessionRecord | null {
@@ -723,10 +739,10 @@ export function createInMemoryRuntime(options: CreateInMemoryRuntimeOptions): In
   const eventStore = new InMemoryEventStore(outbox);
   const contentSyncStore = new InMemoryContentSyncStore(options.clock, deviceIdentity, options.backoff);
   const wordContentStore = new InMemoryWordContentStore(contentSyncStore);
-  const firstPassDraftStore = new InMemoryFirstPassDraftStore(contentSyncStore);
+  const firstPassDraftStore = new InMemoryFirstPassDraftStore();
   const bookCatalogStore = new InMemoryBookCatalogStore(contentSyncStore);
   const spaceStore = new InMemorySpaceStore(contentSyncStore);
-  contentSyncStore.attachStores({ space: spaceStore, book: bookCatalogStore, word: wordContentStore, draft: firstPassDraftStore });
+  contentSyncStore.attachStores({ space: spaceStore, book: bookCatalogStore, word: wordContentStore });
 
   // 拉取游标：内存底座用闭包变量承载（同一 SyncEngine 只依赖 read/write 两个能力）。
   let pullCursorValue = 0;

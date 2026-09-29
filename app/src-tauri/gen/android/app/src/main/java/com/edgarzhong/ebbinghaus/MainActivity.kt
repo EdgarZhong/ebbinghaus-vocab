@@ -84,6 +84,11 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     appWebView = webView
+    // 只有独立 debug 验收包开放 Chromium DevTools，使 Appium 能读取 Tauri WebView 的 DOM；
+    // 正式构建不启用该入口，避免把页面调试能力暴露给正式安装。
+    if (BuildConfig.DEBUG) {
+      WebView.setWebContentsDebuggingEnabled(true)
+    }
     webView.addJavascriptInterface(SafeAreaBridge(), "__ebbinghausAndroidSafeArea")
 
     // 文档启动脚本覆盖冷启动、重载与 data-theme 变化；Insets 回调更新当前文档。

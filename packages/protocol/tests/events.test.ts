@@ -57,7 +57,7 @@ describe("学习事件 schema：每类事件的合法样例", () => {
       metadata: { listId: "list-1", normalizedKey: "apple", futureField: { nested: [1, 2] } },
     });
     const parsed = learningEventSchema.parse(event);
-    expect((parsed.metadata as Record<string, unknown>).futureField).toEqual({
+    expect((parsed.metadata as Record<string, unknown>)["futureField"]).toEqual({
       nested: [1, 2],
     });
   });

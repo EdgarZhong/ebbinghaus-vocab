@@ -114,7 +114,12 @@ export class BookLearningService {
     for (const [key, entry] of candidates) {
       const existing = existingByKey.get(key);
       if (existing !== undefined && !resolutions.has(key)) {
-        conflicts.push({ normalizedKey: key, existingWordId: existing.wordId, existingSpelling: existing.originalSpelling, incomingSpelling: entry.term });
+        conflicts.push({
+          normalizedKey: key, existingWordId: existing.wordId,
+          existingSpelling: existing.originalSpelling, incomingSpelling: entry.term,
+          existingMeanings: existing.meanings, existingManualMeaning: existing.manualMeaning,
+          incomingMeanings: entry.meanings,
+        });
       }
     }
     if (conflicts.length > 0) {
@@ -180,8 +185,10 @@ export class BookLearningService {
     const now = this.deps.clock.now();
     const nowIso = now.toISOString();
     for (const list of this.deps.bookCatalogStore.listListsForSpace(input.spaceId)) {
-      const open = this.deps.sessionStore.getOpenListSession(list.listId);
-      if (open?.taskId !== input.taskId) continue;
+      const stored = this.deps.sessionStore.getOpenListSession(list.listId);
+      // 只重基准当前任务；其他开放 List 的事件扫描与本次恢复无关。
+      if (stored === null || stored.taskId !== input.taskId) continue;
+      const open = this.reconcileBookSession(stored);
       if (open.status === TestSessionExecutionStatus.WaitingForPaperReview) {
         throw new ReviewTestingError("软件测试已完成，请先完成纸质复习");
       }
@@ -228,14 +235,41 @@ export class BookLearningService {
     return this.snapshot(session);
   }
 
+  /** 页面或任务行读取同一份事件收敛后的本地会话快照，避免仅靠本机旧游标显示进度。 */
+  getBookTestSessionSnapshot(sessionId: string): TestSessionSnapshot {
+    return this.snapshot(this.reconcileBookSession(this.requireSession(sessionId)));
+  }
+
+  /**
+   * “点错了”只调整这台设备的未答词顺序：已答前缀保持不变，当前 Word 放到队尾。
+   * 不写学习事件；下次轮到该 Word 时页面重新初判。先收敛远端答案并核对 Word
+   * 身份，避免同步恰好推进页面时把新词错误地暂缓。
+   */
+  deferBookTestWord(input: { readonly sessionId: string; readonly expectedWordId: string }): TestSessionSnapshot {
+    const session = this.reconcileBookSession(this.requireSession(input.sessionId));
+    if (session.status !== TestSessionExecutionStatus.InProgress) throw new ReviewTestingError("测试会话当前不能暂缓 Word");
+    const current = session.words[session.currentPosition];
+    if (current?.wordId !== input.expectedWordId) throw new ReviewTestingError("当前 Word 已变化，请重新查看测试卡片后作答");
+    const deferred: TestSessionRecord = {
+      ...session,
+      words: [...session.words.slice(0, session.currentPosition), ...session.words.slice(session.currentPosition + 1), current],
+      lastActiveAt: this.deps.clock.now().toISOString(),
+    };
+    // 队列顺序是本机执行状态；专用端口只改顺序，避免 SQLite 的普通进度更新静默丢弃暂缓结果。
+    this.deps.sessionStore.reorderSessionWords(deferred);
+    return this.snapshot(deferred);
+  }
+
   /** 两步作答的最终确认；初判只在界面暂存，写入的始终是最终判断。 */
-  confirmBookTestAnswer(input: { readonly sessionId: string; readonly initialJudgement: TestJudgementType; readonly finalJudgement: TestJudgementType }): TestSessionSnapshot {
+  confirmBookTestAnswer(input: { readonly sessionId: string; readonly expectedWordId: string; readonly initialJudgement: TestJudgementType; readonly finalJudgement: TestJudgementType }): TestSessionSnapshot {
     if (input.initialJudgement === TestJudgement.NotRecognized && input.finalJudgement === TestJudgement.Recognized) {
       throw new ReviewTestingError("初判不认识不得改回认识");
     }
-    const session = this.requireSession(input.sessionId);
-    if (session.status !== TestSessionExecutionStatus.InProgress) throw new ReviewTestingError("测试会话当前不能提交答案");
+    // 拉取可能发生在初判与最终点击之间，必须先重基准再核对页面原本展示的 Word。
+    const session = this.reconcileBookSession(this.requireSession(input.sessionId));
     const current = session.words[session.currentPosition];
+    if (current?.wordId !== input.expectedWordId) throw new ReviewTestingError("当前 Word 已变化，请重新查看测试卡片后作答");
+    if (session.status !== TestSessionExecutionStatus.InProgress) throw new ReviewTestingError("测试会话当前不能提交答案");
     if (current === undefined || current.taskType === undefined) throw new ReviewTestingError("测试会话当前 Word 不存在");
     if (session.answeredWordIds.includes(current.wordId)) throw new ReviewTestingError("当前 Word 已经确认过结果");
     const state = replayWordStates(this.deps).get(current.wordId);
@@ -278,7 +312,7 @@ export class BookLearningService {
 
   /** 暂停只保存已确认进度，未提交的初判由页面丢弃。 */
   pauseBookTest(input: { readonly sessionId: string }): TestSessionSnapshot {
-    const session = this.requireSession(input.sessionId);
+    const session = this.reconcileBookSession(this.requireSession(input.sessionId));
     if (session.status !== TestSessionExecutionStatus.InProgress) throw new ReviewTestingError("只有进行中的测试会话可以暂停");
     const now = this.deps.clock.now();
     const paused = { ...session, status: TestSessionExecutionStatus.Paused, lastActiveAt: now.toISOString() };
@@ -290,7 +324,8 @@ export class BookLearningService {
   /** 从本设备开放会话提取等待纸质复习的任务；测试完成后派生任务变化不影响入口。 */
   pendingPaperReviewTasks(spaceId: string): readonly PersistedListTask[] {
     return this.deps.bookCatalogStore.listListsForSpace(spaceId).flatMap((list) => {
-      const session = this.deps.sessionStore.getOpenListSession(list.listId);
+      const stored = this.deps.sessionStore.getOpenListSession(list.listId);
+      const session = stored === null ? null : this.reconcileBookSession(stored);
       const task = session?.status === TestSessionExecutionStatus.WaitingForPaperReview ? getBookSessionTaskSnapshot(session) : null;
       return task === null ? [] : [task];
     });
@@ -342,6 +377,38 @@ export class BookLearningService {
       unitNumber: list?.unitNumber ?? null,
       listNumber: list?.listNumber ?? null,
     };
+  }
+
+  /**
+   * 本地会话只是执行位置；已确认作答事件才是跨端事实。按任务、Word 和计划时刻三者
+   * 同时匹配，避免把另一轮同词测试误算进当前会话。稳定分区保留已答与未答各自的原顺序，
+   * 因而远端只回答中间词时，当前位置仍指向真正的首个未答 Word。
+   */
+  private reconcileBookSession(session: TestSessionRecord): TestSessionRecord {
+    if (session.status === TestSessionExecutionStatus.Completed) return session;
+    const confirmed = new Set(
+      this.deps.eventStore.listAllEvents()
+        .filter((event) => event.eventType === "testAnswered" && event.targetType === "Word" && event.metadata["taskId"] === session.taskId)
+        .map((event) => `${event.targetId}\u0000${String(event.metadata["plannedTestAt"])}`),
+    );
+    const locallyAnswered = new Set(session.answeredWordIds);
+    const isAnswered = (plan: SessionWordPlan): boolean =>
+      locallyAnswered.has(plan.wordId) || confirmed.has(`${plan.wordId}\u0000${plan.plannedTestAt}`);
+    const answered = session.words.filter(isAnswered);
+    const remaining = session.words.filter((plan) => !isAnswered(plan));
+    const words = [...answered, ...remaining];
+    const answeredWordIds = answered.map((plan) => plan.wordId);
+    const currentPosition = answered.length;
+    const status = remaining.length === 0 ? TestSessionExecutionStatus.WaitingForPaperReview : session.status;
+    const changed = currentPosition !== session.currentPosition || status !== session.status
+      || words.some((plan, index) => plan !== session.words[index])
+      || answeredWordIds.length !== session.answeredWordIds.length
+      || answeredWordIds.some((wordId, index) => wordId !== session.answeredWordIds[index]);
+    if (!changed) return session;
+    // 投影更新不制造新的学习事实，也不刷新 lastActiveAt；同步仍只传输用户确认的事件。
+    const reconciled = { ...session, words, answeredWordIds, currentPosition, status };
+    this.deps.sessionStore.updateSession(reconciled);
+    return reconciled;
   }
 
   private requireBookSpace(spaceId: string): void {

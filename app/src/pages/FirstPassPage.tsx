@@ -13,8 +13,8 @@
  *   第二步上方是候选摘要列表，下方只编辑当前选中的一个条目；字段变化同步回
  *   候选列表，底部固定整批保存。这与 V1 的实际录入页阅读顺序一致。
  * - 保存走 RegularLearningService.recordEntries：Space 内不允许重复录入，与既有
- *   条目冲突时弹出冲突处理对话框，逐条独立选择"覆盖旧条目 / 本次不录入"，
- *   取消则整体返回表单且不产生任何写入（三态交互，规格 6.8）。
+ *   条目冲突时先对照新旧义项，再逐项或批量决定处理方式；全部决定后由用户
+ *   明确提交，取消则整体返回表单且不产生任何写入。
  * - 保存成功后留在录入页并显示短暂反馈，立即可以开始下一批录入。
  */
 
@@ -55,11 +55,12 @@ interface DraftEntry {
   warnings?: readonly string[];
 }
 
-/** 冲突对话框状态：待决定冲突 + 已决定的项（逐条累计，全部决定后自动重试保存）。 */
+/** 冲突对话框状态：选择与处理决定分开，任何操作都不能绕过最终提交。 */
 interface ConflictState {
   readonly conflicts: readonly ConflictingWord[];
-  readonly built: ConfirmedEntry[];
   readonly decided: readonly WordConflictResolution[];
+  readonly selectedKeys: readonly string[];
+  readonly expandedKeys: readonly string[];
 }
 
 /**
@@ -221,9 +222,8 @@ export function FirstPassPage(): ReactNode {
       unresolvedDescription: organizationWarning,
     });
     draftId.current = saved.id;
-    // 草稿虽不是已确认学习事件，仍属于跨端内容。它在本机落盘后立即排入
-    // 后台同步；不发全局界面通知，避免自动保存 effect 被重绘反复触发。
-    services.cloudSync?.requestSyncSoon();
+    // 自动保存仅供当前设备在导航或重启后恢复输入。正式提交产生的词条、义项
+    // 与学习事件由各自仓储入同步队列；这里不能触发草稿正文的后台传输。
   }, [activeSpace, entries, isRegularMode, listNumber, organizeError, organizationWarning, rawText, services, smartOrganizingEnabled, step, unitNumber]);
 
   if (activeSpace === null) {
@@ -349,27 +349,42 @@ export function FirstPassPage(): ReactNode {
       setStep(smartOrganizingEnabled ? "input" : "form");
     } catch (cause) {
       if (cause instanceof SpaceEntryConflictError || cause instanceof BookEntryConflictError) {
-        // Space 内不允许重复录入：进入三态冲突处理（覆盖 / 本次不录入 / 取消）。
-        setConflict({ conflicts: cause.conflicts, built, decided: [] });
+        // 冲突用例在写入前抛错；打开对照界面时不对任何条目预设覆盖决定。
+        setConflict({
+          conflicts: cause.conflicts, decided: [], selectedKeys: [],
+          expandedKeys: cause.conflicts[0] === undefined ? [] : [cause.conflicts[0].normalizedKey],
+        });
         return;
       }
       setSaveError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
-  /** 冲突行决定：覆盖=软移除旧条目后录入新条目；不录入=保留旧条目跳过本次。 */
-  const resolveConflict = (normalizedKey: string, removeExisting: boolean): void => {
-    if (conflict === null) {
-      return;
-    }
-    const decided = [...conflict.decided, { normalizedKey, removeExisting }];
-    const remaining = conflict.conflicts.filter((item) => item.normalizedKey !== normalizedKey);
-    if (remaining.length === 0) {
-      // 全部冲突已决定：携带完整决定重试保存（用例要求覆盖全部冲突后才写入）。
-      saveEntries(decided);
-    } else {
-      setConflict({ ...conflict, decided });
-    }
+  /** 单项与批量共用赋值逻辑；重复选择替换旧决定，允许提交前反悔。 */
+  const resolveConflicts = (keys: readonly string[], removeExisting: boolean, clearSelection: boolean): void => {
+    setConflict((current) => {
+      if (current === null || keys.length === 0) return current;
+      const target = new Set(keys);
+      return {
+        ...current,
+        decided: [
+          ...current.decided.filter((item) => !target.has(item.normalizedKey)),
+          ...current.conflicts.filter((item) => target.has(item.normalizedKey))
+            .map((item) => ({ normalizedKey: item.normalizedKey, removeExisting })),
+        ],
+        selectedKeys: clearSelection ? [] : current.selectedKeys,
+      };
+    });
+  };
+
+  /** 勾选只决定批量操作目标，和覆盖/跳过的业务决定相互独立。 */
+  const toggleConflictSelection = (normalizedKey: string): void => {
+    setConflict((current) => current === null ? null : {
+      ...current,
+      selectedKeys: current.selectedKeys.includes(normalizedKey)
+        ? current.selectedKeys.filter((key) => key !== normalizedKey)
+        : [...current.selectedKeys, normalizedKey],
+    });
   };
 
   if (step === "input") {
@@ -526,39 +541,113 @@ export function FirstPassPage(): ReactNode {
         </button>
       </div>
       {conflict === null ? null : (
-        <Modal title="处理重复条目" onClose={() => setConflict(null)}>
-          <p className="modal-message">以下条目与{isRegularMode ? "这个 Space" : "这个 List"}已有条目重复，请逐条选择处理方式。</p>
-          <div className="row-list">
+        <Modal title="处理重复条目" onClose={() => setConflict(null)} surface="solid">
+          <p className="modal-message">与{isRegularMode ? "这个 Space" : "这个 List"}已有内容重复。展开词条比较释义和用法，再决定保留哪一版。</p>
+          <div className="conflict-toolbar">
+            <p className="conflict-progress" data-testid="conflict-progress">已处理 {conflict.decided.length} / {conflict.conflicts.length} 项</p>
+            <label className="conflict-select-all">
+              <input
+                type="checkbox"
+                checked={conflict.selectedKeys.length === conflict.conflicts.length}
+                onChange={() => setConflict((current) => current === null ? null : {
+                  ...current,
+                  selectedKeys: current.selectedKeys.length === current.conflicts.length
+                    ? [] : current.conflicts.map((item) => item.normalizedKey),
+                })}
+                data-testid="conflict-select-all"
+              />
+              全选
+            </label>
+          </div>
+          <div className="conflict-bulk-actions" aria-label="批量处理选中项">
+            <span>{conflict.selectedKeys.length === 0 ? "勾选后可批量处理" : `已选 ${conflict.selectedKeys.length} 项`}</span>
+            <button
+              type="button" className="btn btn-secondary"
+              disabled={conflict.selectedKeys.length === 0}
+              onClick={() => resolveConflicts(conflict.selectedKeys, false, true)}
+              data-testid="conflict-bulk-skip"
+            >本次不录入选中项</button>
+            <button
+              type="button" className="btn btn-danger"
+              disabled={conflict.selectedKeys.length === 0}
+              onClick={() => resolveConflicts(conflict.selectedKeys, true, true)}
+              data-testid="conflict-bulk-overwrite"
+            >{isRegularMode ? "覆盖选中旧条目" : "从 List 中删除选中旧词"}</button>
+          </div>
+          <div className="conflict-list" data-testid="conflict-list">
             {conflict.conflicts.map((item) => (
               <div
                 className="conflict-row"
                 key={item.normalizedKey}
                 data-testid={`conflict-row-${item.normalizedKey}`}
               >
-                <span className="task-row-title">{item.incomingSpelling}</span>
-                <span className="task-row-meta">已有条目：{item.existingSpelling}</span>
-                <div className="task-row-actions">
+                <label className="conflict-row-select" aria-label={`选择 ${item.incomingSpelling} 用于批量处理`}>
+                  <input
+                    type="checkbox"
+                    checked={conflict.selectedKeys.includes(item.normalizedKey)}
+                    onChange={() => toggleConflictSelection(item.normalizedKey)}
+                    data-testid={`conflict-select-${item.normalizedKey}`}
+                  />
+                </label>
+                <div className="conflict-row-main">
+                  <details open={conflict.expandedKeys.includes(item.normalizedKey)} data-testid={`conflict-details-${item.normalizedKey}`}>
+                    <summary onClick={(event) => {
+                      event.preventDefault();
+                      setConflict((current) => current === null ? null : {
+                        ...current,
+                        expandedKeys: current.expandedKeys.includes(item.normalizedKey)
+                          ? current.expandedKeys.filter((key) => key !== item.normalizedKey)
+                          : [...current.expandedKeys, item.normalizedKey],
+                      });
+                    }}>
+                      <span className="conflict-word">{item.incomingSpelling}</span>
+                      <span className="conflict-row-status" data-testid={`conflict-status-${item.normalizedKey}`}>
+                        {conflict.decided.find((decision) => decision.normalizedKey === item.normalizedKey)?.removeExisting === true
+                          ? isRegularMode ? "决定：覆盖旧条目" : "决定：从 List 中删除旧词"
+                          : conflict.decided.some((decision) => decision.normalizedKey === item.normalizedKey)
+                            ? "决定：本次不录入" : "待处理"}
+                      </span>
+                      <span className="conflict-expand-hint">对照新旧内容</span>
+                    </summary>
+                    <div className="conflict-comparison">
+                      <section className="conflict-version conflict-version-existing" aria-label={`${item.incomingSpelling} 已有条目`}>
+                        <h3>已有条目</h3>
+                        <strong>{item.existingSpelling}</strong>
+                        <ConflictMeaningList meanings={item.existingMeanings} fallback={item.existingManualMeaning} />
+                      </section>
+                      <section className="conflict-version conflict-version-incoming" aria-label={`${item.incomingSpelling} 本次录入`}>
+                        <h3>本次录入</h3>
+                        <strong>{item.incomingSpelling}</strong>
+                        <ConflictMeaningList meanings={item.incomingMeanings} />
+                      </section>
+                    </div>
+                  </details>
+                <div className="conflict-row-actions">
                   <button
                     type="button"
                     className="btn btn-danger"
-                    onClick={() => resolveConflict(item.normalizedKey, true)}
+                    aria-pressed={conflict.decided.find((decision) => decision.normalizedKey === item.normalizedKey)?.removeExisting === true}
+                    onClick={() => resolveConflicts([item.normalizedKey], true, false)}
                     data-testid={`conflict-overwrite-${item.normalizedKey}`}
                   >
-                    覆盖旧条目
+                    {isRegularMode ? "覆盖旧条目" : "从 List 中删除"}
                   </button>
                   <button
                     type="button"
                     className="btn btn-secondary"
-                    onClick={() => resolveConflict(item.normalizedKey, false)}
+                    aria-pressed={conflict.decided.find((decision) => decision.normalizedKey === item.normalizedKey)?.removeExisting === false}
+                    onClick={() => resolveConflicts([item.normalizedKey], false, false)}
                     data-testid={`conflict-skip-${item.normalizedKey}`}
                   >
                     本次不录入
                   </button>
                 </div>
+                </div>
               </div>
             ))}
           </div>
-          <div className="modal-actions">
+          {saveError === null ? null : <p className="field-error" role="alert">{saveError}</p>}
+          <div className="modal-actions conflict-footer">
             <button
               type="button"
               className="btn btn-secondary"
@@ -567,10 +656,36 @@ export function FirstPassPage(): ReactNode {
             >
               取消，返回表单
             </button>
+            <button
+              type="button" className="btn btn-primary"
+              disabled={conflict.decided.length !== conflict.conflicts.length}
+              onClick={() => saveEntries(conflict.decided)}
+              data-testid="conflict-commit"
+            >确认处理并保存</button>
           </div>
         </Modal>
       )}
     </PageShell>
+  );
+}
+
+/** 新旧两版使用相同的义项排版，避免一侧省略用法造成错误的覆盖判断。 */
+function ConflictMeaningList({ meanings, fallback }: {
+  meanings: readonly StructuredMeaning[];
+  fallback?: string;
+}): ReactNode {
+  if (meanings.length === 0) {
+    return <p className="conflict-meaning-fallback">{fallback?.trim() || "暂无释义"}</p>;
+  }
+  return (
+    <ol className="conflict-meanings">
+      {meanings.map((meaning, index) => (
+        <li key={`${index}-${meaning.definition}`}>
+          <span>{meaning.partOfSpeech === null ? "" : `${meaning.partOfSpeech} `}{meaning.definition}</span>
+          {meaning.usage === null || meaning.usage.trim() === "" ? null : <small>用法：{meaning.usage}</small>}
+        </li>
+      ))}
+    </ol>
   );
 }
 

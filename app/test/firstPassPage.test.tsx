@@ -12,7 +12,7 @@ import { createTestServices } from "./helpers.tsx";
 import { seedRegularDueServices } from "./seed.ts";
 
 describe("录入页：Space 模式分流", () => {
-  it("词书草稿落盘后立即请求后台同步，无须等待下一次前台轮询", async () => {
+  it("词书草稿只在本机恢复，不增加出站内容或触发后台同步", async () => {
     const requestSyncSoon = vi.fn();
     const services = createTestServices({ cloudSync: {
       hasToken: () => true, configureToken: () => {}, syncNow: async () => null,
@@ -28,8 +28,13 @@ describe("录入页：Space 模式分流", () => {
     requestSyncSoon.mockClear();
     const pendingBefore = services.runtime.contentSyncStore.pendingCount();
     await user.type(screen.getByTestId("firstpass-raw-input"), "abandon");
-    expect(services.runtime.contentSyncStore.pendingCount()).toBeGreaterThan(pendingBefore);
-    expect(requestSyncSoon).toHaveBeenCalled();
+    const spaceId = services.getActiveSpace()?.id ?? "";
+    expect(services.bookDrafts.listOpenDrafts(spaceId)[0]?.rawText).toBe("abandon");
+    expect(services.runtime.contentSyncStore.pendingCount()).toBe(pendingBefore);
+    expect(requestSyncSoon).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("nav-today"));
+    await user.click(screen.getByTestId("nav-first-pass"));
+    expect(screen.getByTestId("firstpass-raw-input")).toHaveValue("abandon");
   });
 
   it("词书模式手动录入 Unit/List 后保存首过内容与不可变事件", async () => {
@@ -43,6 +48,7 @@ describe("录入页：Space 模式分流", () => {
     await user.type(screen.getByTestId("firstpass-def-0-0"), "放弃");
     expect(screen.getByTestId("firstpass-preview-0")).toHaveTextContent("abandon");
     expect(screen.getAllByTestId(/^firstpass-editor-panel$/)).toHaveLength(1);
+    const pendingBeforeSave = services.runtime.contentSyncStore.pendingCount();
     await user.click(screen.getByTestId("firstpass-save"));
     expect(screen.getByTestId("toast")).toHaveTextContent("Unit 1 · List 1 已录入 1 个词");
     expect(screen.getByTestId("firstpass-raw-input")).toHaveValue("");
@@ -51,6 +57,8 @@ describe("录入页：Space 模式分流", () => {
     const list = services.runtime.bookCatalogStore.listListsForSpace(spaceId)[0];
     expect(list?.listNumber).toBe(1);
     expect(services.runtime.wordContentStore.listEntriesForList(list?.listId ?? "")[0]?.originalSpelling).toBe("abandon");
+    // 草稿不出站；正式保存后的词条、目录由各自仓储进入同步队列。
+    expect(services.runtime.contentSyncStore.pendingCount()).toBeGreaterThan(pendingBeforeSave);
     expect(services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "firstPassRecorded")).toBe(true);
 
     // 已确认的草稿 ID 必须释放；直接开始第二批时可再次自动保存和确认。
@@ -200,12 +208,20 @@ describe("录入页：常规模式手动填写与保存", () => {
     await user.type(screen.getByTestId("firstpass-def-0-0"), "抛弃");
     await user.click(screen.getByTestId("firstpass-save"));
 
-    // 冲突对话框出现（逐条独立决定）。
+    // 第一项默认展开，旧版与新版的释义可在决定前阅读。
     const conflictRow = screen.getByTestId(/conflict-row-abandon/);
-    expect(conflictRow).toHaveTextContent("已有条目：abandon");
+    expect(screen.getByTestId("conflict-details-abandon")).toHaveAttribute("open");
+    expect(conflictRow).toHaveTextContent("已有条目");
+    expect(conflictRow).toHaveTextContent("本次录入");
+    expect(conflictRow).toHaveTextContent("释义：abandon");
+    expect(conflictRow).toHaveTextContent("抛弃");
+    expect(screen.getByTestId("conflict-commit")).toBeDisabled();
 
     // 态一：本次不录入 → 旧条目保留，新批次不写入。
     await user.click(screen.getByTestId("conflict-skip-abandon"));
+    expect(screen.getByTestId("conflict-progress")).toHaveTextContent("已处理 1 / 1 项");
+    expect(services.runtime.wordContentStore.listEntriesForSpace(spaceId)).toHaveLength(1);
+    await user.click(screen.getByTestId("conflict-commit"));
     expect(screen.getByTestId("toast")).toHaveTextContent("已录入 0 个条目");
     expect(services.runtime.wordContentStore.listEntriesForSpace(spaceId)).toHaveLength(1);
 
@@ -216,6 +232,7 @@ describe("录入页：常规模式手动填写与保存", () => {
     await user.type(screen.getByTestId("firstpass-def-0-0"), "抛弃");
     await user.click(screen.getByTestId("firstpass-save"));
     await user.click(screen.getByTestId("conflict-overwrite-abandon"));
+    await user.click(screen.getByTestId("conflict-commit"));
     expect(screen.getAllByTestId("toast").at(-1)).toHaveTextContent("已录入 1 个条目");
     const afterOverwrite = services.runtime.wordContentStore.listEntriesForSpace(spaceId);
     expect(afterOverwrite).toHaveLength(1);
@@ -224,6 +241,47 @@ describe("录入页：常规模式手动填写与保存", () => {
     expect(
       services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "wordRemoved"),
     ).toBe(true);
+  });
+
+  it("多项重复可展开对照、全选批量处理并在最终保存前修改决定", async () => {
+    const user = userEvent.setup();
+    const { services } = seedRegularDueServices(["abandon", "retain"], { spaceName: "录入空间" });
+    const spaceId = services.getActiveSpace()?.id ?? "";
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-first-pass"));
+    await user.click(screen.getByTestId("firstpass-organize"));
+    await user.click(screen.getByTestId("firstpass-switch-manual"));
+    await user.type(screen.getByTestId("firstpass-term-0"), "abandon");
+    await user.type(screen.getByTestId("firstpass-def-0-0"), "放弃");
+    await user.type(screen.getByTestId("firstpass-usage-0-0"), "abandon hope");
+    await user.click(screen.getByTestId("firstpass-add-entry"));
+    await user.type(screen.getByTestId("firstpass-term-1"), "retain");
+    await user.type(screen.getByTestId("firstpass-def-1-0"), "保留");
+    const eventsBefore = services.runtime.eventStore.listAllEvents().length;
+    await user.click(screen.getByTestId("firstpass-save"));
+
+    expect(screen.getByTestId("conflict-progress")).toHaveTextContent("已处理 0 / 2 项");
+    expect(screen.getByTestId("conflict-row-abandon")).toHaveTextContent("用法：abandon hope");
+    expect(screen.getByTestId("conflict-details-retain")).not.toHaveAttribute("open");
+    await user.click(screen.getByTestId("conflict-details-retain").querySelector("summary") as HTMLElement);
+    expect(screen.getByTestId("conflict-details-retain")).toHaveAttribute("open");
+    await user.click(screen.getByTestId("conflict-select-all"));
+    await user.click(screen.getByTestId("conflict-bulk-skip"));
+    expect(screen.getByTestId("conflict-progress")).toHaveTextContent("已处理 2 / 2 项");
+    expect(screen.getByTestId("conflict-select-all")).not.toBeChecked();
+    expect(screen.getByTestId("conflict-commit")).toBeEnabled();
+    // 批量决定只存在弹窗状态中；在最终提交前改单项仍无写入。
+    await user.click(screen.getByTestId("conflict-overwrite-abandon"));
+    expect(screen.getByTestId("conflict-status-abandon")).toHaveTextContent("覆盖旧条目");
+    expect(screen.getByTestId("conflict-details-retain")).toHaveAttribute("open");
+    expect(services.runtime.eventStore.listAllEvents()).toHaveLength(eventsBefore);
+    expect(services.runtime.wordContentStore.listEntriesForSpace(spaceId).find((item) => item.normalizedKey === "abandon")?.manualMeaning).toContain("释义：abandon");
+
+    await user.click(screen.getByTestId("conflict-commit"));
+    const after = services.runtime.wordContentStore.listEntriesForSpace(spaceId);
+    expect(after).toHaveLength(2);
+    expect(after.find((item) => item.normalizedKey === "abandon")?.manualMeaning).toContain("放弃");
+    expect(after.find((item) => item.normalizedKey === "retain")?.manualMeaning).toContain("释义：retain");
   });
 
   it("冲突取消：整体返回表单且不产生任何写入", async () => {

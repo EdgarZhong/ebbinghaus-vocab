@@ -283,7 +283,7 @@ export interface TestSessionRecord {
   readonly taskId: string | null;
   /** 词书会话启动时的完整任务快照；跨日及作答后的任务重派生不改变本会话。 */
   readonly taskSnapshot?: PersistedListTask | null;
-  /** 会话开始时的条目顺序快照（之后新增/移除不影响进行中的会话）。 */
+  /** 会话开始时固定的 Word 计划集合；“点错了”只允许调整本机未答顺序，不改成员与计划时刻。 */
   readonly words: readonly SessionWordPlan[];
   readonly currentPosition: number;
   readonly status: TestSessionExecutionStatus;
@@ -303,6 +303,8 @@ export interface TestSessionRecord {
 export interface TestSessionStore {
   addSession(session: TestSessionRecord): void;
   updateSession(session: TestSessionRecord): void;
+  /** 仅重排已有计划的本机执行顺序；不得增删 Word 或修改计划时刻，也不产生同步事实。 */
+  reorderSessionWords(session: TestSessionRecord): void;
   getSession(sessionId: string): TestSessionRecord | null;
   getOpenRegularSession(spaceId: string, learningDay: string): TestSessionRecord | null;
   getOpenListSession(listId: string): TestSessionRecord | null;

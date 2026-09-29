@@ -143,6 +143,9 @@ export class RegularLearningService {
           existingWordId: existing.wordId,
           existingSpelling: existing.originalSpelling,
           incomingSpelling: candidate.originalSpelling,
+          existingMeanings: existing.meanings,
+          existingManualMeaning: existing.manualMeaning,
+          incomingMeanings: candidate.meanings,
         });
       }
     }
@@ -372,7 +375,13 @@ export class RegularLearningService {
     const now = this.deps.clock.now();
     const learningDay = this.learningDayOf(now);
     const groups = this.dueGroups({ spaceId });
-    const openSession = this.deps.sessionStore.getOpenRegularSession(spaceId, learningDay);
+    const persistedOpenSession = this.deps.sessionStore.getOpenRegularSession(spaceId, learningDay);
+    const rebasedOpenSession = persistedOpenSession === null ? null : this.rebaseRegularSession(persistedOpenSession);
+    // 本次读取若恰好收敛至全答，完成会话已不再是开放入口；任务行应与
+    // 下一次读取保持一致，不短暂闪现一条已经完成的旧测试组。
+    const openSession = rebasedOpenSession?.status === TestSessionExecutionStatus.Completed
+      ? null
+      : rebasedOpenSession;
     // 任务组已经持有 Word 标识，页面展示内容只需一次 Space 批量查询。
     // 逐词 getEntry 在真实桌面同步 SQLite 桥下会阻塞 WebView 主线程，
     // 使切回“今日”和“测试”随到期词数线性变慢。
@@ -382,12 +391,18 @@ export class RegularLearningService {
     for (const group of groups) {
       let sessionStatus: TestSessionExecutionStatus | null = null;
       let completed = 0;
-      if (openSession !== null && openSession.groupOrdinal === group.ordinal) {
+      const isOpenGroup = openSession !== null && openSession.groupOrdinal === group.ordinal;
+      if (isOpenGroup) {
         sessionStatus = openSession.status;
         completed = openSession.currentPosition;
       }
       const activeWords: ReviewWordSnapshot[] = [];
-      for (const wordId of group.wordIds) {
+      // 到期组在远端作答后会重新切分；开放会话仍以启动时的条目快照计数，
+      // 并按收敛后的未答顺序展示，避免任务行误缩小或把已答条目重新列为待测。
+      const visibleWordIds = isOpenGroup
+        ? openSession.words.slice(openSession.currentPosition).map((word) => word.wordId)
+        : group.wordIds;
+      for (const wordId of visibleWordIds) {
         const content = contentsById.get(wordId);
         if (content !== undefined) {
           activeWords.push({
@@ -408,9 +423,35 @@ export class RegularLearningService {
         workload: 1,
         overdueDays: 0,
         completedCount: completed,
-        totalCount: group.wordIds.length,
+        totalCount: isOpenGroup ? openSession.words.length : group.wordIds.length,
         sessionStatus,
         activeWords,
+      });
+    }
+    if (openSession !== null && !groups.some((group) => group.ordinal === openSession.groupOrdinal)) {
+      // 全部或大部分条目被另一端确认后，到期组可能消失；开放会话必须仍可见，
+      // 否则用户无法看到已收敛进度，也无法从暂停状态恢复。
+      items.push({
+        taskId: this.regularTaskId(spaceId, openSession.groupOrdinal ?? 0, learningDay),
+        listId: "",
+        unitNumber: 0,
+        listNumber: openSession.groupOrdinal ?? 0,
+        taskType: "短期测试",
+        dueReason: "FSRS 到期测试",
+        workload: 1,
+        overdueDays: 0,
+        completedCount: openSession.currentPosition,
+        totalCount: openSession.words.length,
+        sessionStatus: openSession.status,
+        activeWords: openSession.words.slice(openSession.currentPosition).flatMap((word) => {
+          const content = contentsById.get(word.wordId);
+          return content === undefined ? [] : [{
+            wordId: content.wordId,
+            originalSpelling: content.originalSpelling,
+            manualMeaning: content.manualMeaning,
+            meanings: content.meanings,
+          }];
+        }),
       });
     }
     return items;
@@ -428,7 +469,8 @@ export class RegularLearningService {
     const nowIso = now.toISOString();
     const learningDay = this.learningDayOf(now);
     const ordinal = this.ordinalFromTaskId(input.taskId, learningDay, spaceId);
-    const existing = this.deps.sessionStore.getOpenRegularSession(spaceId, learningDay);
+    const persistedExisting = this.deps.sessionStore.getOpenRegularSession(spaceId, learningDay);
+    const existing = persistedExisting === null ? null : this.rebaseRegularSession(persistedExisting);
     if (existing !== null) {
       if (existing.groupOrdinal !== ordinal) {
         throw new Error("当前已有其他测试组正在进行的会话");
@@ -468,7 +510,15 @@ export class RegularLearningService {
       learningDay,
       groupOrdinal: ordinal,
       taskId: null,
-      words: group.wordIds.map((wordId) => ({ wordId, plannedTestAt: nowIso })),
+      // 用开始测试时的卡片到期时刻标识这一轮计划；会话启动时间无法区分
+      // 同一条目先后两轮作答，远端事件必须与本轮 beforeState.dueAt 对齐。
+      words: group.wordIds.map((wordId) => {
+        const card = this.deps.fsrsCardStore.get(wordId);
+        if (card === null) {
+          throw new Error("条目缺少 FSRS 卡片");
+        }
+        return { wordId, plannedTestAt: card.dueAt };
+      }),
       currentPosition: 0,
       status: TestSessionExecutionStatus.InProgress,
       answeredWordIds: [],
@@ -482,6 +532,7 @@ export class RegularLearningService {
   /** 确认当前条目最终判断，立即调用 FSRS 更新卡片并推进游标。 */
   confirmRegularTestAnswer(input: {
     readonly sessionId: string;
+    readonly expectedWordId: string;
     readonly initialJudgement: TestJudgementType;
     readonly finalJudgement: TestJudgementType;
   }): TestSessionSnapshot {
@@ -491,10 +542,11 @@ export class RegularLearningService {
     ) {
       throw new Error("初判不认识不得改回认识");
     }
-    const session = this.deps.sessionStore.getSession(input.sessionId);
-    if (session === null || session.learningMode !== "常规模式") {
+    const persistedSession = this.deps.sessionStore.getSession(input.sessionId);
+    if (persistedSession === null || persistedSession.learningMode !== "常规模式") {
       throw new Error("常规模式测试会话不存在");
     }
+    const session = this.rebaseRegularSession(persistedSession);
     if (session.status !== TestSessionExecutionStatus.InProgress) {
       throw new Error("测试会话当前不能提交答案");
     }
@@ -503,6 +555,11 @@ export class RegularLearningService {
       throw new Error("测试会话当前条目不存在");
     }
     const wordId = current.wordId;
+    // 拉取事件可能恰好发生在用户初判和最终确认之间；旧页面的判断不能
+    // 被应用到重基准后的下一条目，必须由调用方重新展示当前条目。
+    if (input.expectedWordId !== wordId) {
+      throw new Error("当前条目已变化，请重新查看并作答");
+    }
     if (session.answeredWordIds.includes(wordId)) {
       throw new Error("当前条目已经确认过结果");
     }
@@ -607,10 +664,11 @@ export class RegularLearningService {
 
   /** 暂停会话，保留已确认进度；当前未提交的初判由界面丢弃。 */
   pauseRegularTest(input: { readonly sessionId: string }): TestSessionSnapshot {
-    const session = this.deps.sessionStore.getSession(input.sessionId);
-    if (session === null || session.learningMode !== "常规模式") {
+    const persistedSession = this.deps.sessionStore.getSession(input.sessionId);
+    if (persistedSession === null || persistedSession.learningMode !== "常规模式") {
       throw new Error("常规模式测试会话不存在");
     }
+    const session = this.rebaseRegularSession(persistedSession);
     if (session.status !== TestSessionExecutionStatus.InProgress) {
       throw new Error("只有进行中的测试会话可以暂停");
     }
@@ -636,6 +694,91 @@ export class RegularLearningService {
   // ---------------------------------------------------------------------------
   // 视图快照与内部工具
   // ---------------------------------------------------------------------------
+
+  /** 读取会话时以本机已拉取的已确认事件重基准，供页面同步通知直接刷新。 */
+  getRegularTestSessionSnapshot(sessionId: string): TestSessionSnapshot {
+    const session = this.deps.sessionStore.getSession(sessionId);
+    if (session === null || session.learningMode !== "常规模式") {
+      throw new Error("常规模式测试会话不存在");
+    }
+    return this.regularSessionSnapshot(this.rebaseRegularSession(session));
+  }
+
+  /**
+   * 初判“不认识”后选择“点错了”时仅重排本机会话未答条目，不写 FSRS 卡片、
+   * testAnswered 或 outbox。重基准与 Word 身份校验和最终确认一致，防止拉取交错
+   * 时把另一条目错移到队尾；只有一个未答条目时仍返回它供页面清空揭示态重测。
+   */
+  deferRegularTestWord(input: { readonly sessionId: string; readonly expectedWordId: string }): TestSessionSnapshot {
+    const persisted = this.deps.sessionStore.getSession(input.sessionId);
+    if (persisted === null || persisted.learningMode !== "常规模式") throw new Error("常规模式测试会话不存在");
+    const session = this.rebaseRegularSession(persisted);
+    if (session.status !== TestSessionExecutionStatus.InProgress) throw new Error("测试会话当前不能暂缓条目");
+    const current = session.words[session.currentPosition];
+    if (current?.wordId !== input.expectedWordId) throw new Error("当前条目已变化，请重新查看并作答");
+    const deferred: TestSessionRecord = {
+      ...session,
+      words: [...session.words.slice(0, session.currentPosition), ...session.words.slice(session.currentPosition + 1), current],
+      lastActiveAt: this.deps.clock.now().toISOString(),
+    };
+    // 队列顺序是本机执行状态；专用端口只改顺序，避免 SQLite 的普通进度更新静默丢弃暂缓结果。
+    this.deps.sessionStore.reorderSessionWords(deferred);
+    return this.regularSessionSnapshot(deferred);
+  }
+
+  /** 已确认事件是权威进度；本机会话仅保留顺序与未提交的执行位置。 */
+  private rebaseRegularSession(session: TestSessionRecord): TestSessionRecord {
+    const alreadyAnswered = new Set(session.answeredWordIds);
+    const plansByWordId = new Map(session.words.map((word) => [word.wordId, word]));
+    // 旧快照把所有计划时刻写成 startedAt，缺少 FSRS 到期时刻；只能降级为
+    // 同条目且会话启动后的已确认事件匹配，无法准确区分同日的另一轮计划。
+    const isLegacySnapshot = session.words.every((word) => word.plannedTestAt === session.startedAt);
+    for (const event of this.deps.eventStore.listAllEvents()) {
+      if (event.eventType !== "testAnswered" || event.targetType !== "条目") {
+        continue;
+      }
+      const plan = plansByWordId.get(event.targetId);
+      if (plan === undefined) {
+        continue;
+      }
+      const beforeState = event.metadata["beforeState"];
+      const beforeDueAt = beforeState !== null && typeof beforeState === "object"
+        ? (beforeState as Record<string, unknown>)["dueAt"]
+        : undefined;
+      if (isLegacySnapshot
+        ? Date.parse(event.occurredAt) >= Date.parse(session.startedAt)
+        : beforeDueAt === plan.plannedTestAt) {
+        alreadyAnswered.add(event.targetId);
+      }
+    }
+    // 稳定分区不改变两侧各自的会话原顺序；已答条目成为前缀后，当前位置
+    // 恰为已答数量，非连续远端结果也不会把未答词隐藏在游标之前。
+    const answeredPlans = session.words.filter((word) => alreadyAnswered.has(word.wordId));
+    const unansweredPlans = session.words.filter((word) => !alreadyAnswered.has(word.wordId));
+    const words = [...answeredPlans, ...unansweredPlans];
+    const answeredWordIds = answeredPlans.map((word) => word.wordId);
+    const currentPosition = answeredPlans.length;
+    const status = currentPosition === words.length
+      ? TestSessionExecutionStatus.Completed
+      : session.status;
+    const changed = currentPosition !== session.currentPosition
+      || status !== session.status
+      || words.some((word, index) => word.wordId !== session.words[index]?.wordId)
+      || answeredWordIds.length !== session.answeredWordIds.length
+      || answeredWordIds.some((wordId, index) => wordId !== session.answeredWordIds[index]);
+    if (!changed) {
+      return session;
+    }
+    const rebased: TestSessionRecord = {
+      ...session,
+      words,
+      answeredWordIds,
+      currentPosition,
+      status,
+    };
+    this.deps.sessionStore.updateSession(rebased);
+    return rebased;
+  }
 
   /** 构造逐词测试页每次重绘所需的稳定视图快照。 */
   private regularSessionSnapshot(session: TestSessionRecord): TestSessionSnapshot {

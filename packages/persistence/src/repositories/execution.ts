@@ -64,6 +64,7 @@ export class SqliteTestSessionStore implements TestSessionStore {
 
   private readonly addStmt;
   private readonly updateStmt;
+  private readonly reorderWordsStmt;
   private readonly getStmt;
   private readonly openRegularStmt;
   private readonly openListStmt;
@@ -84,6 +85,10 @@ export class SqliteTestSessionStore implements TestSessionStore {
       UPDATE test_sessions SET
         current_position = @currentPosition, status = @status,
         answered_word_ids_json = @answeredWordIdsJson, last_active_at = @lastActiveAt
+      WHERE session_id = @sessionId
+    `);
+    this.reorderWordsStmt = this.db.prepare(`
+      UPDATE test_sessions SET words_json = @wordsJson, last_active_at = @lastActiveAt
       WHERE session_id = @sessionId
     `);
     this.getStmt = this.db.prepare(
@@ -142,6 +147,43 @@ export class SqliteTestSessionStore implements TestSessionStore {
       currentPosition: session.currentPosition,
       status: session.status,
       answeredWordIdsJson: JSON.stringify(session.answeredWordIds),
+      lastActiveAt: session.lastActiveAt,
+    });
+    if (result.changes === 0) {
+      throw new Error(`测试会话不存在：${session.sessionId}`);
+    }
+  }
+
+  /**
+   * 持久化“点错了”造成的本机队列重排，同时验证计划成员与计划时刻完全不变。
+   * 普通 updateSession 仍不改写开场快照；这个窄接口只允许排列已有 Word 计划，
+   * 防止暂缓在内存中生效、页面下一次读取 SQLite 时又恢复成旧顺序。
+   */
+  reorderSessionWords(session: TestSessionRecord): void {
+    const stored = this.getSession(session.sessionId);
+    if (stored === null) {
+      throw new Error(`测试会话不存在：${session.sessionId}`);
+    }
+    const remaining = new Map<string, number>();
+    for (const plan of stored.words) {
+      const key = JSON.stringify(plan);
+      remaining.set(key, (remaining.get(key) ?? 0) + 1);
+    }
+    for (const plan of session.words) {
+      const key = JSON.stringify(plan);
+      const count = remaining.get(key);
+      if (count === undefined) {
+        throw new Error("测试会话重排不得增删或改写 Word 计划");
+      }
+      if (count === 1) remaining.delete(key);
+      else remaining.set(key, count - 1);
+    }
+    if (remaining.size > 0) {
+      throw new Error("测试会话重排不得增删或改写 Word 计划");
+    }
+    const result = this.reorderWordsStmt.run({
+      sessionId: session.sessionId,
+      wordsJson: JSON.stringify(session.words),
       lastActiveAt: session.lastActiveAt,
     });
     if (result.changes === 0) {

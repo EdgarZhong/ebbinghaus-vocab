@@ -65,15 +65,19 @@ export class SqliteContentSyncStore implements ContentSyncStore {
         payload_json = excluded.payload_json, attempts = 0,
         next_attempt_at = excluded.next_attempt_at, last_error = NULL
     `);
-    this.due = db.prepare("SELECT payload_json AS payloadJson FROM content_outbox WHERE next_attempt_at <= ? ORDER BY next_attempt_at, entity_type, entity_id LIMIT ?");
+    // 升级前遗留的 draft 行可能仍在 outbox。只过滤待推视图，不触碰
+    // first_pass_drafts 正文，避免升级后丢失用户尚未提交的录入。
+    this.due = db.prepare("SELECT payload_json AS payloadJson FROM content_outbox WHERE entity_type <> 'draft' AND next_attempt_at <= ? ORDER BY next_attempt_at, entity_type, entity_id LIMIT ?");
     this.deletePending = db.prepare("DELETE FROM content_outbox WHERE entity_type = ? AND entity_id = ? AND payload_json = ?");
     this.failed = db.prepare("UPDATE content_outbox SET attempts = attempts + 1, next_attempt_at = ?, last_error = ? WHERE entity_type = ? AND entity_id = ? AND payload_json = ?");
-    this.countPending = db.prepare("SELECT COUNT(*) AS total FROM content_outbox");
+    this.countPending = db.prepare("SELECT COUNT(*) AS total FROM content_outbox WHERE entity_type <> 'draft'");
     this.selectCursor = db.prepare("SELECT value FROM sync_state WHERE key = 'content_pull_cursor'");
     this.saveCursor = db.prepare("UPDATE sync_state SET value = ? WHERE key = 'content_pull_cursor'");
   }
 
   recordLocal(entityType: ContentEntityType, entityId: string, value: unknown, initialVersionAt?: string): void {
+    // 协议保留 draft 以读取旧版服务端记录，但新客户端绝不允许未提交正文进入出站队列。
+    if (entityType === "draft") return;
     const previous = this.selectVersion.get(entityType, entityId) as VersionRow | undefined;
     // 仅首次创建时允许传入内容本身的创建时间。固定默认目录用早期版本，
     // 后装设备拉取云端已编辑的目录时，云端版本必然胜出。
@@ -105,6 +109,9 @@ export class SqliteContentSyncStore implements ContentSyncStore {
       let changed = 0;
       for (const stored of entries) {
         const { serverSeq: _serverSeq, ...content } = storedContentEntrySchema.parse(stored);
+        // 协议仍识别旧版草稿，以便同步引擎继续消耗对应服务端序号；
+        // 校验后直接跳过，连删除墓碑也不得覆盖或清除本机未提交正文。
+        if (content.entityType === "draft") continue;
         const previous = this.selectVersion.get(content.entityType, content.entityId) as VersionRow | undefined;
         if (previous !== undefined && !isContentEntryNewer(content, contentEntrySchema.parse(JSON.parse(previous.payloadJson)))) {
           continue;
@@ -121,12 +128,11 @@ export class SqliteContentSyncStore implements ContentSyncStore {
     return apply();
   }
 
-  private applyValue(entry: ContentEntry): void {
+  private applyValue(entry: Exclude<ContentEntry, { entityType: "draft" }>): void {
     if (entry.deleted || entry.value === null) {
       const tableAndKey = {
         space: ["spaces", "id"], unit: ["study_units", "unit_id"],
         list: ["list_catalog", "list_id"], word: ["word_contents", "word_id"],
-        draft: ["first_pass_drafts", "id"],
       } as const;
       const [table, key] = tableAndKey[entry.entityType];
       this.db.prepare(`DELETE FROM ${table} WHERE ${key} = ?`).run(entry.entityId);
@@ -180,25 +186,6 @@ export class SqliteContentSyncStore implements ContentSyncStore {
           removed: v.removed ? 1 : 0, recordedAt: v.recordedAt,
           removedAt: v.removed ? entry.updatedAt : null,
         });
-        break;
-      }
-      case "draft": {
-        const v = entry.value;
-        this.db.prepare(`
-          INSERT INTO first_pass_drafts
-            (id, space_id, unit_number, list_number, raw_text, use_language_model, status,
-             last_error, candidates_json, audit_json, unresolved_description, updated_at, device_id)
-          VALUES
-            (@id, @spaceId, @unitNumber, @listNumber, @rawText, @useLanguageModel, @status,
-             @lastError, @candidatesJson, @auditJson, @unresolvedDescription, @updatedAt, @deviceId)
-          ON CONFLICT(id) DO UPDATE SET
-            space_id=excluded.space_id, unit_number=excluded.unit_number,
-            list_number=excluded.list_number, raw_text=excluded.raw_text,
-            use_language_model=excluded.use_language_model, status=excluded.status,
-            last_error=excluded.last_error, candidates_json=excluded.candidates_json,
-            audit_json=excluded.audit_json, unresolved_description=excluded.unresolved_description,
-            updated_at=excluded.updated_at, device_id=excluded.device_id
-        `).run({ ...v, useLanguageModel: v.useLanguageModel ? 1 : 0 });
         break;
       }
     }

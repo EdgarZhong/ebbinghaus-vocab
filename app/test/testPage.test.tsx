@@ -1,11 +1,12 @@
 /**
  * 测试页测试：任务列表（常规分组 / 词书任务）、逐词测试会话主路径（开始 →
- * 作答 → 揭示 → 确认 → 完成）、暂停/恢复、改判单向与键盘语义、词书纸质复习。
+ * 作答 → 揭示 → 确认 → 完成）、暂停/恢复、"点错了"队尾重测、
+ * 改判与键盘语义、词书纸质复习。
  */
 
 import { describe, expect, it } from "vitest";
 import { userEvent } from "@testing-library/user-event";
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import { ConfirmedEntry } from "@ebbinghaus/application";
 import { createTestServices, renderApp } from "./helpers.tsx";
 import { FIXED_NOW } from "./helpers.tsx";
@@ -92,6 +93,99 @@ describe("测试页：任务列表", () => {
     await user.click(screen.getByTestId(`test-start-${listId}`));
     expect(screen.getByTestId("test-session-remaining")).toHaveTextContent("尚余 1 个词");
   });
+
+  it("远端确认当前 Word 后原页跳词、丢弃初判，返回列表显示收敛后的剩余数", async () => {
+    const user = userEvent.setup();
+    const mutable = createMutableClock(new Date(FIXED_NOW.getTime() - 2 * 86_400_000));
+    const services = createTestServicesWithClock(mutable.clock);
+    const spaceId = services.getActiveSpace()?.id ?? "";
+    services.bookLearning.recordFirstPass({
+      spaceId, unitNumber: 1, listNumber: 6,
+      entries: ["abandon", "elaborate", "access"].map((term) =>
+        new ConfirmedEntry(term, [{ partOfSpeech: "v.", definition: `释义：${term}`, usage: null }])),
+    });
+    mutable.setNow(FIXED_NOW);
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-test"));
+    const listId = services.runtime.bookCatalogStore.listListsForSpace(spaceId)[0]?.listId ?? "";
+    await user.click(screen.getByTestId(`test-start-${listId}`));
+    const initialWord = screen.getByTestId("session-word").textContent;
+    await user.click(screen.getByTestId("session-recognized"));
+    expect(screen.getByTestId("session-meaning")).toBeInTheDocument();
+    act(() => services.notifyChanged());
+    // 与当前词无关的通知不应擦掉用户尚未提交的第一阶段判断。
+    expect(screen.getByTestId("session-meaning")).toBeInTheDocument();
+
+    const session = services.runtime.testSessionStore.getOpenListSession(listId);
+    const firstPlan = session?.words[0];
+    if (session === null || firstPlan === undefined) throw new Error("缺少开放的词书测试会话");
+    // 模拟同步 pull：事件直接落入本地事件库且不进入本机 outbox，随后才发业务通知。
+    // 远端已完成第一步和第二步，本机仅揭示答案的初判不应转移到下一词。
+    const remoteAnswer = services.eventRecorder.record({
+      eventType: "testAnswered", targetType: "Word", targetId: firstPlan.wordId,
+      source: "另一设备的词书模式测试", occurredAt: FIXED_NOW,
+      metadata: {
+        sessionId: "remote-session", taskId: session.taskId,
+        plannedTestAt: firstPlan.plannedTestAt,
+        initialJudgement: "认识", finalJudgement: "认识", answerRevised: false,
+        beforeState: { shortTermPassCount: 0, masteryStatus: "未掌握" },
+        afterState: { shortTermPassCount: 1, masteryStatus: "未掌握", t1: FIXED_NOW.toISOString() },
+        algorithmVersion: session.taskSnapshot?.algorithmVersion ?? "test-v1",
+      },
+    });
+    act(() => {
+      services.runtime.eventStore.applyPulledEvents([remoteAnswer]);
+      services.notifyChanged();
+    });
+
+    expect(screen.getByTestId("session-word")).not.toHaveTextContent(initialWord ?? "");
+    expect(screen.getByTestId("test-session-remaining")).toHaveTextContent("尚余 2 个词");
+    expect(screen.queryByTestId("session-meaning")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-answer-panel")).toHaveClass("pending");
+    await user.click(screen.getByTestId("session-pause"));
+    expect(screen.getByTestId(`test-task-${listId}`)).toHaveTextContent("本 List 尚余 2 个词");
+    expect(screen.getByTestId(`test-start-${listId}`)).toHaveTextContent("继续测试");
+  });
+
+  it("远端作答落库与本机点击交错时拒绝旧 Word，且不产生重复答案", async () => {
+    const user = userEvent.setup();
+    const mutable = createMutableClock(new Date(FIXED_NOW.getTime() - 2 * 86_400_000));
+    const services = createTestServicesWithClock(mutable.clock);
+    const spaceId = services.getActiveSpace()?.id ?? "";
+    services.bookLearning.recordFirstPass({
+      spaceId, unitNumber: 1, listNumber: 7,
+      entries: ["abandon", "elaborate"].map((term) =>
+        new ConfirmedEntry(term, [{ partOfSpeech: "v.", definition: `释义：${term}`, usage: null }])),
+    });
+    mutable.setNow(FIXED_NOW);
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-test"));
+    const listId = services.runtime.bookCatalogStore.listListsForSpace(spaceId)[0]?.listId ?? "";
+    await user.click(screen.getByTestId(`test-start-${listId}`));
+    await user.click(screen.getByTestId("session-recognized"));
+    const session = services.runtime.testSessionStore.getOpenListSession(listId);
+    const firstPlan = session?.words[0];
+    if (session === null || firstPlan === undefined) throw new Error("缺少开放的词书测试会话");
+    const remoteAnswer = services.eventRecorder.record({
+      eventType: "testAnswered", targetType: "Word", targetId: firstPlan.wordId,
+      source: "另一设备的词书模式测试", occurredAt: FIXED_NOW,
+      metadata: {
+        sessionId: "remote-session", taskId: session.taskId,
+        plannedTestAt: firstPlan.plannedTestAt,
+        initialJudgement: "认识", finalJudgement: "认识", answerRevised: false,
+        beforeState: { shortTermPassCount: 0, masteryStatus: "未掌握" },
+        afterState: { shortTermPassCount: 1, masteryStatus: "未掌握", t1: FIXED_NOW.toISOString() },
+        algorithmVersion: session.taskSnapshot?.algorithmVersion ?? "test-v1",
+      },
+    });
+    // 刻意不发 notifyChanged，复现 pull 刚落库、旧按钮仍可被点击的极窄时间窗。
+    services.runtime.eventStore.applyPulledEvents([remoteAnswer]);
+    await user.click(screen.getByTestId("session-next"));
+    expect(screen.getByTestId("session-word")).toHaveTextContent("elaborate");
+    expect(screen.getByTestId("session-answer-panel")).toHaveClass("pending");
+    expect(screen.getByTestId("session-error")).toHaveTextContent("当前 Word 已由另一设备确认");
+    expect(services.runtime.eventStore.listAllEvents().filter((event) => event.eventType === "testAnswered")).toHaveLength(1);
+  });
 });
 
 describe("测试页：逐词测试会话（常规模式）", () => {
@@ -160,8 +254,32 @@ describe("测试页：逐词测试会话（常规模式）", () => {
     await user.click(screen.getByTestId("test-start-1"));
     await user.click(screen.getByTestId("session-not-recognized"));
     expect(screen.getByTestId("session-confirm-not-recognized")).toBeInTheDocument();
+    expect(screen.getByTestId("session-defer")).toHaveTextContent("点错了");
     expect(screen.queryByTestId("session-recognized")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-next")).not.toBeInTheDocument();
+  });
+
+  it("初判不认识后点错了不生成作答事件，队尾词重新从未揭晓状态测试", async () => {
+    const user = userEvent.setup();
+    const { services } = seedRegularDueServices(["abandon", "elaborate"]);
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-test"));
+    await user.click(screen.getByTestId("test-start-1"));
+    const firstWord = screen.getByTestId("session-word").textContent;
+    await user.click(screen.getByTestId("session-not-recognized"));
+    expect(screen.getByTestId("session-meaning")).toBeInTheDocument();
+    await user.keyboard("{Backspace}");
+    // 揭晓后的 Backspace 不能触发没有快捷键的"点错了"，也不能提交答案。
+    expect(screen.getByTestId("session-meaning")).toBeInTheDocument();
+    await user.click(screen.getByTestId("session-defer"));
+    expect(screen.getByTestId("session-word")).not.toHaveTextContent(firstWord ?? "");
+    expect(screen.getByTestId("session-answer-panel")).toHaveClass("pending");
+    expect(screen.getByTestId("test-session-remaining")).toHaveTextContent("尚余 2 个条目");
+    expect(services.runtime.eventStore.listAllEvents().filter((event) => event.eventType === "testAnswered")).toHaveLength(0);
+    await user.click(screen.getByTestId("session-recognized"));
+    await user.click(screen.getByTestId("session-next"));
+    expect(screen.getByTestId("session-word")).toHaveTextContent(firstWord ?? "");
+    expect(screen.getByTestId("session-answer-panel")).toHaveClass("pending");
   });
 
   it("暂停保留进度，任务行显示继续测试，恢复后继续剩余词", async () => {

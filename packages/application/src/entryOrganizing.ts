@@ -200,6 +200,12 @@ export interface ConflictingWord {
   readonly existingWordId: string;
   readonly existingSpelling: string;
   readonly incomingSpelling: string;
+  /** 对照只使用本地已存的手录义项；线上词典不会参与覆盖决定。 */
+  readonly existingMeanings: readonly StructuredMeaning[];
+  /** 兼容早期仅有整段手录释义的词条，保证旧内容仍能被用户看见。 */
+  readonly existingManualMeaning: string;
+  /** 本次待保存的最终表单义项，与用户点击保存时的内容保持一致。 */
+  readonly incomingMeanings: readonly StructuredMeaning[];
 }
 
 /**

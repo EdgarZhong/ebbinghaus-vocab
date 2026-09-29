@@ -120,7 +120,7 @@ export interface CloudSyncPort {
   hasToken(): boolean;
   configureToken(token: string): void;
   syncNow(): Promise<unknown>;
-  /** 本地内容或事件已落盘后的非阻塞触发；短时间多次写入由控制器合并。 */
+  /** 正式内容或学习事件已落盘后的非阻塞触发；本机录入草稿不使用此入口。 */
   requestSyncSoon(): void;
   /** 独立的同步状态版本；后台轮询只更新设置页，不广播业务数据变化。 */
   subscribeStatus(listener: () => void): () => void;

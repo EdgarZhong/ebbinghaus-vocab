@@ -130,10 +130,16 @@ function toBookTaskItem(
 ): TaskItemSnapshot {
   const listRecord = listsById.get(task.listId);
   // 开放会话保护：会话开始时绑定任务标识，仅匹配的会话计入进度（scheduling.ts 口径）。
-  const openSession = deps.runtime.testSessionStore.getOpenListSession(task.listId);
+  let openSession = deps.runtime.testSessionStore.getOpenListSession(task.listId);
   const sessionMatches = openSession !== null && openSession.taskId === task.taskId;
-  const sessionStatus: TestSessionExecutionStatus | null = sessionMatches ? openSession.status : null;
-  const completedCount = sessionMatches ? openSession.currentPosition : 0;
+  if (sessionMatches && openSession !== null) {
+    // 远端作答已进入本地事件库，但开放会话的位置仍可能是本机上次显示的旧值。
+    // 先由应用用例重基准，再读取持久会话统计，避免任务行继续报旧的剩余词数。
+    deps.bookLearning.getBookTestSessionSnapshot(openSession.sessionId);
+    openSession = deps.runtime.testSessionStore.getOpenListSession(task.listId);
+  }
+  const sessionStatus: TestSessionExecutionStatus | null = sessionMatches && openSession !== null ? openSession.status : null;
+  const completedCount = sessionMatches && openSession !== null ? openSession.currentPosition : 0;
   // 待测/待复习词数：测试任务取测试需求；仅复习取复习需求（与调度工作量口径一致）。
   const demandWordIds =
     task.taskType === "仅复习"

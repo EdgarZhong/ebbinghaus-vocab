@@ -252,6 +252,18 @@ export class InMemoryTestSessionStore implements TestSessionStore {
     this.sessions.set(session.sessionId, session);
   }
 
+  reorderSessionWords(session: TestSessionRecord): void {
+    const existing = this.sessions.get(session.sessionId);
+    if (existing === undefined) {
+      throw new Error(`测试会话不存在：${session.sessionId}`);
+    }
+    this.sessions.set(session.sessionId, {
+      ...existing,
+      words: [...session.words],
+      lastActiveAt: session.lastActiveAt,
+    });
+  }
+
   getSession(sessionId: string): TestSessionRecord | null {
     return this.sessions.get(sessionId) ?? null;
   }

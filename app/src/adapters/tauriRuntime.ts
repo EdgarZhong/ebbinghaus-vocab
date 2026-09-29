@@ -38,7 +38,7 @@ export function createTauriRuntime(
     wordContentStore: new SqliteWordContentStore(db, contentSyncStore),
     bookCatalogStore: new SqliteBookCatalogStore(db, contentSyncStore),
     spaceStore: new SqliteSpaceStore(db, contentSyncStore),
-    firstPassDraftStore: new SqliteFirstPassDraftStore(db, contentSyncStore),
+    firstPassDraftStore: new SqliteFirstPassDraftStore(db),
     testSessionStore: new SqliteTestSessionStore(db),
     fsrsCardStore: new SqliteFsrsCardStore(db),
     dailyPlanStore: new SqliteDailyPlanStore(db),

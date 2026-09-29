@@ -218,10 +218,22 @@
   padding: var(--block-gap);
 }
 
+.test-session-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--group-gap);
+  width: 100%;
+}
+
+.test-session-pause {
+  flex: 0 0 auto;
+}
+
 .test-session-remaining {
-  align-self: flex-end;
   margin: 0;
   color: var(--color-text-secondary);
+  text-align: right;
 }
 
 .test-session-word {
@@ -282,9 +294,45 @@
   min-height: 44px;
 }
 
+.test-session-confirm {
+  min-width: 260px;
+}
+
+/* 误触纠正不是另一种作答：与确认按钮拉开视觉层级并缩小宽度，避免
+   用户在揭晓答案后把“点错了”当作最终“认识”结果。 */
+.test-session-defer-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-top: auto;
+  padding-top: 16px;
+}
+
+.test-session-defer {
+  width: 128px;
+}
+
+/* 移动端无需向用户展示桌面物理键盘操作提示；按钮自身的语义文案仍保留。 */
+@media (max-width: 900px) {
+  .test-session-shortcut { display: none; }
+
+  .test-session-defer-wrap {
+    /* 800px 窄屏同样使用移动外壳，次级操作也必须与主确认明显分开。 */
+    padding-top: 48px;
+  }
+}
+
 /* 窄屏（缺陷 3 实证）：会话操作改竖排全宽——认识/不认识两枚 44px+ 按钮并排
    在 412px 视口会被文案撑出横向溢出；竖排后拇指可达且不裁切。 */
 @media (max-width: 560px) {
+  .test-session {
+    /* 卡片延伸到手机内容区域下缘，使暂缓入口稳定落在页面下方；小屏内容
+       自然增高并允许纵向滚动，不压缩答案或主按钮的触控尺寸。Android 将系统
+       导航栏透明绘制在 WebView 上方，底部内边距需预留动态安全区以免遮住次级操作。 */
+    min-height: calc(100dvh - 150px);
+    padding-bottom: calc(var(--block-gap) + max(var(--android-nav-inset, 0px), 32px));
+  }
+
   .test-session-actions {
     flex-direction: column;
     align-items: stretch;
@@ -292,10 +340,10 @@
     max-width: 420px;
   }
 
-  /* "暂停并返回"与主操作同宽同列，视觉节奏一致。 */
-  .test-session-body > .btn {
-    align-self: stretch;
+  .test-session-confirm {
+    min-width: 0;
   }
+
 }
 
 .test-completed {
@@ -486,18 +534,80 @@
   gap: 12px;
 }
 
-/* 冲突处理行。 */
-.conflict-row {
+/* 重复条目：进度与提交固定，只有冲突列表滚动；长释义完整换行。 */
+.conflict-toolbar,
+.conflict-bulk-actions,
+.conflict-footer {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--color-border);
+  justify-content: space-between;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.conflict-row:last-child {
-  border-bottom: none;
+.conflict-progress { margin: 0; font-weight: 700; }
+.conflict-select-all,
+.conflict-row-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.conflict-select-all { gap: 8px; }
+.conflict-select-all input,
+.conflict-row-select input { width: 20px; height: 20px; accent-color: var(--color-accent); }
+.conflict-bulk-actions {
+  justify-content: flex-start;
+  padding: 10px 0;
+  border-block: 1px solid var(--color-border);
+}
+.conflict-bulk-actions span { color: var(--color-text-secondary); margin-right: auto; }
+.conflict-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.conflict-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.conflict-row:last-child { border-bottom: none; }
+.conflict-row-main { flex: 1; min-width: 0; }
+.conflict-row summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+.conflict-row summary::marker { color: var(--color-accent); }
+.conflict-word { font-weight: 700; font-size: var(--font-size-item); }
+.conflict-row-status { color: var(--color-text-secondary); }
+.conflict-expand-hint { margin-left: auto; color: var(--color-accent); font-size: var(--font-size-secondary); }
+.conflict-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 10px 0; }
+.conflict-version { min-width: 0; padding: 12px; background: var(--color-canvas); border: 1px solid var(--color-border); border-radius: var(--radius-small); overflow-wrap: anywhere; }
+.conflict-version-incoming { border-color: var(--color-accent); }
+.conflict-version h3 { margin: 0 0 6px; font-size: var(--font-size-body); }
+.conflict-version strong { display: block; margin-bottom: 8px; }
+.conflict-meanings { margin: 0; padding-left: 20px; }
+.conflict-meanings li + li { margin-top: 8px; }
+.conflict-meanings small { display: block; color: var(--color-text-secondary); font-size: var(--font-size-secondary); }
+.conflict-meaning-fallback { margin: 0; white-space: pre-wrap; }
+.conflict-row-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+.conflict-row-actions .btn[aria-pressed="true"] { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.conflict-footer { padding-top: 12px; border-top: 1px solid var(--color-border); }
+
+@media (max-width: 600px) {
+  .modal-solid { padding: 14px; gap: 10px; }
+  .conflict-comparison { grid-template-columns: 1fr; }
+  /* 16 项以上冲突时行内操作纵向堆叠会把列表拉得过长；等宽并排且允许文案换行。 */
+  .conflict-row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .conflict-row-actions .btn { min-width: 0; padding-inline: 6px; }
+  .conflict-bulk-actions .btn { flex: 1 1 100%; }
+  .conflict-footer .btn { flex: 1 1 100%; }
 }
 
 /* 词汇页：全宽单列卡片 + 右侧滑出详情。 */

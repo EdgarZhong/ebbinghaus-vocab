@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ApplicationEvent, WordContentRecord } from "@ebbinghaus/application";
+import type { ApplicationEvent, FirstPassDraftRecord, WordContentRecord } from "@ebbinghaus/application";
 import { createNodeClientRuntime, type NodeClientRuntime } from "../src/index.ts";
 import { TransparentSecretCipher } from "../src/repositories/settings.ts";
 
@@ -53,6 +53,37 @@ describe("SQLite 仓储（端口合同落实）", () => {
 
   afterEach(() => {
     runtime.close();
+  });
+
+  describe("首过录入草稿", () => {
+    const draft: FirstPassDraftRecord = {
+      id: "draft-local-only", spaceId: "space-local-only", unitNumber: 1, listNumber: 2,
+      rawText: "仅本机原文", useLanguageModel: false, status: "草稿",
+      lastError: null, candidatesJson: null, auditJson: null, unresolvedDescription: null,
+      updatedAt: CLOCK_ISO, deviceId: "b7e2f3a4-1c5d-4e8f-9a0b-2c3d4e5f6a7b",
+    };
+
+    it("写入和确认只改变本机正文，不进入内容出站队列", () => {
+      const before = runtime.contentSyncStore.pendingCount();
+      runtime.firstPassDraftStore.upsertDraft(draft);
+      expect(runtime.firstPassDraftStore.getDraft(draft.id)?.rawText).toBe(draft.rawText);
+      expect(runtime.contentSyncStore.pendingCount()).toBe(before);
+      runtime.firstPassDraftStore.upsertDraft({ ...draft, status: "已确认" });
+      expect(runtime.firstPassDraftStore.getDraft(draft.id)?.status).toBe("已确认");
+      expect(runtime.contentSyncStore.pendingCount()).toBe(before);
+    });
+
+    it("旧版遗留草稿出站项不计数也不返回，草稿正文仍可读取", () => {
+      runtime.firstPassDraftStore.upsertDraft(draft);
+      // 直接装载升级前已持久化的 outbox 行；新版 recordLocal 已拒绝创建草稿项。
+      runtime.db.prepare("INSERT INTO content_outbox (entity_type, entity_id, payload_json, next_attempt_at) VALUES (?, ?, ?, ?)")
+        .run("draft", draft.id, JSON.stringify(draft), CLOCK_ISO);
+      runtime.contentSyncStore.recordLocal("draft", "new-draft", draft);
+      expect((runtime.db.prepare("SELECT COUNT(*) AS total FROM content_outbox WHERE entity_type = 'draft'").get() as { total: number }).total).toBe(1);
+      expect(runtime.contentSyncStore.pendingCount()).toBe(0);
+      expect(runtime.contentSyncStore.dueEntries(CLOCK_ISO, 10)).toEqual([]);
+      expect(runtime.firstPassDraftStore.getDraft(draft.id)?.rawText).toBe(draft.rawText);
+    });
   });
 
   describe("学习事件存储（append-only 铁律）", () => {
@@ -168,7 +199,11 @@ describe("SQLite 仓储（端口合同落实）", () => {
       learningDay: "2026-07-15",
       groupOrdinal: 1,
       taskId: null,
-      words: [{ wordId: "w-1", plannedTestAt: CLOCK_ISO }],
+      words: [
+        { wordId: "w-1", plannedTestAt: CLOCK_ISO },
+        { wordId: "w-2", plannedTestAt: CLOCK_ISO },
+        { wordId: "w-3", plannedTestAt: CLOCK_ISO },
+      ],
       currentPosition: 0,
       status: "进行中" as const,
       answeredWordIds: [],
@@ -193,6 +228,34 @@ describe("SQLite 仓储（端口合同落实）", () => {
       // words 快照保持开场定格（update 只改进度/状态/已答/活跃时间）。
       expect(updated?.words).toEqual(session.words);
       expect(updated?.startedAt).toBe(CLOCK_ISO);
+    });
+
+    it("点错了只持久化现有计划的顺序，不改位置、结果或成员", () => {
+      runtime.testSessionStore.addSession(session);
+      const reordered = {
+        ...session,
+        words: [session.words[0]!, session.words[2]!, session.words[1]!],
+        lastActiveAt: "2026-07-15T09:05:00.000Z",
+      };
+
+      runtime.testSessionStore.reorderSessionWords(reordered);
+
+      const updated = runtime.testSessionStore.getSession("sess-1");
+      expect(updated?.words).toEqual(reordered.words);
+      expect(updated?.currentPosition).toBe(session.currentPosition);
+      expect(updated?.answeredWordIds).toEqual(session.answeredWordIds);
+      expect(updated?.status).toBe(session.status);
+      expect(updated?.startedAt).toBe(session.startedAt);
+      expect(updated?.lastActiveAt).toBe(reordered.lastActiveAt);
+    });
+
+    it("队列重排不能增删或改写 Word 计划", () => {
+      runtime.testSessionStore.addSession(session);
+      expect(() => runtime.testSessionStore.reorderSessionWords({
+        ...session,
+        words: [...session.words.slice(0, 2), { wordId: "other", plannedTestAt: CLOCK_ISO }],
+      })).toThrow(/不得增删或改写/);
+      expect(runtime.testSessionStore.getSession("sess-1")?.words).toEqual(session.words);
     });
   });
 

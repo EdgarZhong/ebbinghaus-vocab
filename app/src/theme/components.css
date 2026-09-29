@@ -415,6 +415,11 @@ div.space-row-select {
   z-index: 40;
 }
 
+/* 大批量冲突需要读长文本：暗化背景并用不透底的实色纸面承载新旧对照。 */
+.modal-backdrop-solid {
+  background: rgb(0 0 0 / 0.62);
+}
+
 /* 玻璃容器（正常路径落在库容器、降级路径落在 .glass-fallback）：内容超出
    窄视口时允许玻璃自身收敛，宽度实际由 .modal 的 min() 决定。 */
 .modal-glass {
@@ -433,6 +438,16 @@ div.space-row-select {
   display: flex;
   flex-direction: column;
   gap: var(--group-gap);
+}
+
+.modal-solid {
+  width: min(760px, calc(100vw - 48px));
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xlarge);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
 }
 
 .modal-title {

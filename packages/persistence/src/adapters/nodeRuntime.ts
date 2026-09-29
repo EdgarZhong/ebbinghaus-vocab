@@ -148,7 +148,7 @@ export function createNodeClientRuntime(
     deviceSeqAllocator: new SqliteDeviceSeqAllocator(db),
     pullCursor,
     contentSyncStore,
-    firstPassDraftStore: new SqliteFirstPassDraftStore(db, contentSyncStore),
+    firstPassDraftStore: new SqliteFirstPassDraftStore(db),
     syncEngine,
     close: () => {
       db.close();

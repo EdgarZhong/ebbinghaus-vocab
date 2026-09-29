@@ -88,7 +88,7 @@ describe("V1 在线备份导入全新 V2 工作库", () => {
     const imported = importV1BackupToNewClient(backup, target);
     expect(imported.alreadyImported).toBe(false);
     expect(imported.counts).toEqual({ spaces: 1, units: 1, lists: 1, words: 1,
-      drafts: 1, events: 1, settings: 9, eventOutbox: 10, contentOutbox: 5 });
+      drafts: 1, events: 1, settings: 9, eventOutbox: 10, contentOutbox: 4 });
     expect(JSON.stringify(imported)).not.toContain("sample");
     const db = new Database(target, { readonly: true, fileMustExist: true });
     try {
@@ -100,6 +100,9 @@ describe("V1 在线备份导入全新 V2 工作库", () => {
         .toEqual({ value: mapLegacySpaceId("legacy-book") });
       expect((db.prepare("SELECT payload_json FROM content_outbox WHERE entity_type = 'word'").get() as { payload_json: string })
         .payload_json).toContain("sample");
+      // V1 草稿正文仍留在迁入设备，任何待推内容行都不得携带未提交原文。
+      expect(db.prepare("SELECT raw_text FROM first_pass_drafts").get()).toEqual({ raw_text: "sample n. 示例" });
+      expect(db.prepare("SELECT 1 FROM content_outbox WHERE entity_type = 'draft'").get()).toBeUndefined();
     } finally {
       db.close();
     }

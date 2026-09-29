@@ -24,9 +24,11 @@ export interface ModalProps {
   /** Escape / 取消按钮的关闭回调。 */
   onClose(): void;
   children: ReactNode;
+  /** 长内容决策弹窗使用实色表面，防止底层文字透出影响对照阅读。 */
+  surface?: "glass" | "solid";
 }
 
-export function Modal({ title, onClose, children }: ModalProps): ReactNode {
+export function Modal({ title, onClose, children, surface = "glass" }: ModalProps): ReactNode {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
@@ -41,15 +43,21 @@ export function Modal({ title, onClose, children }: ModalProps): ReactNode {
   }, [onClose]);
 
   return (
-    <div className="modal-backdrop">
-      {/* Glass 是浮动层原语：背板（fixed）即已定位祖先，玻璃在其中居中；
-          testid 保留在 .modal 内容 div 上，两条路径查询口径一致。 */}
-      <Glass className="modal-glass" padding="0" cornerRadius={16} overLight={false}>
-        <div className="modal" role="dialog" aria-modal="true" aria-label={title} data-testid="modal">
+    <div className={`modal-backdrop${surface === "solid" ? " modal-backdrop-solid" : ""}`}>
+      {surface === "solid" ? (
+        <div className="modal modal-solid" role="dialog" aria-modal="true" aria-label={title} data-testid="modal">
           <h2 className="modal-title">{title}</h2>
           {children}
         </div>
-      </Glass>
+      ) : (
+        // Glass 路径继续服务普通短对话框；实色路径只服务需要阅读长对照的弹窗。
+        <Glass className="modal-glass" padding="0" cornerRadius={16} overLight={false}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label={title} data-testid="modal">
+            <h2 className="modal-title">{title}</h2>
+            {children}
+          </div>
+        </Glass>
+      )}
     </div>
   );
 }

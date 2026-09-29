@@ -8,8 +8,8 @@
  *   数据（需求规格 6.9、判断文件 A1 第 11–14 项），走 LlmConfigurationService；
  *   API 密钥只以脱敏形态展示，不提供查看明文入口，仅提供"清空并重新填写"。
  *
- * 保存语义按 V1 实际页面：密钥行独立保存，目标保持率需两次确认并独立保存；
- * “保存设置”按钮提交其余设置。失败保留用户当前输入。
+ * 普通设置逐项自动保存；密钥行独立保存，目标保持率仍需点击按钮并两次确认。
+ * 各字段失败时保留用户当前输入，未提交草稿不会被其他字段顺带保存。
  *
  * 当前按正式 V1 桌面设置页提供联网辅助总开关，不暴露词典来源选择；两源并发
  * 的选择属于后台适配器行为。
@@ -26,7 +26,6 @@ interface FieldErrors {
   rollover?: string;
   baseUrl?: string;
   modelName?: string;
-  retention?: string;
 }
 
 type SaveStatus = "idle" | "saved" | "retention-saved" | "key-saved" | "failed";
@@ -92,33 +91,95 @@ export function SettingsPage(): ReactNode {
 
   const isRegularMode = activeSpace?.learningMode === "常规模式";
 
-  /** 客户端先做形态校验（就地提示），全部通过后再交给应用层用例保存。 */
-  const validate = (): FieldErrors => {
-    const next: FieldErrors = {};
-    const trimmedTimezone = timezoneName.trim();
-    if (!trimmedTimezone) {
-      next.timezone = "时区不能为空。";
-    } else {
+  /** 每次只校验并保存正在编辑的字段，其他输入中的草稿不能阻塞或混入本次写入。 */
+  const saveOrdinary = (field: keyof FieldErrors, error: string | undefined,
+    persist: () => void): void => {
+    setErrors((previous) => ({ ...previous, [field]: error }));
+    if (error !== undefined) { setStatus("failed"); return; }
+    try {
+      persist();
+      services.notifyChanged();
+      setStatus("saved");
+    } catch (cause) {
+      console.error("自动保存设置失败", cause);
+      setStatus("failed");
+    }
+  };
+
+  const saveTimezone = (): void => {
+    const value = timezoneName.trim();
+    let error: string | undefined;
+    if (!value) error = "时区不能为空。";
+    else {
       try {
-        // 用 timeZone 选项校验 IANA 时区名（locale 固定 "en" 仅做合法性探针）。
-        // 刻意不用 `new Intl.DateTimeFormat(时区名)`：那是 locale 参数，会把时区名
-        // 误当 locale 解析（真实浏览器与 jsdom 都会拒绝合法 IANA 名称）。
-        new Intl.DateTimeFormat("en", { timeZone: trimmedTimezone });
+        // 必须作为 timeZone 选项校验；把时区传作 locale 会错误拒绝合法名称。
+        new Intl.DateTimeFormat("en", { timeZone: value });
       } catch {
-        next.timezone = "时区名称无效，请输入 IANA 时区名称，例如 Asia/Shanghai。";
+        error = "时区名称无效，请输入 IANA 时区名称，例如 Asia/Shanghai。";
       }
     }
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dayRolloverTime)) {
-      next.rollover = "换日时间必须是 HH:mm 格式的本地时间。";
+    saveOrdinary("timezone", error, () => {
+      services.settings.saveLearningDaySettings({
+        timezoneName: value,
+        dayRolloverTime: services.settings.getLearningScheduleSettings().dayRolloverTime,
+      });
+      setTimezoneName(value);
+    });
+  };
+
+  const saveRollover = (): void => {
+    const error = /^([01]\d|2[0-3]):[0-5]\d$/.test(dayRolloverTime)
+      ? undefined : "换日时间必须是 HH:mm 格式的本地时间。";
+    saveOrdinary("rollover", error, () => services.settings.saveLearningDaySettings({
+      timezoneName: services.settings.getLearningScheduleSettings().timezoneName,
+      dayRolloverTime,
+    }));
+  };
+
+  const saveFeatureFlag = (field: "smartOrganizing" | "onlineDictionary", value: boolean): void => {
+    // 用最新持久值补齐同一设置组，避免另一个开关的旧 React 快照覆盖较新的修改。
+    try {
+      services.settings.saveFeatureFlags({ ...services.settings.getFeatureFlags(), [field]: value });
+      services.notifyChanged();
+      setStatus("saved");
+    } catch (cause) {
+      console.error("自动保存联网辅助设置失败", cause);
+      setStatus("failed");
     }
-    const trimmedBaseUrl = llmBaseUrl.trim();
-    if (!trimmedBaseUrl.startsWith("https://")) {
-      next.baseUrl = "基础地址必须使用 HTTPS。";
+  };
+
+  const saveLlmField = (field: "baseUrl" | "modelName", value: string): void => {
+    const trimmed = value.trim();
+    const error = field === "baseUrl"
+      ? trimmed.startsWith("https://") ? undefined : "基础地址必须使用 HTTPS。"
+      : trimmed ? undefined : "模型名称不能为空。";
+    saveOrdinary(field, error, () => {
+      const snapshot = services.llm.configurationSnapshot();
+      const saved = services.llm.saveConfiguration({
+        baseUrl: field === "baseUrl" ? trimmed : snapshot.baseUrl,
+        modelName: field === "modelName" ? trimmed : snapshot.modelName,
+        apiKey: null,
+        thinkingEnabled: snapshot.thinkingEnabled,
+      });
+      setLlmDisplay(saved);
+      if (field === "baseUrl") setLlmBaseUrl(trimmed);
+      else setLlmModelName(trimmed);
+    });
+  };
+
+  const saveThinking = (value: boolean): void => {
+    try {
+      const snapshot = services.llm.configurationSnapshot();
+      setLlmDisplay(services.llm.saveConfiguration({
+        baseUrl: snapshot.baseUrl, modelName: snapshot.modelName,
+        apiKey: null, thinkingEnabled: value,
+      }));
+      services.notifyChanged();
+      setStatus("saved");
+    } catch (cause) {
+      console.error("自动保存思考开关失败", cause);
+      setStatus("failed");
     }
-    if (!llmModelName.trim()) {
-      next.modelName = "模型名称不能为空。";
-    }
-    return next;
   };
 
   /** V1 的目标保持率是独立危险设置：只接受完整数值且与其他字段分开提交。 */
@@ -133,22 +194,18 @@ export function SettingsPage(): ReactNode {
   /** API 密钥行独立保存；留空明确清空，取消只退出填写状态。 */
   const saveApiKey = (): void => {
     if (apiKey.phase !== "refill") return;
-    const llmErrors: FieldErrors = {};
-    if (!llmBaseUrl.trim().startsWith("https://")) llmErrors.baseUrl = "基础地址必须使用 HTTPS。";
-    if (!llmModelName.trim()) llmErrors.modelName = "模型名称不能为空。";
-    setErrors(llmErrors);
-    if (Object.keys(llmErrors).length > 0) { setStatus("failed"); return; }
     try {
+      const current = services.llm.configurationSnapshot();
       const snapshot = apiKey.draft.trim() === ""
-        ? services.llm.clearApiKey({ thinkingEnabled })
+        ? services.llm.clearApiKey()
         : services.llm.saveConfiguration({
-            baseUrl: llmBaseUrl.trim(), modelName: llmModelName.trim(),
-            apiKey: apiKey.draft.trim(), thinkingEnabled,
+            // 密钥行只提交密钥；地址、模型和开关的未提交输入仍由各自控件负责。
+            baseUrl: current.baseUrl,
+            modelName: current.modelName,
+            apiKey: apiKey.draft.trim(),
+            thinkingEnabled: current.thinkingEnabled,
           });
       setLlmDisplay(snapshot);
-      setLlmBaseUrl(snapshot.baseUrl);
-      setLlmModelName(snapshot.modelName);
-      setThinkingEnabled(snapshot.thinkingEnabled);
       setApiKey(snapshot.hasApiKey ? { phase: "masked" } : { phase: "refill", draft: "" });
       services.notifyChanged();
       setStatus("key-saved");
@@ -216,51 +273,23 @@ export function SettingsPage(): ReactNode {
     void services.cloudSync.syncNow();
   };
 
-  const save = (): void => {
-    // V1 在目标保持率被修改时只处理这项危险设置；两次确认结束后，用户需再点
-    // “保存设置”才会提交其他草稿，避免一次点击混入两类不同风险的修改。
-    if (retentionError !== undefined) {
-      setErrors({ retention: retentionError });
-      setStatus("failed");
-      return;
-    }
-    if (retentionChanged) {
-      setRetentionConfirmation(1);
-      return;
-    }
-    const nextErrors = validate();
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) {
-      setStatus("failed");
-      return;
-    }
-    try {
-      services.settings.saveLearningDaySettings({
-        timezoneName: timezoneName.trim(),
-        dayRolloverTime,
-      });
-      services.settings.saveFeatureFlags({ smartOrganizing, onlineDictionary });
-      // V1 底部保存只提交地址、模型和思考开关；密钥行须显式点“保存”，
-      // 未提交的明文输入不能因保存其他设置而意外落库。
-      const snapshot = services.llm.saveConfiguration({
-        baseUrl: llmBaseUrl.trim(),
-        modelName: llmModelName.trim(),
-        apiKey: null,
-        thinkingEnabled,
-      });
-      setLlmDisplay(snapshot);
-      services.notifyChanged();
-      setStatus("saved");
-    } catch (cause) {
-      // 应用层校验失败（如换日时间越界）：保留用户输入，给统一失败提示；
-      // 原因仅进控制台供开发定位，不进入界面（规格第 15 章禁止内部术语上屏）。
-      console.error("保存设置失败", cause);
-      setStatus("failed");
-    }
+  const saveRetention = (): void => {
+    // 此按钮只处理目标保持率；普通设置已在各控件上独立保存。
+    if (retentionError === undefined && retentionChanged) setRetentionConfirmation(1);
   };
 
   return (
     <PageShell title="设置" description="调整学习节奏和联网辅助">
+      {/* 自动保存的反馈放在页面开头，用户无需到页尾寻找本次操作的结果。 */}
+      {status !== "idle" ? (
+        <p className={status === "failed" ? "field-error" : "field-hint"}
+          role={status === "failed" ? "alert" : "status"} data-testid="settings-status">
+          {status === "saved" ? "设置已自动保存。"
+            : status === "retention-saved" ? "复习参数已保存"
+            : status === "key-saved" ? llmDisplay.hasApiKey ? "API 密钥已保存" : "API 密钥已清空"
+            : "没有保存成功，请检查输入后重试。"}
+        </p>
+      ) : null}
       <section className="card settings-section" aria-labelledby="settings-learning-day">
         <h2 className="card-section-title" id="settings-learning-day">
           学习日
@@ -276,8 +305,11 @@ export function SettingsPage(): ReactNode {
               value={timezoneName}
               onChange={(event) => {
                 setTimezoneName(event.target.value);
+                setErrors((previous) => ({ ...previous, timezone: undefined }));
                 touch();
               }}
+              onBlur={saveTimezone}
+              onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
               data-testid="settings-timezone"
             />
             {errors.timezone === undefined ? null : (
@@ -300,8 +332,10 @@ export function SettingsPage(): ReactNode {
                 value={dayRolloverTime}
                 onChange={(event) => {
                   setDayRolloverTime(event.target.value);
+                  setErrors((previous) => ({ ...previous, rollover: undefined }));
                   touch();
                 }}
+                onBlur={saveRollover}
                 data-testid="settings-rollover"
               />
               <span>开始</span>
@@ -326,6 +360,7 @@ export function SettingsPage(): ReactNode {
             onChange={(event) => {
               setSmartOrganizing(event.target.checked);
               touch();
+              saveFeatureFlag("smartOrganizing", event.target.checked);
             }}
             data-testid="feature-smart-organizing"
           />
@@ -338,6 +373,7 @@ export function SettingsPage(): ReactNode {
             onChange={(event) => {
               setOnlineDictionary(event.target.checked);
               touch();
+              saveFeatureFlag("onlineDictionary", event.target.checked);
             }}
             data-testid="feature-online-dictionary"
           />
@@ -359,8 +395,11 @@ export function SettingsPage(): ReactNode {
             value={llmBaseUrl}
             onChange={(event) => {
               setLlmBaseUrl(event.target.value);
+              setErrors((previous) => ({ ...previous, baseUrl: undefined }));
               touch();
             }}
+            onBlur={() => saveLlmField("baseUrl", llmBaseUrl)}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
             data-testid="llm-base-url"
           />
           {errors.baseUrl === undefined ? null : (
@@ -379,8 +418,11 @@ export function SettingsPage(): ReactNode {
             value={llmModelName}
             onChange={(event) => {
               setLlmModelName(event.target.value);
+              setErrors((previous) => ({ ...previous, modelName: undefined }));
               touch();
             }}
+            onBlur={() => saveLlmField("modelName", llmModelName)}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
             data-testid="llm-model-name"
           />
           {errors.modelName === undefined ? null : (
@@ -437,6 +479,7 @@ export function SettingsPage(): ReactNode {
             onChange={(event) => {
               setThinkingEnabled(event.target.checked);
               touch();
+              saveThinking(event.target.checked);
             }}
             data-testid="llm-thinking-checkbox"
           />
@@ -460,32 +503,15 @@ export function SettingsPage(): ReactNode {
               value={desiredRetention} data-testid="settings-retention"
               onChange={(event) => { setDesiredRetention(event.target.value); touch(); }} />
             <p className="field-hint">范围 0.80 至 0.99，不推荐修改。修改后只影响后续排期。</p>
-            {errors.retention === undefined ? null : <p className="field-error" role="alert">{errors.retention}</p>}
+            {retentionError === undefined ? null : <p className="field-error" role="alert">{retentionError}</p>}
           </div>
+          <button type="button" className="btn btn-primary" onClick={saveRetention}
+            disabled={retentionError !== undefined || !retentionChanged} data-testid="settings-retention-save">
+            保存目标保持率
+          </button>
         </section>
       ) : null}
-
-      <div className="settings-row">
-        <button type="button" className="btn btn-primary" onClick={save} data-testid="settings-save">
-          保存设置
-        </button>
-        {status === "saved" ? (
-          <p className="field-hint" role="status" data-testid="settings-status">
-            设置已保存。
-          </p>
-        ) : null}
-        {status === "retention-saved" || status === "key-saved" ? (
-          <p className="field-hint" role="status" data-testid="settings-status">
-            {status === "retention-saved" ? "复习参数已保存" : llmDisplay.hasApiKey ? "API 密钥已保存" : "API 密钥已清空"}
-          </p>
-        ) : null}
-        {status === "failed" ? (
-          <p className="field-error" role="alert" data-testid="settings-status">
-            没有保存成功，请检查输入后重试。
-          </p>
-        ) : null}
-      </div>
-      {/* 云端托管有独立令牌保存和同步操作，放在普通设置保存区之后，避免误以为底部按钮会提交云端配置。 */}
+      {/* 云端托管仍有独立令牌保存和同步操作，不参与普通设置自动保存。 */}
       {services.cloudSync === null ? null : (
         <section className="card settings-section" aria-labelledby="settings-cloud-heading">
           <h2 className="card-section-title" id="settings-cloud-heading">云端数据托管</h2>

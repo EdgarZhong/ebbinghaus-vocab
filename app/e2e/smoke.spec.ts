@@ -123,6 +123,56 @@ test("词书录入两步的 Unit 与 List 编号在手机宽度下互不遮挡",
   await screenshot(page, "first-pass-book-location-check");
 });
 
+test("重复词可展开新旧释义对照并全选处理，桌面和手机弹窗保持清晰", async ({ page }) => {
+  await page.goto("/");
+  await navTo(page, "nav-first-pass");
+  const fillBatch = async (firstMeaning: string, secondMeaning: string): Promise<void> => {
+    await page.getByTestId("firstpass-direct-manual").click();
+    await page.getByTestId("firstpass-term-0").fill("abandon");
+    await page.getByTestId("firstpass-def-0-0").fill(firstMeaning);
+    await page.getByTestId("firstpass-add-entry").click();
+    await page.getByTestId("firstpass-term-1").fill("retain");
+    await page.getByTestId("firstpass-def-1-0").fill(secondMeaning);
+    await page.getByTestId("firstpass-save").click();
+  };
+  await fillBatch("旧释义：放弃", "旧释义：保留");
+  await fillBatch("新释义：抛弃", "新释义：保持");
+
+  const modal = page.getByTestId("modal");
+  await expect(modal).toBeVisible();
+  await expect(page.getByTestId("conflict-progress")).toHaveText("已处理 0 / 2 项");
+  await expect(page.getByTestId("conflict-details-abandon")).toHaveAttribute("open", "");
+  await expect(page.getByTestId("conflict-row-abandon")).toContainText("旧释义：放弃");
+  await expect(page.getByTestId("conflict-row-abandon")).toContainText("新释义：抛弃");
+  expect(await modal.evaluate((element) => getComputedStyle(element).backgroundColor)).toMatch(/^rgb\(/);
+  expect(await modal.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toContain("rgba");
+  const existing = await page.locator(".conflict-version-existing").first().boundingBox();
+  const incoming = await page.locator(".conflict-version-incoming").first().boundingBox();
+  expect(existing).not.toBeNull();
+  expect(incoming).not.toBeNull();
+  // 800px 紧凑桌面使用移动导航抽屉，但对照列仍按 600px CSS 断点并排。
+  if ((page.viewportSize()?.width ?? 0) <= 600) expect(incoming!.y).toBeGreaterThan(existing!.y);
+  else expect(incoming!.x).toBeGreaterThan(existing!.x);
+  if ((page.viewportSize()?.width ?? 0) <= 600) {
+    const overwrite = await page.getByTestId("conflict-overwrite-abandon").boundingBox();
+    const skip = await page.getByTestId("conflict-skip-abandon").boundingBox();
+    expect(overwrite).not.toBeNull();
+    expect(skip).not.toBeNull();
+    expect(Math.abs(overwrite!.y - skip!.y)).toBeLessThan(2);
+  }
+  await screenshot(page, "conflict-compare");
+
+  await page.getByTestId("conflict-select-all").check();
+  await page.getByTestId("conflict-bulk-skip").click();
+  await expect(page.getByTestId("conflict-progress")).toHaveText("已处理 2 / 2 项");
+  await page.getByTestId("conflict-overwrite-abandon").click();
+  await expect(page.getByTestId("conflict-status-abandon")).toContainText("从 List 中删除旧词");
+  await expect(page.getByTestId("conflict-commit")).toBeEnabled();
+  await screenshot(page, "conflict-decided");
+  await page.getByTestId("conflict-commit").click();
+  await expect(modal).toHaveCount(0);
+});
+
 test("Space 管理：创建、切换并返回原页面", async ({ page }) => {
   await page.goto("/");
   // 从设置页进入 Space 管理，验证"返回进入前页面"的语义。
@@ -150,15 +200,15 @@ test("Space 管理：创建、切换并返回原页面", async ({ page }) => {
   await expect(page.getByTestId("toast").last()).toContainText("已切换到必考词");
 });
 
-test("设置：修改换日时间并保存成功", async ({ page }) => {
+test("设置：修改换日时间并自动保存成功", async ({ page }) => {
   await page.goto("/");
   await navTo(page, "nav-settings");
   await expect(page.getByTestId("settings-timezone")).toHaveValue("Asia/Shanghai");
 
   await page.getByTestId("settings-rollover").fill("05:30");
   await screenshot(page, "settings-editing");
-  await page.getByTestId("settings-save").click();
-  await expect(page.getByTestId("settings-status")).toContainText("设置已保存。");
+  await page.getByTestId("settings-rollover").blur();
+  await expect(page.getByTestId("settings-status")).toContainText("设置已自动保存。");
   await screenshot(page, "settings-saved");
 });
 
@@ -312,6 +362,50 @@ test("逐词测试主路径：今日页 ≤2 次点击进入，作答到完成",
   await expect(page.getByRole("heading", { level: 1, name: "复习" })).toBeVisible();
   await expect(page.getByTestId("review-group-1")).toContainText("已测试 3 个条目");
   await screenshot(page, "review-reading");
+});
+
+test("测试页点错了移到队尾，桌面左上暂停与手机底部次级按钮保持清楚", async ({ page }) => {
+  await page.goto("/");
+  await seedRegularDueEntries(page, 2);
+  await page.getByTestId("today-start-test").click();
+  await page.getByTestId("test-start-1").click();
+  const firstWord = await page.getByTestId("session-word").textContent();
+  const pauseBox = await page.getByTestId("session-pause").boundingBox();
+  const remainingBox = await page.getByTestId("test-session-remaining").boundingBox();
+  expect(pauseBox).not.toBeNull();
+  expect(remainingBox).not.toBeNull();
+  expect(pauseBox!.x + pauseBox!.width).toBeLessThan(remainingBox!.x);
+  expect(Math.abs(pauseBox!.y - remainingBox!.y)).toBeLessThan(20);
+
+  await page.getByTestId("session-not-recognized").click();
+  const confirmBox = await page.getByTestId("session-confirm-not-recognized").boundingBox();
+  const deferBox = await page.getByTestId("session-defer").boundingBox();
+  expect(confirmBox).not.toBeNull();
+  expect(deferBox).not.toBeNull();
+  expect(deferBox!.width).toBeLessThan(confirmBox!.width);
+  if (isMobileShell(page)) {
+    // 手机上暂缓按钮位于卡片末端，与主确认留出足够距离；快捷键提示
+    // 只在桌面显示，Android WebView 无需出现物理键盘文案。
+    expect(deferBox!.y - (confirmBox!.y + confirmBox!.height)).toBeGreaterThanOrEqual(40);
+    if ((page.viewportSize()?.width ?? 0) <= 560) {
+      const bottomPadding = await page.locator(".test-session").evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).paddingBottom),
+      );
+      expect(bottomPadding).toBeGreaterThanOrEqual(32);
+    }
+    await expect(page.locator(".test-session-shortcut").first()).toBeHidden();
+  } else {
+    await expect(page.locator(".test-session-shortcut").first()).toBeVisible();
+  }
+  await screenshot(page, "test-session-unknown-revealed");
+  await page.getByTestId("session-defer").click();
+  await expect(page.getByTestId("session-word")).not.toHaveText(firstWord ?? "");
+  await expect(page.getByTestId("session-answer-panel")).toHaveClass(/pending/);
+  await expect(page.getByTestId("test-session-remaining")).toContainText("尚余 2 个条目");
+  await page.getByTestId("session-recognized").click();
+  await page.getByTestId("session-next").click();
+  await expect(page.getByTestId("session-word")).toHaveText(firstWord ?? "");
+  await expect(page.getByTestId("session-answer-panel")).toHaveClass(/pending/);
 });
 
 test("词汇页：60 词单列卡片倒序与滚动冒烟", async ({ page }) => {

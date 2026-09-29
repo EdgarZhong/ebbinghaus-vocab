@@ -18,15 +18,19 @@ function seedTestedToday(services: ReturnType<typeof createTestServices>, spaceI
   }
   const taskId = `regular-group|${spaceId}|${group.learningDay}|${group.ordinal}`;
   const session = services.regularLearning.startOrResumeRegularTest({ taskId });
+  let currentWordId = session.currentWord?.wordId ?? "";
   for (let index = 0; index < session.totalCount; index += 1) {
     const snapshot = services.regularLearning.confirmRegularTestAnswer({
       sessionId: session.sessionId,
+      // 每次确认以最新快照里的条目身份为准，测试不能绕开并发防护合同。
+      expectedWordId: currentWordId,
       initialJudgement: index === 1 ? TestJudgement.NotRecognized : TestJudgement.Recognized,
       finalJudgement: index === 1 ? TestJudgement.NotRecognized : TestJudgement.Recognized,
     });
     if (snapshot.currentWord === null) {
       break;
     }
+    currentWordId = snapshot.currentWord.wordId;
   }
 }
 

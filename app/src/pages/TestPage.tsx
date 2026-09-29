@@ -6,8 +6,8 @@
  *   常规模式按当日临时测试组展示（每组条目数从 Space 设置集中读取），词书模式
  *   按 Unit/List 展示。测试与复习始终分开，本页只承担软件逐词测试。
  * - 逐词会话（常规模式）：开始/暂停/恢复、作答前"认识/不认识"两档、揭示答案、
- *   改判单向（初判认识可"标记为忘记"，绝不提供从不认识改回认识的路径）、完成后
- *   按剩余任务给下一步文案。
+ *   初判认识可"标记为忘记"；初判不认识可"点错了"暂缓到本机会话队尾重测，
+ *   不把误触记为最终判断；完成后按剩余任务给下一步文案。
  * - 键盘（规格 14.4）：Enter 表达"认识/下一个/确认不认识"，Backspace 只表达
  *   "不认识/标记为忘记"；仅在会话视图且不处于文本输入状态时生效。
  * - 词书模式按 List 保存会话快照，全部软件测试完成后等待纸质复习。
@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { TestJudgement, type TestJudgement as TestJudgementType } from "@ebbinghaus/domain";
-import type { DictionarySnapshot, TaskItemSnapshot, TestSessionSnapshot } from "@ebbinghaus/application";
+import { TestSessionExecutionStatus, type DictionarySnapshot, type TaskItemSnapshot, type TestSessionSnapshot } from "@ebbinghaus/application";
 import { navigate, routes } from "../router.tsx";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
@@ -44,6 +44,29 @@ export function TestPage(): ReactNode {
   } | null>(null);
   const [revealed, setRevealed] = useState<TestJudgementType | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (sessionState === null || sessionState.spaceId !== activeSpace?.id) return;
+    try {
+      // 同步通知只表示本地副本有新事实，不能继续依赖打开页面时保存的会话快照。
+      // 用例负责把远端已确认事件合入持久会话；这里仅在可见快照确实变化时重绘。
+      const next = activeSpace.learningMode === "常规模式"
+        ? services.regularLearning.getRegularTestSessionSnapshot(sessionState.snapshot.sessionId)
+        : services.bookLearning.getBookTestSessionSnapshot(sessionState.snapshot.sessionId);
+      if (JSON.stringify(next) === JSON.stringify(sessionState.snapshot)) return;
+      // 第一阶段初判只在本机页面内暂存。另一终端已确认当前 Word 后，旧初判
+      // 绝不能套用到收敛后的下一词；同词内容或其他计数更新则仍保留初判。
+      if (next.currentWord?.wordId !== sessionState.snapshot.currentWord?.wordId
+        || next.currentWord === null || next.status === TestSessionExecutionStatus.Completed
+        || next.status === TestSessionExecutionStatus.WaitingForPaperReview) {
+        setRevealed(null);
+      }
+      setSessionState({ spaceId: sessionState.spaceId, snapshot: next });
+    } catch {
+      // 页面可能刚切换 Space 或会话已从本地库清理；下次业务通知再尝试读取。
+      // 读取失败不凭空制造作答事件，也不把用户送回任务列表。
+    }
+  }, [activeSpace, services, sessionState, version]);
 
   /** 仅当会话属于当前活动 Space 时才进入会话视图；否则等价于无会话。 */
   const session =
@@ -298,19 +321,33 @@ function RegularSessionView({
   const confirmAnswer = useCallback(
     (initial: TestJudgementType, final: TestJudgementType) => {
       try {
+        if (currentWord === null) return;
         const next = isRegularMode
-          ? services.regularLearning.confirmRegularTestAnswer({ sessionId: snapshot.sessionId, initialJudgement: initial, finalJudgement: final })
-          : services.bookLearning.confirmBookTestAnswer({ sessionId: snapshot.sessionId, initialJudgement: initial, finalJudgement: final });
+          ? services.regularLearning.confirmRegularTestAnswer({ sessionId: snapshot.sessionId, expectedWordId: currentWord.wordId, initialJudgement: initial, finalJudgement: final })
+          : services.bookLearning.confirmBookTestAnswer({ sessionId: snapshot.sessionId, expectedWordId: currentWord.wordId, initialJudgement: initial, finalJudgement: final });
         services.notifyChanged();
         // 最终判断完成：进入下一词；会话完成时 currentWord 为 null，上层渲染完成视图。
         onChange({ snapshot: next, revealed: null });
         setSessionError(null);
       } catch (cause) {
-        // 会话状态异常（如重复确认）：就地展示原因，不静默吞错。
+        // 拉取与用户点击可能交错：用例会拒绝旧 Word 的确认。立即重读会话，
+        // 丢弃未提交初判，让用户在真实当前词上重新作答；拒绝前未写学习事件。
+        try {
+          const latest = isRegularMode
+            ? services.regularLearning.getRegularTestSessionSnapshot(snapshot.sessionId)
+            : services.bookLearning.getBookTestSessionSnapshot(snapshot.sessionId);
+          if (latest.currentWord?.wordId !== currentWord?.wordId || latest.currentPosition !== snapshot.currentPosition) {
+            onChange({ snapshot: latest, revealed: null });
+            setSessionError("当前 Word 已由另一设备确认，已更新进度，请重新作答。");
+            return;
+          }
+        } catch {
+          // 仍保留原始错误，便于用户看到会话读取失败的实际原因。
+        }
         setSessionError(cause instanceof Error ? cause.message : String(cause));
       }
     },
-    [services, snapshot, onChange, isRegularMode],
+    [services, snapshot, currentWord, onChange, isRegularMode],
   );
 
   const pause = useCallback(() => {
@@ -324,6 +361,36 @@ function RegularSessionView({
     }
     onExit();
   }, [services, snapshot.sessionId, onExit, isRegularMode]);
+
+  const deferCurrentWord = useCallback(() => {
+    if (currentWord === null) return;
+    try {
+      // 暂缓只保存本机执行顺序，不写作答事件。界面立即清空已揭示答案，
+      // 下次轮到同一 Word 时从第一次判断重新开始。
+      const next = isRegularMode
+        ? services.regularLearning.deferRegularTestWord({ sessionId: snapshot.sessionId, expectedWordId: currentWord.wordId })
+        : services.bookLearning.deferBookTestWord({ sessionId: snapshot.sessionId, expectedWordId: currentWord.wordId });
+      services.notifyChanged();
+      onChange({ snapshot: next, revealed: null });
+      setSessionError(null);
+    } catch (cause) {
+      // 与最终确认共用同一条防竞态边界：远端刚确认旧 Word 时先刷新页面，
+      // 不允许“点错了”把重基准后的下一词移走。
+      try {
+        const latest = isRegularMode
+          ? services.regularLearning.getRegularTestSessionSnapshot(snapshot.sessionId)
+          : services.bookLearning.getBookTestSessionSnapshot(snapshot.sessionId);
+        if (latest.currentWord?.wordId !== currentWord.wordId || latest.currentPosition !== snapshot.currentPosition) {
+          onChange({ snapshot: latest, revealed: null });
+          setSessionError("当前 Word 已由另一设备确认，已更新进度，请重新作答。");
+          return;
+        }
+      } catch {
+        // 会话读取失败时显示原始错误，不臆测队列已经成功变更。
+      }
+      setSessionError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [currentWord, isRegularMode, services, snapshot, onChange]);
 
   // 初判：作答前选择"认识/不认识"，只揭示答案，不写任何学习事件。
   const initial = useCallback(
@@ -373,9 +440,12 @@ function RegularSessionView({
   return (
     <PageShell title="逐词测试" description={isRegularMode ? `第 ${snapshot.listNumber ?? 1} 组` : `Unit ${snapshot.unitNumber} · List ${snapshot.listNumber}`}>
       <section className="card test-session" data-testid="test-session">
-        <p className="test-session-remaining" data-testid="test-session-remaining">
-          {isRegularMode ? `本组尚余 ${remaining} 个条目` : `本 List 尚余 ${remaining} 个词`}
-        </p>
+        <div className="test-session-toolbar">
+          <button type="button" className="btn btn-secondary test-session-pause" onClick={pause} data-testid="session-pause">暂停并返回</button>
+          <p className="test-session-remaining" data-testid="test-session-remaining">
+            {isRegularMode ? `本组尚余 ${remaining} 个条目` : `本 List 尚余 ${remaining} 个词`}
+          </p>
+        </div>
         <p className="test-session-word" data-testid="session-word">
           {currentWord.originalSpelling}
         </p>
@@ -397,21 +467,25 @@ function RegularSessionView({
           <div className="test-session-actions">
             {revealed === null ? (
               <>
-                <button type="button" className="btn btn-secondary" onClick={() => initial(TestJudgement.NotRecognized)} data-testid="session-not-recognized">不认识（Backspace）</button>
-                <button type="button" className="btn btn-primary" onClick={() => initial(TestJudgement.Recognized)} data-testid="session-recognized">认识（Enter）</button>
+                <button type="button" className="btn btn-secondary" onClick={() => initial(TestJudgement.NotRecognized)} data-testid="session-not-recognized">不认识<span className="test-session-shortcut">（Backspace）</span></button>
+                <button type="button" className="btn btn-primary" onClick={() => initial(TestJudgement.Recognized)} data-testid="session-recognized">认识<span className="test-session-shortcut">（Enter）</span></button>
               </>
             ) : revealed === TestJudgement.Recognized ? (
               <>
-                <button type="button" className="btn btn-secondary" onClick={() => confirmAnswer(TestJudgement.Recognized, TestJudgement.NotRecognized)} data-testid="session-mark-forgot">标记为忘记（Backspace）</button>
-                <button type="button" className="btn btn-primary" onClick={() => confirmAnswer(TestJudgement.Recognized, TestJudgement.Recognized)} data-testid="session-next">下一个（Enter）</button>
+                <button type="button" className="btn btn-secondary" onClick={() => confirmAnswer(TestJudgement.Recognized, TestJudgement.NotRecognized)} data-testid="session-mark-forgot">标记为忘记<span className="test-session-shortcut">（Backspace）</span></button>
+                <button type="button" className="btn btn-primary" onClick={() => confirmAnswer(TestJudgement.Recognized, TestJudgement.Recognized)} data-testid="session-next">下一个<span className="test-session-shortcut">（Enter）</span></button>
               </>
             ) : (
-              <button type="button" className="btn btn-primary" onClick={() => confirmAnswer(TestJudgement.NotRecognized, TestJudgement.NotRecognized)} data-testid="session-confirm-not-recognized">确认不认识，下一个（Enter）</button>
+              <button type="button" className="btn btn-primary test-session-confirm" onClick={() => confirmAnswer(TestJudgement.NotRecognized, TestJudgement.NotRecognized)} data-testid="session-confirm-not-recognized">确认不认识，下一个<span className="test-session-shortcut">（Enter）</span></button>
             )}
           </div>
-          <button type="button" className="btn btn-secondary" onClick={pause} data-testid="session-pause">暂停并返回</button>
           {sessionError === null ? null : <p className="field-error" role="alert" data-testid="session-error">{sessionError}</p>}
         </div>
+        {revealed === TestJudgement.NotRecognized ? (
+          <div className="test-session-defer-wrap">
+            <button type="button" className="btn btn-secondary test-session-defer" onClick={deferCurrentWord} data-testid="session-defer">点错了</button>
+          </div>
+        ) : null}
       </section>
     </PageShell>
   );

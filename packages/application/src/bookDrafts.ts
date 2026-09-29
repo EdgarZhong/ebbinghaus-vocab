@@ -1,6 +1,6 @@
 /**
  * 首过草稿应用门面：原始转写、候选预览与失败原因在正式首过确认前持久保留。
- * 同一毫秒连续编辑使用单调 updatedAt，避免云端 LWW 把较早字段覆盖较晚字段。
+ * 同一毫秒连续编辑使用单调 updatedAt，保证本机保存顺序和恢复顺序明确。
  * 草稿内容含用户原文，任何方法都不得记录正文或整理证据到日志。
  */
 import type {
@@ -62,7 +62,7 @@ export class BookDraftService {
     return record;
   }
 
-  /** 正式首过事件和内容目录写入成功后，把草稿标为已确认墓碑。 */
+  /** 正式首过事件和内容目录写入成功后，在本机标记草稿已确认，避免再次恢复。 */
   confirmDraft(id: string): void {
     const existing = this.deps.drafts.getDraft(id);
     if (existing === null) throw new Error("首过草稿不存在");

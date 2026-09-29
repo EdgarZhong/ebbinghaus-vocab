@@ -1,11 +1,10 @@
 /**
- * 首过草稿的 SQLite 仓储。草稿原文属于用户数据；只在本地事务中记录内容版本，
- * 同步引擎随后异步上传。读取开放草稿时排除“已确认”完成墓碑，但保留其行用于
- * 跨设备收敛与迁移审计。
+ * 首过草稿的 SQLite 仓储。原文、模型候选和未提交表单只属于当前设备；
+ * 正式保存后的词条与义项由内容目录单独同步。读取开放草稿时排除“已确认”
+ * 状态，但保留该行，避免本机导航或重启后再次恢复已提交表单。
  */
 import type Database from "better-sqlite3";
 import type { FirstPassDraftRecord, FirstPassDraftStore } from "@ebbinghaus/application";
-import type { ContentSyncStore } from "../sync/contentStore.ts";
 
 interface DraftRow {
   id: string; space_id: string; unit_number: number; list_number: number;
@@ -30,7 +29,7 @@ export class SqliteFirstPassDraftStore implements FirstPassDraftStore {
   private readonly get;
   private readonly listOpen;
 
-  constructor(private readonly db: Database.Database, private readonly contentSync?: ContentSyncStore) {
+  constructor(db: Database.Database) {
     this.upsert = db.prepare(`
       INSERT INTO first_pass_drafts
         (id, space_id, unit_number, list_number, raw_text, use_language_model, status,
@@ -51,10 +50,9 @@ export class SqliteFirstPassDraftStore implements FirstPassDraftStore {
   }
 
   upsertDraft(draft: FirstPassDraftRecord): void {
-    this.db.transaction(() => {
-      this.upsert.run({ ...draft, useLanguageModel: draft.useLanguageModel ? 1 : 0 });
-      this.contentSync?.recordLocal("draft", draft.id, draft);
-    })();
+    // 单条 SQLite upsert 自身具有原子性。草稿正文仅写入 first_pass_drafts，
+    // 不能生成 content_versions/content_outbox 记录，否则未提交输入会上传。
+    this.upsert.run({ ...draft, useLanguageModel: draft.useLanguageModel ? 1 : 0 });
   }
 
   getDraft(id: string): FirstPassDraftRecord | null {

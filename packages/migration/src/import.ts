@@ -3,7 +3,8 @@
  *
  * 来源始终以 query_only 打开。目标以 O_EXCL 独占创建，禁止覆盖任何既有文件；
  * 再次指定同一已完成目标时只读核验并返回相同统计。导入调用 V2 正式仓储，
- * 因而事件、设置和内容目录会分别形成待推送队列，后续可交给 SyncEngine 上云。
+ * 因而事件、设置和已确认内容目录会分别形成待推送队列，后续可交给 SyncEngine 上云；
+ * 未提交首过草稿只存于目标客户端本机，不进入内容出站队列。
  * 全部业务写入与校验置于单个 SQLite 事务内，失败时只保留新建的空工作库。
  */
 
@@ -57,8 +58,9 @@ function expectedCounts(snapshot: V1ConvertedSnapshot): V1ImportCounts {
     drafts: snapshot.drafts.length, events: snapshot.events.length,
     settings: snapshot.settings.length,
     eventOutbox: snapshot.events.length + snapshot.settings.length,
+    // 首过草稿需要逐条导入与核对，但未确认正文不属于云端内容目录。
     contentOutbox: snapshot.spaces.length + snapshot.units.length + snapshot.lists.length
-      + snapshot.words.length + snapshot.drafts.length,
+      + snapshot.words.length,
   };
 }
 

@@ -283,10 +283,10 @@ test("任务8：今日看板修改每日目标；设置中修改换日时间", a
   await navTo(page, "nav-today");
   await expect(page.getByTestId("today-daily-target")).toHaveValue("1");
 
-  // 设置页修改换日时间并保存成功。
+  // 设置页换日时间失焦后自动保存。
   await navTo(page, "nav-settings");
   await page.getByTestId("settings-rollover").fill("05:30");
-  await page.getByTestId("settings-save").click();
-  await expect(page.getByTestId("settings-status")).toHaveText("设置已保存。");
+  await page.getByTestId("settings-rollover").blur();
+  await expect(page.getByTestId("settings-status")).toHaveText("设置已自动保存。");
   await screenshot(page, "task8-targets");
 });
