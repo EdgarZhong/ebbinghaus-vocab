@@ -707,7 +707,7 @@ export class RegularLearningService {
   /**
    * 初判“不认识”后选择“点错了”时仅重排本机会话未答条目，不写 FSRS 卡片、
    * testAnswered 或 outbox。重基准与 Word 身份校验和最终确认一致，防止拉取交错
-   * 时把另一条目错移到队尾；只有一个未答条目时仍返回它供页面清空揭示态重测。
+   * 时把另一条目错移到队尾；只剩一个未答条目时拒绝暂缓，避免点击后下一题仍是该条目。
    */
   deferRegularTestWord(input: { readonly sessionId: string; readonly expectedWordId: string }): TestSessionSnapshot {
     const persisted = this.deps.sessionStore.getSession(input.sessionId);
