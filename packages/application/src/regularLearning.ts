@@ -716,6 +716,11 @@ export class RegularLearningService {
     if (session.status !== TestSessionExecutionStatus.InProgress) throw new Error("测试会话当前不能暂缓条目");
     const current = session.words[session.currentPosition];
     if (current?.wordId !== input.expectedWordId) throw new Error("当前条目已变化，请重新查看并作答");
+    // 暂缓必须让用户立即进入另一条待测内容；只有当前条目待测时不允许
+    // 表面上重排、实际仍显示原条目，避免“点错了”变成重复揭示。
+    if (session.currentPosition >= session.words.length - 1) {
+      throw new Error("这是最后一个待测条目，没有下一条可先测");
+    }
     const deferred: TestSessionRecord = {
       ...session,
       words: [...session.words.slice(0, session.currentPosition), ...session.words.slice(session.currentPosition + 1), current],

@@ -483,7 +483,22 @@ function RegularSessionView({
         </div>
         {revealed === TestJudgement.NotRecognized ? (
           <div className="test-session-defer-wrap">
-            <button type="button" className="btn btn-secondary test-session-defer" onClick={deferCurrentWord} data-testid="session-defer">点错了</button>
+            <button
+              type="button"
+              className="btn btn-secondary test-session-defer"
+              onClick={deferCurrentWord}
+              disabled={remaining <= 1}
+              aria-describedby={remaining <= 1 ? "session-defer-unavailable" : undefined}
+              data-testid="session-defer"
+            >
+              点错了
+            </button>
+            {/* 单词/条目队列只剩当前项时无法展示“下一个”；解释禁用原因可避免用户误以为按钮失灵。 */}
+            {remaining <= 1 ? (
+              <p className="test-session-defer-unavailable" id="session-defer-unavailable" data-testid="session-defer-unavailable">
+                {isRegularMode ? "这是最后一个待测条目，没有下一条可先测。" : "这是最后一个待测词，没有下一词可先测。"}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </section>

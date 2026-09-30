@@ -92,6 +92,9 @@ describe("测试页：任务列表", () => {
     expect(screen.getByTestId(`test-task-${listId}`)).toHaveTextContent("本 List 尚余 1 个词");
     await user.click(screen.getByTestId(`test-start-${listId}`));
     expect(screen.getByTestId("test-session-remaining")).toHaveTextContent("尚余 1 个词");
+    await user.click(screen.getByTestId("session-not-recognized"));
+    expect(screen.getByTestId("session-defer")).toBeDisabled();
+    expect(screen.getByTestId("session-defer-unavailable")).toHaveTextContent("最后一个待测词，没有下一词可先测");
   });
 
   it("远端确认当前 Word 后原页跳词、丢弃初判，返回列表显示收敛后的剩余数", async () => {
@@ -280,6 +283,20 @@ describe("测试页：逐词测试会话（常规模式）", () => {
     await user.click(screen.getByTestId("session-next"));
     expect(screen.getByTestId("session-word")).toHaveTextContent(firstWord ?? "");
     expect(screen.getByTestId("session-answer-panel")).toHaveClass("pending");
+  });
+
+  it("常规模式只剩一个待测条目时禁用点错并说明原因", async () => {
+    const user = userEvent.setup();
+    const { services } = seedRegularDueServices(["abandon", "elaborate"]);
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-test"));
+    await user.click(screen.getByTestId("test-start-1"));
+    await user.click(screen.getByTestId("session-recognized"));
+    await user.click(screen.getByTestId("session-next"));
+    expect(screen.getByTestId("test-session-remaining")).toHaveTextContent("尚余 1 个条目");
+    await user.click(screen.getByTestId("session-not-recognized"));
+    expect(screen.getByTestId("session-defer")).toBeDisabled();
+    expect(screen.getByTestId("session-defer-unavailable")).toHaveTextContent("最后一个待测条目，没有下一条可先测");
   });
 
   it("暂停保留进度，任务行显示继续测试，恢复后继续剩余词", async () => {

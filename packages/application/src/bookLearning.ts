@@ -250,6 +250,11 @@ export class BookLearningService {
     if (session.status !== TestSessionExecutionStatus.InProgress) throw new ReviewTestingError("测试会话当前不能暂缓 Word");
     const current = session.words[session.currentPosition];
     if (current?.wordId !== input.expectedWordId) throw new ReviewTestingError("当前 Word 已变化，请重新查看测试卡片后作答");
+    // 暂缓的目的，是先测另一道待测词；若它已经是唯一未答词，重排后屏幕仍会是它，
+    // 违背“点错了后立即进入下一词”的承诺，因此此时拒绝暂缓，由界面说明原因。
+    if (session.currentPosition >= session.words.length - 1) {
+      throw new ReviewTestingError("这是最后一个待测 Word，没有下一词可先测");
+    }
     const deferred: TestSessionRecord = {
       ...session,
       words: [...session.words.slice(0, session.currentPosition), ...session.words.slice(session.currentPosition + 1), current],

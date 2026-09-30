@@ -312,6 +312,15 @@
   width: 128px;
 }
 
+/* 末词不允许暂缓时，用说明占住较窄按钮旁的剩余空间，保持原因与操作一眼对应。 */
+.test-session-defer-unavailable {
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  text-align: center;
+}
+
 /* 移动端无需向用户展示桌面物理键盘操作提示；按钮自身的语义文案仍保留。 */
 @media (max-width: 900px) {
   .test-session-shortcut { display: none; }

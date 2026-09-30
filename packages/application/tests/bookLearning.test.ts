@@ -194,7 +194,7 @@ describe("词书模式完整学习链", () => {
     expect(snapshot.status).toBe(TestSessionExecutionStatus.InProgress);
   });
 
-  it("只有一个未答 Word 时点错了仍保留它且不提交测试结果", () => {
+  it("只剩一个未答 Word 时拒绝点错暂缓，避免下一题仍是当前词", () => {
     const ctx = threeWordSession();
     let snapshot = ctx.snapshot;
     for (const plan of ctx.plans.slice(0, 2)) {
@@ -204,12 +204,13 @@ describe("词书模式完整学习链", () => {
       });
     }
     const eventCount = ctx.eventStore.listAllEvents().length;
-    const deferred = ctx.bookLearning.deferBookTestWord({
+    expect(() => ctx.bookLearning.deferBookTestWord({
       sessionId: snapshot.sessionId, expectedWordId: ctx.plans[2]!.wordId,
-    });
-    expect(deferred.currentWord?.wordId).toBe(ctx.plans[2]!.wordId);
-    expect(deferred.currentPosition).toBe(2);
-    expect(deferred.status).toBe(TestSessionExecutionStatus.InProgress);
+    })).toThrow("这是最后一个待测 Word，没有下一词可先测");
+    const latest = ctx.bookLearning.getBookTestSessionSnapshot(snapshot.sessionId);
+    expect(latest.currentWord?.wordId).toBe(ctx.plans[2]!.wordId);
+    expect(latest.currentPosition).toBe(2);
+    expect(latest.status).toBe(TestSessionExecutionStatus.InProgress);
     expect(ctx.eventStore.listAllEvents()).toHaveLength(eventCount);
   });
 

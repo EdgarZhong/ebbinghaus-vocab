@@ -719,6 +719,27 @@ describe("测试会话闭环", () => {
     expect(afterSecond.status).toBe(TestSessionExecutionStatus.InProgress);
   });
 
+  it("只剩一个待测条目时拒绝点错暂缓，避免下一题仍是当前条目", () => {
+    const world = buildWorld();
+    const seeded = seedTwoDueEntries(world);
+    world.clock.setInstant("2026-07-16T09:00:00Z");
+    const taskId = `regular-group|${SPACE_ID}|${seeded.learningDay}|1`;
+    const started = world.service.startOrResumeRegularTest({ taskId });
+    const first = world.service.confirmRegularTestAnswer({
+      sessionId: started.sessionId, expectedWordId: seeded.wordIds[0]!,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    const beforeEvents = world.eventStore.listAllEvents().length;
+    expect(() => world.service.deferRegularTestWord({
+      sessionId: started.sessionId, expectedWordId: seeded.wordIds[1]!,
+    })).toThrow("这是最后一个待测条目，没有下一条可先测");
+    const latest = world.service.getRegularTestSessionSnapshot(started.sessionId);
+    expect(latest.currentWord?.wordId).toBe(seeded.wordIds[1]);
+    expect(latest.currentPosition).toBe(1);
+    expect(latest.currentPosition).toBe(first.currentPosition);
+    expect(world.eventStore.listAllEvents()).toHaveLength(beforeEvents);
+  });
+
   it("改判：认识改不认识追加 answerRevised 审计事件；不认识不得改回认识", () => {
     const world = buildWorld();
     const seeded = seedTwoDueEntries(world);
