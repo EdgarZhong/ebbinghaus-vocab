@@ -370,7 +370,8 @@ function RegularSessionView({
       const next = isRegularMode
         ? services.regularLearning.deferRegularTestWord({ sessionId: snapshot.sessionId, expectedWordId: currentWord.wordId })
         : services.bookLearning.deferBookTestWord({ sessionId: snapshot.sessionId, expectedWordId: currentWord.wordId });
-      services.notifyChanged();
+      // 队列重排只写入本机执行状态，不改变任务投影或同步事实；广播全局变化会触发
+      // 桌面云同步订阅与页面重读，和本次局部快照更新竞争，可能把刚切换的词覆盖回去。
       onChange({ snapshot: next, revealed: null });
       setSessionError(null);
     } catch (cause) {

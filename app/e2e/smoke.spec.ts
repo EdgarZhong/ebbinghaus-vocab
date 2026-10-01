@@ -252,6 +252,7 @@ interface SeedServices {
     eventStore: { appendEvents(events: readonly unknown[]): void };
   };
   /** 组件树经 useSyncExternalStore 订阅该版本号：播种后必须通知重读。 */
+  getVersion(): number;
   notifyChanged(): void;
 }
 
@@ -398,8 +399,16 @@ test("测试页点错了移到队尾，桌面左上暂停与手机底部次级�
     await expect(page.locator(".test-session-shortcut").first()).toBeVisible();
   }
   await screenshot(page, "test-session-unknown-revealed");
+  const versionBeforeDefer = await page.evaluate(() =>
+    (window as unknown as { __ebbinghaus: SeedServices }).__ebbinghaus.getVersion(),
+  );
   await page.getByTestId("session-defer").click();
   await expect(page.getByTestId("session-word")).not.toHaveText(firstWord ?? "");
+  // 暂缓只改本机会话词序；全局版本通知会让带云同步订阅的桌面壳重读快照，
+  // 与组件局部切词形成竞态。状态应仅由当前会话快照更新。
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __ebbinghaus: SeedServices }).__ebbinghaus.getVersion(),
+  )).toBe(versionBeforeDefer);
   await expect(page.getByTestId("session-answer-panel")).toHaveClass(/pending/);
   await expect(page.getByTestId("test-session-remaining")).toContainText("尚余 2 个条目");
   await page.getByTestId("session-recognized").click();
