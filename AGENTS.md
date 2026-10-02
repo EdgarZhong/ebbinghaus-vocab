@@ -55,6 +55,20 @@
 - 长时命令应采用可轮询的后台方式，并在执行期间持续向用户报告进度。
 - 文件修改统一使用补丁工具；不得用 Shell 重定向、`cat` 或临时脚本覆盖文件。
 
+### Android APK 构建（自用含 seed，默认口径）
+
+- 凡是本仓库产出的 Android APK，默认都是用户自用包：本机 debug 证书签名，构建时经 Vite 环境变量注入两个 seed——云端同步令牌与 LLM API 密钥；首次启动自动写入本机，无需手填。分发给其他设备才需正式发布证书重新签名。
+- seed 只允许经构建环境变量临时注入，禁止写入仓库源码、文档、日志或测试夹具：
+  - 云端同步令牌：腾讯云服务器 `/etc/ebbinghaus/server.env` 的 `EBB_SERVER_TOKEN`（`ssh alex` 读取）。
+  - LLM API 密钥：由用户在会话中提供；本机无任何明文备份，收到后只在构建进程内存使用。
+- 构建命令（在 `app/` 目录）：
+  ```bash
+  export VITE_ANDROID_TEST_SEED_CLOUD_TOKEN="<token>"
+  export VITE_ANDROID_TEST_SEED_MODEL_API_KEY="<key>"
+  rtk pnpm tauri android build --release --apk --target aarch64 --ci
+  ```
+- seed 注入逻辑见 `app/src/main.tsx` 的 `seedAndroidTestConnections`：仅在 Android 上生效，且只在本机未配置对应服务时写入一次，不覆盖用户后改。
+
 ## 技术与代码规范
 
 技术选型与迁移决策的唯一真理源是 `docs/V2迁移技术决策.md`；本节只保留日常开发必须遵守的架构与边界规则。
