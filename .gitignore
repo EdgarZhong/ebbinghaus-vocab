@@ -57,3 +57,4 @@ server/var/
 
 # 服务器本地运行时数据（开发期误生成的默认库目录；运行产物不入版本控制）
 server/data/
+app/src-tauri/examples/
