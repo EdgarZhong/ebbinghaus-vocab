@@ -1,6 +1,6 @@
 [package]
 name = "ebbinghaus-v2"
-version = "0.1.0"
+version = "0.1.1"
 description = "Ebbinghaus V2 Tauri 2 平台壳：桌面（macOS/Windows/Linux）与移动（Android/iOS）共享同一套启动逻辑"
 edition = "2021"
 

@@ -316,7 +316,6 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     eventStore: runtime.eventStore,
     wordContentStore: runtime.wordContentStore,
     bookCatalogStore: runtime.bookCatalogStore,
-    sessionStore: runtime.testSessionStore,
     unitOfWork: runtime.unitOfWork,
   });
 

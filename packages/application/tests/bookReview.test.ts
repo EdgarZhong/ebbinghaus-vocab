@@ -3,9 +3,10 @@
  * complete_paper_review 行为口径；V2 按事件溯源重设计，事件产出口径与 V1 一致）。
  *
  * 覆盖口径：
- * - 仅复习任务 → reviewOnlyCompleted，工作量 1，不需要会话前置；
+ * - 仅复习任务 → reviewOnlyCompleted，工作量 1；
  * - 测试后复习任务（短期测试/等待校验/长期验证）→ testFollowedByReviewCompleted，
- *   工作量 2，前置校验：存在绑定该任务的开放会话且处于"等待纸质复习"；
+ *   工作量 2，metadata 带 answeredPlannedDays 配对键；前置校验 = 批次确有答案且未被
+ *   确认过（等待纸质复习由答案事件派生，不依赖本机会话存活）；
  * - List 聚合事件与完成事件同批写入（同生共死）：全部活动词短期通过 2 → 追加
  *   listSynchronized；长期验证且全部词已掌握 → 追加 listMastered；
  * - 仅复习任务不做同步条件判定（即使全部词已通过 2 次也不触发聚合事件）；
@@ -13,7 +14,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { MasteryStatus, ShortTermPassCount, reviewDemandKey, replayLearningEvents } from "@ebbinghaus/domain";
+import { MasteryStatus, ShortTermPassCount, learningDayStartInstant, reviewDemandKey, replayLearningEvents } from "@ebbinghaus/domain";
 import { WordListStage } from "@ebbinghaus/domain";
 
 import { BookReviewCompletionService } from "../src/bookReview.ts";
@@ -21,14 +22,12 @@ import { deriveListTaskId } from "../src/eventRecorder.ts";
 import { LearningEventRecorder } from "../src/eventRecorder.ts";
 import type { PersistedListTask } from "../src/scheduling.ts";
 import { ReviewTestingError } from "../src/errors.ts";
-import { TestSessionExecutionStatus } from "../src/ports.ts";
-import type { TestSessionRecord, WordContentRecord } from "../src/ports.ts";
+import type { WordContentRecord } from "../src/ports.ts";
 import {
   FixedClock,
   InMemoryBookCatalogStore,
   InMemoryEventStore,
   InMemorySpaceStore,
-  InMemoryTestSessionStore,
   InMemoryWordContentStore,
   SequentialDeviceSeqAllocator,
   SequentialIdGenerator,
@@ -49,7 +48,6 @@ function buildWorld() {
   const eventStore = new InMemoryEventStore();
   const wordContentStore = new InMemoryWordContentStore();
   const bookCatalogStore = new InMemoryBookCatalogStore();
-  const sessionStore = new InMemoryTestSessionStore();
   const spaceStore = new InMemorySpaceStore();
   const eventRecorder = new LearningEventRecorder({
     clock,
@@ -63,10 +61,9 @@ function buildWorld() {
     eventStore,
     wordContentStore,
     bookCatalogStore,
-    sessionStore,
   });
   seedSpace(spaceStore, { id: SPACE_ID, learningMode: "词书模式", name: "考研词汇" });
-  return { clock, eventStore, eventRecorder, wordContentStore, bookCatalogStore, sessionStore, spaceStore, service };
+  return { clock, eventStore, eventRecorder, wordContentStore, bookCatalogStore, spaceStore, service };
 }
 
 type World = ReturnType<typeof buildWorld>;
@@ -119,6 +116,8 @@ function seedList(
       metadata: {
         sessionId: "session-history",
         taskId: "task-history",
+        // 批次配对键的来源：答案计划日 = 本测试约定的 07-16 学习日起始时刻。
+        plannedTestAt: learningDayStartInstant("2026-07-16", LEARNING_DAY_SETTINGS).toISOString(),
         initialJudgement: "认识",
         finalJudgement: "认识",
         answerRevised: false,
@@ -203,27 +202,6 @@ function makeTask(input: {
   };
 }
 
-/** 播种一个处于"等待纸质复习"的词书模式开放会话（会话是设备本地执行状态）。 */
-function seedWaitingSession(world: World, taskId: string, listId = LIST_ID): TestSessionRecord {
-  const session: TestSessionRecord = {
-    sessionId: "session-waiting",
-    learningMode: "词书模式",
-    spaceId: null,
-    listId,
-    learningDay: "2026-07-16",
-    groupOrdinal: null,
-    taskId,
-    words: [],
-    currentPosition: 0,
-    status: TestSessionExecutionStatus.WaitingForPaperReview,
-    answeredWordIds: [],
-    startedAt: CLOCK_ISO,
-    lastActiveAt: CLOCK_ISO,
-  };
-  world.sessionStore.addSession(session);
-  return session;
-}
-
 describe("仅复习任务：完成事件口径", () => {
   it("确认纸质复习产出 reviewOnlyCompleted：工作量 1、需求键稳定、无需会话前置", () => {
     const world = buildWorld();
@@ -254,8 +232,6 @@ describe("仅复习任务：完成事件口径", () => {
     expect(event.metadata["reviewDemandKeys"]).toEqual([
       reviewDemandKey("w-1", "2026-07-16"),
     ]);
-    // 仅复习没有软件测试：不要求任何会话存在。
-    expect(world.sessionStore.getOpenListSession(LIST_ID)).toBeNull();
   });
 
   it("仅复习任务不做同步条件判定：全部词通过 2 次也不产生 listSynchronized", () => {
@@ -285,9 +261,10 @@ describe("测试后复习任务：前置会话与聚合事件", () => {
     });
     world.clock.setInstant(DONE_ISO);
     const task = makeTask({ taskType: "短期测试", scheduledDay: "2026-07-16", workload: 2 });
-    seedWaitingSession(world, task.taskId);
 
-    world.service.completePaperReview({ task, learningDaySettings: LEARNING_DAY_SETTINGS });
+    world.service.completePaperReview({
+      task, answeredPlannedDays: ["2026-07-16"], learningDaySettings: LEARNING_DAY_SETTINGS,
+    });
 
     const events = world.eventStore.listAllEvents();
     expect(events.map((event) => event.eventType)).toEqual([
@@ -329,9 +306,10 @@ describe("测试后复习任务：前置会话与聚合事件", () => {
     });
     world.clock.setInstant(DONE_ISO);
     const task = makeTask({ taskType: "等待校验", scheduledDay: "2026-07-16", workload: 2 });
-    seedWaitingSession(world, task.taskId);
 
-    world.service.completePaperReview({ task, learningDaySettings: LEARNING_DAY_SETTINGS });
+    world.service.completePaperReview({
+      task, answeredPlannedDays: ["2026-07-16"], learningDaySettings: LEARNING_DAY_SETTINGS,
+    });
 
     const eventTypes = world.eventStore.listAllEvents().map((event) => event.eventType);
     expect(eventTypes).toContain("testFollowedByReviewCompleted");
@@ -346,9 +324,10 @@ describe("测试后复习任务：前置会话与聚合事件", () => {
     });
     world.clock.setInstant(DONE_ISO);
     const task = makeTask({ taskType: "长期验证", scheduledDay: "2026-07-16", workload: 2 });
-    seedWaitingSession(world, task.taskId);
 
-    world.service.completePaperReview({ task, learningDaySettings: LEARNING_DAY_SETTINGS });
+    world.service.completePaperReview({
+      task, answeredPlannedDays: ["2026-07-16"], learningDaySettings: LEARNING_DAY_SETTINGS,
+    });
 
     const events = world.eventStore.listAllEvents();
     expect(events.map((event) => event.eventType)).toEqual([
@@ -388,31 +367,36 @@ describe("前置状态校验", () => {
     ).toThrow("计划任务所属 List 不存在");
   });
 
-  it("测试后复习任务缺少绑定会话、会话绑错任务或未等待纸质复习时拒绝确认", () => {
+  it("测试后复习缺批次、批次无答案或已确认时拒绝", () => {
     const world = buildWorld();
     seedList(world, { wordIds: ["w-1"], afterStates: [passTwoAfterState()] });
     world.clock.setInstant(DONE_ISO);
     const task = makeTask({ taskType: "短期测试", scheduledDay: "2026-07-16", workload: 2 });
 
-    // 无任何会话。
+    // 缺少批次计划日。
     expect(() =>
       world.service.completePaperReview({ task, learningDaySettings: LEARNING_DAY_SETTINGS }),
-    ).toThrow("测试任务缺少可恢复的会话");
+    ).toThrow("测试后复习缺少对应的测试批次");
 
-    // 会话存在但绑定的是另一个任务。
-    seedWaitingSession(world, "task-other");
+    // 该 List 在指定计划日没有任何答案。
     expect(() =>
-      world.service.completePaperReview({ task, learningDaySettings: LEARNING_DAY_SETTINGS }),
-    ).toThrow("测试任务缺少可恢复的会话");
+      world.service.completePaperReview({
+        task, answeredPlannedDays: ["2026-07-17"], learningDaySettings: LEARNING_DAY_SETTINGS,
+      }),
+    ).toThrow("没有已完成的软件测试批次");
 
-    // 会话绑定正确但仍处于进行中：软件测试未全部完成。
-    world.sessionStore.updateSession({
-      ...world.sessionStore.getSession("session-waiting")!,
-      taskId: task.taskId,
-      status: TestSessionExecutionStatus.InProgress,
+    // 正常确认后，同一批次重复确认被拒绝且不产生第二个完成事件。
+    world.service.completePaperReview({
+      task, answeredPlannedDays: ["2026-07-16"], learningDaySettings: LEARNING_DAY_SETTINGS,
     });
+    const count = world.eventStore.listAllEvents()
+      .filter((event) => event.eventType === "testFollowedByReviewCompleted").length;
     expect(() =>
-      world.service.completePaperReview({ task, learningDaySettings: LEARNING_DAY_SETTINGS }),
-    ).toThrow("软件测试全部完成后才能确认纸质复习");
+      world.service.completePaperReview({
+        task, answeredPlannedDays: ["2026-07-16"], learningDaySettings: LEARNING_DAY_SETTINGS,
+      }),
+    ).toThrow("已确认过");
+    expect(world.eventStore.listAllEvents()
+      .filter((event) => event.eventType === "testFollowedByReviewCompleted")).toHaveLength(count);
   });
 });

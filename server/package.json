@@ -1,6 +1,6 @@
 {
   "name": "@ebbinghaus/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Ebbinghaus V2 哑同步服务器：仅做鉴权、协议校验、event_id 去重、server_seq 分配、存储、增量查询、settings KV 与备份，零业务逻辑",

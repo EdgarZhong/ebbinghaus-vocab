@@ -4,30 +4,25 @@
  *
  * 职责：按 List 确认纸质复习并产出协议事件——
  * - 仅复习任务 → `reviewOnlyCompleted`；
- * - 测试后复习任务 → `testFollowedByReviewCompleted`；
+ * - 测试后复习任务 → `testFollowedByReviewCompleted`（metadata 带 answeredPlannedDays
+ *   配对键，标识本次确认覆盖哪些答案计划日）；
  * - 测试后复习且同步条件已满足（全部活动词短期通过次数为 2）→ 追加 `listSynchronized`；
  * - 长期验证任务且全部词已掌握 → 追加 `listMastered`。
  *
  * List 阶段、聚合状态、新增锁与"已完成仅复习需求键"全部由重放器从事件派生
  * （AGENTS.md：派生状态不同步），本用例只负责在正确时机写入正确事件。
- * 测试任务的完成前置（会话存在且处于"等待纸质复习"）按 V1 口径校验；会话是
- * 设备本地执行状态（TestSessionStore），不是事件。
- *
- * 会话由 BookLearningService 启动并推进；本用例在事件写入后关闭等待纸质复习
- * 会话，确保任务完成反馈不会重复出现。
+ * 等待纸质复习由答案事件派生（BookLearningService.pendingPaperReviewBatches），
+ * 不依赖本机会话存活；确认前校验批次存在且未被确认过，重复确认与跨端重复点击安全。
  */
 
-import { MasteryStatus, ShortTermPassCount, reviewDemandKey } from "@ebbinghaus/domain";
+import { MasteryStatus, resolveLearningDay, ShortTermPassCount, reviewDemandKey } from "@ebbinghaus/domain";
 import type { LearningDaySettings } from "@ebbinghaus/domain";
 import type {
   BookCatalogStore,
   LearningEventStore,
-  TestSessionRecord,
-  TestSessionStore,
   UnitOfWork,
   WordContentStore,
 } from "./ports.ts";
-import { TestSessionExecutionStatus } from "./ports.ts";
 import type { LearningEventRecorder } from "./eventRecorder.ts";
 import { ReviewTestingError } from "./errors.ts";
 import type { PersistedListTask } from "./scheduling.ts";
@@ -38,7 +33,6 @@ export interface BookReviewCompletionServiceDeps {
   readonly eventStore: LearningEventStore;
   readonly wordContentStore: WordContentStore;
   readonly bookCatalogStore: BookCatalogStore;
-  readonly sessionStore: TestSessionStore;
   readonly unitOfWork?: UnitOfWork;
 }
 
@@ -50,11 +44,15 @@ export class BookReviewCompletionService {
   }
 
   /**
-   * 按任务确认纸质复习：校验前置状态后，在一个事务语义内产出完成事件（与
-   * 可能的 List 聚合事件一批写入，保证重放侧"完成 + 聚合"同生共死）。
+   * 按任务确认纸质复习：校验前置状态后写入完成事件（与可能的 List 聚合事件一批
+   * 提交，保证重放侧"完成 + 聚合"同生共死）。等待纸质复习由答案事件派生而非本机
+   * 会话承载，因此本用例不读写会话；测试后复习以 answeredPlannedDays 为配对键，
+   * 校验批次确有答案且未被确认过，保证跨端重复点击与刷新重试安全。
    */
   completePaperReview(input: {
     readonly task: PersistedListTask;
+    /** 测试后复习批次覆盖的答案计划日；仅复习任务不需要。 */
+    readonly answeredPlannedDays?: readonly string[];
     readonly learningDaySettings: LearningDaySettings;
   }): void {
     const task = input.task;
@@ -62,18 +60,42 @@ export class BookReviewCompletionService {
     if (listRecord === null) {
       throw new ReviewTestingError("计划任务所属 List 不存在");
     }
-    let session: TestSessionRecord | null = null;
-    if (task.taskType !== "仅复习") {
-      session = this.deps.sessionStore.getOpenListSession(task.listId);
-      if (session === null || session.taskId !== task.taskId) {
-        throw new ReviewTestingError("测试任务缺少可恢复的会话");
+    const isReviewOnly = task.taskType === "仅复习";
+    let plannedDays: readonly string[] = [];
+    if (!isReviewOnly) {
+      plannedDays = input.answeredPlannedDays ?? [];
+      if (plannedDays.length === 0) {
+        throw new ReviewTestingError("测试后复习缺少对应的测试批次");
       }
-      if (session.status !== TestSessionExecutionStatus.WaitingForPaperReview) {
-        throw new ReviewTestingError("软件测试全部完成后才能确认纸质复习");
+      const answeredDays = new Set<string>();
+      const coveredDays = new Set<string>();
+      for (const event of this.deps.eventStore.listAllEvents()) {
+        if (event.eventType === "testAnswered" && event.targetType === "Word") {
+          const word = this.deps.wordContentStore.getEntry(event.targetId);
+          if (word === null || word.listId !== task.listId) continue;
+          const plannedTestAt = String(event.metadata["plannedTestAt"] ?? "");
+          if (plannedTestAt === "") continue;
+          answeredDays.add(resolveLearningDay(new Date(plannedTestAt), input.learningDaySettings));
+        } else if (event.eventType === "testFollowedByReviewCompleted" && event.targetId === task.listId) {
+          const days = event.metadata["answeredPlannedDays"];
+          if (Array.isArray(days)) {
+            for (const day of days) {
+              if (typeof day === "string") coveredDays.add(day);
+            }
+          }
+        }
+      }
+      for (const day of plannedDays) {
+        if (!answeredDays.has(day)) {
+          throw new ReviewTestingError(`该 List 在 ${day} 没有已完成的软件测试批次`);
+        }
+        if (coveredDays.has(day)) {
+          throw new ReviewTestingError("该测试批次的纸质复习已确认过");
+        }
       }
     }
     const eventType =
-      task.taskType === "仅复习" ? ("reviewOnlyCompleted" as const) : ("testFollowedByReviewCompleted" as const);
+      isReviewOnly ? ("reviewOnlyCompleted" as const) : ("testFollowedByReviewCompleted" as const);
     // 完成的仅复习需求稳定键：wordId|仅复习|计划日（domain 统一实现，禁止两处口径）。
     const reviewDemandKeys = task.payload.reviewDemands.map((demand) =>
       reviewDemandKey(demand.wordId, demand.scheduledDay),
@@ -83,6 +105,8 @@ export class BookReviewCompletionService {
       taskType: task.taskType,
       workload: task.workload,
       reviewDemandKeys,
+      // 测试后复习的跨端配对键：确认时写入，重放与派生按它识别已覆盖的答案计划日。
+      ...(isReviewOnly ? {} : { answeredPlannedDays: [...plannedDays] }),
     };
 
     const events = [
@@ -136,10 +160,8 @@ export class BookReviewCompletionService {
       }
     }
     const commit = (): void => {
+      // 只写事件：等待纸质复习由答案事件派生，没有需要顺带关闭的会话状态。
       this.deps.eventStore.appendEvents(events);
-      if (session !== null) {
-        this.deps.sessionStore.updateSession({ ...session, status: TestSessionExecutionStatus.Completed });
-      }
     };
     if (this.deps.unitOfWork === undefined) {
       commit();

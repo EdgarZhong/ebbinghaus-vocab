@@ -72,6 +72,7 @@ function BookReviewView({ tasks }: { tasks: readonly BookReviewTaskView[] }): Re
     try {
       services.bookReview.completePaperReview({
         task: view.task,
+        answeredPlannedDays: view.answeredPlannedDays,
         learningDaySettings: services.settings.getLearningDaySettings(),
       });
       services.notifyChanged();
@@ -104,20 +105,25 @@ function BookReviewView({ tasks }: { tasks: readonly BookReviewTaskView[] }): Re
                     ) : (
                       <span className="badge">{view.dueLabel}</span>
                     )}
-                    {view.task.taskType !== "仅复习" ? <span className="badge" data-testid={`review-awaiting-${view.title}`}>等待纸质复习</span> : null}
-                    <span>{view.words.length} 个词需要复习</span>
+                    {view.words.length > 0 ? (
+                      <span>{view.words.length} 个词需要复习</span>
+                    ) : (
+                      <span>请使用纸质书复习本 List</span>
+                    )}
                   </span>
                 </div>
                 <div className="task-row-actions">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    aria-expanded={expanded}
-                    onClick={() => setExpandedId((current) => (current === view.taskId ? null : view.taskId))}
-                    data-testid={`review-expand-${view.title}`}
-                  >
-                    {expanded ? "收起词清单" : `查看这 ${view.words.length} 个词`}
-                  </button>
+                  {view.words.length > 0 ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      aria-expanded={expanded}
+                      onClick={() => setExpandedId((current) => (current === view.taskId ? null : view.taskId))}
+                      data-testid={`review-expand-${view.title}`}
+                    >
+                      {expanded ? "收起词清单" : `查看这 ${view.words.length} 个词`}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="btn btn-primary"

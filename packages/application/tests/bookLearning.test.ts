@@ -47,7 +47,7 @@ function world() {
     bookCatalogStore, spaceStore, sessionStore, settings, scheduling, unitOfWork,
   });
   const bookReview = new BookReviewCompletionService({
-    eventRecorder, eventStore, wordContentStore, bookCatalogStore, sessionStore, unitOfWork,
+    eventRecorder, eventStore, wordContentStore, bookCatalogStore, unitOfWork,
   });
   seedSpace(spaceStore, { id: SPACE_ID, learningMode: "词书模式", name: "必考词" });
   settings.setActiveSpaceId(SPACE_ID);
@@ -134,26 +134,54 @@ describe("词书模式完整学习链", () => {
     expect(ctx.eventStore.listAllEvents().some((event) => event.eventType === "wordRemoved")).toBe(true);
   });
 
-  it("到期逐词测试可暂停跨日恢复，全部作答后完成纸质复习并关闭会话", () => {
+  it("同一学习日内暂停可恢复；全部作答后会话完成并派生待纸书批次", () => {
     const ctx = world();
     const result = ctx.bookLearning.recordFirstPass({ spaceId: SPACE_ID, unitNumber: 1, listNumber: 4, entries: [entry("abandon", "放弃"), entry("elaborate", "详尽的")] });
     ctx.clock.setInstant("2026-07-16T09:00:00Z");
-    const task = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    const settings = ctx.settings.getLearningDaySettings();
+    const task = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: settings }).tasks[0]!;
     let session = ctx.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: SPACE_ID });
     expect(session.totalCount).toBe(2);
     session = ctx.bookLearning.confirmBookTestAnswer({ sessionId: session.sessionId, expectedWordId: session.currentWord!.wordId, initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized });
     expect(session.currentPosition).toBe(1);
     ctx.bookLearning.pauseBookTest({ sessionId: session.sessionId });
-    ctx.clock.setInstant("2026-07-17T09:00:00Z");
-    session = ctx.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: SPACE_ID });
-    expect(session.currentWord?.originalSpelling).toBe("elaborate");
-    session = ctx.bookLearning.confirmBookTestAnswer({ sessionId: session.sessionId, expectedWordId: session.currentWord!.wordId, initialJudgement: TestJudgement.NotRecognized, finalJudgement: TestJudgement.NotRecognized });
-    expect(session.status).toBe(TestSessionExecutionStatus.WaitingForPaperReview);
+    // 同一学习日内：暂停后恢复继续剩余词，仍是同一会话
+    let resumed = ctx.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: SPACE_ID });
+    expect(resumed.sessionId).toBe(session.sessionId);
+    expect(resumed.currentWord?.originalSpelling).toBe("elaborate");
+    // 全部作答后会话即完成（不再转“等待纸质复习”长期存活）；待纸书批次由答案事件派生
+    session = ctx.bookLearning.confirmBookTestAnswer({ sessionId: resumed.sessionId, expectedWordId: resumed.currentWord!.wordId, initialJudgement: TestJudgement.NotRecognized, finalJudgement: TestJudgement.NotRecognized });
+    expect(session.status).toBe(TestSessionExecutionStatus.Completed);
     expect(getBookSessionTaskSnapshot(ctx.sessionStore.getSession(session.sessionId)!)).toEqual(task);
-    expect(ctx.bookLearning.pendingPaperReviewTasks(SPACE_ID)).toEqual([task]);
-    ctx.bookReview.completePaperReview({ task, learningDaySettings: ctx.settings.getLearningDaySettings() });
+    const batches = ctx.bookLearning.pendingPaperReviewBatches(SPACE_ID);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.plannedDays).toEqual(["2026-07-16"]);
+    expect(batches[0]!.task.listId).toBe(result.listId);
+    expect(batches[0]!.task.taskType).toBe("短期测试");
+    ctx.bookReview.completePaperReview({ task: batches[0]!.task, answeredPlannedDays: batches[0]!.plannedDays, learningDaySettings: settings });
+    expect(ctx.bookLearning.pendingPaperReviewBatches(SPACE_ID)).toHaveLength(0);
     expect(ctx.sessionStore.getOpenListSession(result.listId)).toBeNull();
     expect(ctx.eventStore.listAllEvents().some((event) => event.eventType === "testFollowedByReviewCompleted")).toBe(true);
+  });
+
+  it("换日旧会话不阻塞：次日开始测试关闭残留会话并新建，已答词不重复测试", () => {
+    const ctx = world();
+    const result = ctx.bookLearning.recordFirstPass({ spaceId: SPACE_ID, unitNumber: 1, listNumber: 4, entries: [entry("abandon", "放弃"), entry("elaborate", "详尽的")] });
+    ctx.clock.setInstant("2026-07-16T09:00:00Z");
+    const task16 = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    const first = ctx.bookLearning.startOrResumeBookTest({ taskId: task16.taskId, spaceId: SPACE_ID });
+    ctx.bookLearning.confirmBookTestAnswer({ sessionId: first.sessionId, expectedWordId: first.currentWord!.wordId, initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized });
+    // 换日（07-17）：未答词并入次日任务；残留开放会话绝不阻塞进入
+    ctx.clock.setInstant("2026-07-17T09:00:00Z");
+    const task17 = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    const second = ctx.bookLearning.startOrResumeBookTest({ taskId: task17.taskId, spaceId: SPACE_ID });
+    expect(second.sessionId).not.toBe(first.sessionId);
+    // abandon 已答（状态推进为仅复习需求），软件测试只剩未答的 elaborate
+    expect(second.totalCount).toBe(1);
+    expect(second.currentWord?.originalSpelling).toBe("elaborate");
+    // 旧会话已被关闭，库中不再把它当开放会话
+    expect(ctx.sessionStore.getSession(first.sessionId)?.status).toBe(TestSessionExecutionStatus.Completed);
+    expect(ctx.sessionStore.getOpenListSession(result.listId)?.sessionId).toBe(second.sessionId);
   });
 
   it("远端确认首词后，开放会话快照只收敛一次且不产生同步事件", () => {
@@ -253,26 +281,58 @@ describe("词书模式完整学习链", () => {
     expect(ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId).currentWord?.wordId).toBe(ctx.plans[1]!.wordId);
   });
 
-  it("其他任务或计划时刻的同词事件不得误跳当前会话", () => {
+  it("任务标识不同的同词答案仍算数；其他计划时刻的同词事件不得误跳当前会话", () => {
     const ctx = threeWordSession();
+    // 匹配键 = 词 + 计划时刻，不含任务标识：任务标识漂移后旧答案必须仍能配对进度
     appendConfirmedAnswer(ctx, 0, { taskId: "另一任务" });
+    const afterTaskDrift = ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId);
+    expect(afterTaskDrift.currentPosition).toBe(1);
+    expect(afterTaskDrift.currentWord?.wordId).toBe(ctx.plans[1]!.wordId);
+    // 计划时刻不同 = 另一轮测试，不得误算进本会话
     appendConfirmedAnswer(ctx, 1, { plannedTestAt: "2026-07-15T00:00:00.000Z" });
     const update = vi.spyOn(ctx.sessionStore, "updateSession");
     const snapshot = ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId);
-    expect(snapshot.currentPosition).toBe(0);
-    expect(snapshot.currentWord?.wordId).toBe(ctx.plans[0]!.wordId);
+    expect(snapshot.currentPosition).toBe(1);
+    expect(snapshot.currentWord?.wordId).toBe(ctx.plans[1]!.wordId);
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("远端完成全部 Word 后，开放会话转入等待纸质复习并阻止重复启动", () => {
+  it("远端完成全部 Word 后会话完成并派生待纸书批次，重复开始不会被旧会话挡住", () => {
     const ctx = threeWordSession();
     ctx.plans.forEach((_, index) => appendConfirmedAnswer(ctx, index));
-    expect(ctx.bookLearning.pendingPaperReviewTasks(SPACE_ID)).toEqual([ctx.task]);
+    expect(ctx.bookLearning.pendingPaperReviewBatches(SPACE_ID)).toHaveLength(1);
     const snapshot = ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId);
     expect(snapshot.currentPosition).toBe(3);
     expect(snapshot.currentWord).toBeNull();
-    expect(snapshot.status).toBe(TestSessionExecutionStatus.WaitingForPaperReview);
-    expect(() => ctx.bookLearning.startOrResumeBookTest({ taskId: ctx.task.taskId, spaceId: SPACE_ID })).toThrow("请先完成纸质复习");
+    expect(snapshot.status).toBe(TestSessionExecutionStatus.Completed);
+    // 答案推进调度后当前没有测试任务：入口如实提示"没有可开始的任务"，
+    // 而不是拿旧会话状态拒绝用户。
+    expect(() => ctx.bookLearning.startOrResumeBookTest({ taskId: ctx.task.taskId, spaceId: SPACE_ID })).toThrow("该 List 没有可开始的软件测试任务");
+  });
+
+  it("同一学习日内重复进入恢复同一会话，点别的 List 不会串台", () => {
+    const ctx = threeWordSession();
+    const resumed = ctx.bookLearning.startOrResumeBookTest({ taskId: ctx.task.taskId, spaceId: SPACE_ID });
+    expect(resumed.sessionId).toBe(ctx.snapshot.sessionId);
+    // 同 List 当天再次进入：仍恢复同一会话（不校验任务标识漂移）
+    const again = ctx.bookLearning.startOrResumeBookTest({ taskId: ctx.task.taskId, spaceId: SPACE_ID });
+    expect(again.sessionId).toBe(ctx.snapshot.sessionId);
+    expect(again.currentWord?.wordId).toBe(ctx.plans[0]!.wordId);
+
+    // 另一个 List 有自己的任务：点开始必须新建它自己的会话，而不是恢复 List 4 的
+    ctx.clock.setInstant(ORIGINAL);
+    ctx.bookLearning.recordFirstPass({
+      spaceId: SPACE_ID, unitNumber: 1, listNumber: 5,
+      entries: [entry("access", "接近"), entry("achieve", "达成")],
+    });
+    ctx.clock.setInstant("2026-07-16T09:00:00Z");
+    const otherTask = ctx.scheduling.refreshSpaceTasks({
+      spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings(),
+    }).tasks.find((item) => item.listId !== ctx.task.listId)!;
+    const other = ctx.bookLearning.startOrResumeBookTest({ taskId: otherTask.taskId, spaceId: SPACE_ID });
+    expect(other.sessionId).not.toBe(ctx.snapshot.sessionId);
+    expect(other.totalCount).toBe(2);
+    expect(other.currentWord?.originalSpelling).not.toBe(ctx.snapshot.currentWord?.originalSpelling);
   });
 
   it("暂停和恢复前均收敛远端结果，未完成时分别保留暂停与进行中状态", () => {

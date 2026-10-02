@@ -10,16 +10,19 @@
 import {
   applyTestJudgement,
   createStudyUnit,
+  daysBetweenLearningDays,
   dedupeMeanings,
   formatStructuredMeanings,
   learningDayStartInstant,
   MasteryStatus,
   normalizeEntryKey,
   replayLearningEvents,
+  resolveLearningDay,
   TestJudgement,
   type TestJudgement as TestJudgementType,
 } from "@ebbinghaus/domain";
 import { ConfirmedEntry, type ConflictingWord, type WordConflictResolution } from "./entryOrganizing.ts";
+import { deriveListTaskId } from "./eventRecorder.ts";
 import { ReviewTestingError } from "./errors.ts";
 import type { TestSessionSnapshot } from "./dto.ts";
 import type { LearningEventRecorder } from "./eventRecorder.ts";
@@ -68,6 +71,14 @@ export interface BookLearningServiceDeps {
 /** 从会话持久化状态取回启动时的任务，不依赖后来可能变更的派生任务。 */
 export function getBookSessionTaskSnapshot(session: TestSessionRecord): PersistedListTask | null {
   return session.learningMode === "词书模式" ? session.taskSnapshot ?? null : null;
+}
+
+/** 等待纸质复习的一个派生批次：答案事件已齐、尚未确认纸质复习的一组答案。 */
+export interface PendingPaperReviewBatch {
+  /** 构造的完成用例输入任务（非调度派生任务，仅作确认入口与卡片显示）。 */
+  readonly task: PersistedListTask;
+  /** 本批次覆盖的答案计划日（写入完成事件作配对键）。 */
+  readonly plannedDays: readonly string[];
 }
 
 export class BookLearningService {
@@ -179,51 +190,66 @@ export class BookLearningService {
     return { listId, words: created };
   }
 
-  /** 开始或恢复词书 List 测试，跨日恢复仍使用原会话的 Word 与任务快照。 */
+  /**
+   * 开始或恢复词书 List 测试。会话只在同一学习日内可恢复（规格：换日作废、不跨日
+   * 恢复）；开始测试永远不被本机会话状态阻挡——存在残留的开放会话时直接关闭重建。
+   */
   startOrResumeBookTest(input: { readonly taskId: string; readonly spaceId: string }): TestSessionSnapshot {
     this.requireBookSpace(input.spaceId);
     const now = this.deps.clock.now();
     const nowIso = now.toISOString();
-    for (const list of this.deps.bookCatalogStore.listListsForSpace(input.spaceId)) {
-      const stored = this.deps.sessionStore.getOpenListSession(list.listId);
-      // 只重基准当前任务；其他开放 List 的事件扫描与本次恢复无关。
-      if (stored === null || stored.taskId !== input.taskId) continue;
-      const open = this.reconcileBookSession(stored);
-      if (open.status === TestSessionExecutionStatus.WaitingForPaperReview) {
-        throw new ReviewTestingError("软件测试已完成，请先完成纸质复习");
-      }
-      if (open.status === TestSessionExecutionStatus.Paused) {
-        const resumed = { ...open, status: TestSessionExecutionStatus.InProgress, lastActiveAt: nowIso };
-        const event = this.deps.eventRecorder.record({ eventType: "testSessionResumed", targetType: "TestSession", targetId: open.sessionId, source: "词书模式测试", occurredAt: now, metadata: { taskId: input.taskId } });
-        this.deps.unitOfWork.run(() => { this.deps.eventStore.appendEvents([event]); this.deps.sessionStore.updateSession(resumed); });
-        return this.snapshot(resumed);
-      }
-      return this.snapshot(open);
-    }
     const settings = this.deps.settings.getLearningDaySettings();
+    const today = resolveLearningDay(now, settings);
     const refreshed = this.deps.scheduling.refreshSpaceTasks({ spaceId: input.spaceId, learningDaySettings: settings });
     const task = refreshed.tasks.find((item) => item.taskId === input.taskId);
     if (task === undefined || task.taskType === "仅复习") {
       throw new ReviewTestingError("该 List 没有可开始的软件测试任务");
     }
-    if (this.deps.sessionStore.getOpenListSession(task.listId) !== null) {
-      throw new ReviewTestingError("该 List 存在属于其他任务的未完成测试会话");
+    // 恢复只针对本任务所属 List、且当前学习日仍在作答中的会话；等待纸质复习的会话
+    // 不再承载任何入口（纸书入口由答案事件派生，见 pendingPaperReviewBatches），
+    // 旧学习日会话不恢复（换日作废）。绝不跨 List 恢复，避免点 A 进 B。
+    const stored = this.deps.sessionStore.getOpenListSession(task.listId);
+    if (stored !== null && stored.learningDay === today
+      && stored.status !== TestSessionExecutionStatus.WaitingForPaperReview) {
+      const open = this.reconcileBookSession(stored);
+      if (open.words.length === 0) {
+        // 会话词已全部失效或答完却仍是开放状态：作废本会话，继续按当前任务新建。
+        this.deps.sessionStore.updateSession({ ...open, status: TestSessionExecutionStatus.Completed });
+      } else if (open.status === TestSessionExecutionStatus.Paused) {
+        const resumed = { ...open, status: TestSessionExecutionStatus.InProgress, lastActiveAt: nowIso };
+        const event = this.deps.eventRecorder.record({ eventType: "testSessionResumed", targetType: "TestSession", targetId: open.sessionId, source: "词书模式测试", occurredAt: now, metadata: { taskId: input.taskId } });
+        this.deps.unitOfWork.run(() => { this.deps.eventStore.appendEvents([event]); this.deps.sessionStore.updateSession(resumed); });
+        return this.snapshot(resumed);
+      } else {
+        return this.snapshot(open);
+      }
+    }
+    // 关闭本 List 残留的开放会话（换日前的进行中/已暂停/等待纸质复习）。已答进度
+    // 在不可变事件里、纸书入口由答案事件派生，会话不再长期存活，残留会话只会
+    // 遮蔽后续恢复匹配，绝不阻塞用户进入测试。
+    const leftover = this.deps.sessionStore.getOpenListSession(task.listId);
+    if (leftover !== null) {
+      this.deps.sessionStore.updateSession({ ...leftover, status: TestSessionExecutionStatus.Completed });
     }
     if (task.payload.testDemands.length === 0) {
       throw new ReviewTestingError("测试任务缺少到期 Word 快照");
     }
-    const words: SessionWordPlan[] = task.payload.testDemands.map((demand) => {
+    const words: SessionWordPlan[] = task.payload.testDemands.flatMap((demand) => {
       const content = this.deps.wordContentStore.getEntry(demand.wordId);
-      if (content === null || content.removed) throw new ReviewTestingError("测试任务包含不存在的 Word");
+      // 调度快照可能早于内容移除；只跳过失效词，保留同一 List 里仍有效的到期词继续测试。
+      if (content === null || content.removed) return [];
       if (demand.taskType !== "短期测试" && demand.taskType !== "等待校验" && demand.taskType !== "长期验证") {
         throw new ReviewTestingError("测试任务的到期类型无效");
       }
-      return {
+      return [{
         wordId: demand.wordId,
         plannedTestAt: learningDayStartInstant(demand.scheduledDay, settings).toISOString(),
         taskType: demand.taskType,
-      };
+      }];
     });
+    if (words.length === 0) {
+      throw new ReviewTestingError("该测试任务已没有可测试的有效 Word");
+    }
     const session: TestSessionRecord = {
       sessionId: this.deps.idGenerator.nextId(), learningMode: "词书模式", spaceId: null,
       listId: task.listId, learningDay: refreshed.learningDay, groupOrdinal: null,
@@ -309,7 +335,9 @@ export class BookLearningService {
       ...session, currentPosition: nextPosition,
       answeredWordIds: [...session.answeredWordIds, current.wordId],
       lastActiveAt: now.toISOString(),
-      status: nextPosition === session.words.length ? TestSessionExecutionStatus.WaitingForPaperReview : TestSessionExecutionStatus.InProgress,
+      // 最后一词确认后会话即完成：纸质复习入口由答案事件派生（pendingPaperReviewBatches），
+      // 会话不再以"等待纸质复习"长期存活（规格：会话当日有效、不跨日恢复）。
+      status: nextPosition === session.words.length ? TestSessionExecutionStatus.Completed : TestSessionExecutionStatus.InProgress,
     };
     this.deps.unitOfWork.run(() => { this.deps.eventStore.appendEvents(events); this.deps.sessionStore.updateSession(advanced); });
     return this.snapshot(advanced);
@@ -326,14 +354,84 @@ export class BookLearningService {
     return this.snapshot(paused);
   }
 
-  /** 从本设备开放会话提取等待纸质复习的任务；测试完成后派生任务变化不影响入口。 */
-  pendingPaperReviewTasks(spaceId: string): readonly PersistedListTask[] {
-    return this.deps.bookCatalogStore.listListsForSpace(spaceId).flatMap((list) => {
-      const stored = this.deps.sessionStore.getOpenListSession(list.listId);
-      const session = stored === null ? null : this.reconcileBookSession(stored);
-      const task = session?.status === TestSessionExecutionStatus.WaitingForPaperReview ? getBookSessionTaskSnapshot(session) : null;
-      return task === null ? [] : [task];
-    });
+  /**
+   * 等待纸质复习的批次由答案事件派生（规格 6.5：由已确认答案事件派生，不依赖本机
+   * 会话是否仍存在）：同一 List 同一答案计划日为一"批次"，批次未被任何
+   * testFollowedByReviewCompleted 的 answeredPlannedDays 覆盖即待纸书。返回的派生
+   * 任务只作完成用例输入与卡片显示，不参与调度。
+   */
+  pendingPaperReviewBatches(spaceId: string): readonly PendingPaperReviewBatch[] {
+    const settings = this.deps.settings.getLearningDaySettings();
+    const today = resolveLearningDay(this.deps.clock.now(), settings);
+    const listById = new Map(this.deps.bookCatalogStore.listListsForSpace(spaceId).map((list) => [list.listId, list]));
+    const listIdByWordId = new Map<string, string>();
+    for (const word of this.deps.wordContentStore.listCatalogEntries()) {
+      if (word.listId !== null) listIdByWordId.set(word.wordId, word.listId);
+    }
+    interface Batch {
+      plannedDay: string;
+      wordIds: Set<string>;
+      longTermOnly: boolean;
+      algorithmVersion: string;
+    }
+    const batches = new Map<string, Batch>();
+    const coveredDaysByList = new Map<string, Set<string>>();
+    for (const event of this.deps.eventStore.listAllEvents()) {
+      if (event.eventType === "testAnswered" && event.targetType === "Word") {
+        const listId = listIdByWordId.get(event.targetId);
+        if (listId === undefined || !listById.has(listId)) continue;
+        const plannedTestAt = String(event.metadata["plannedTestAt"] ?? "");
+        if (plannedTestAt === "") continue;
+        // plannedTestAt 由学习日起始时刻派生，反解学习计划日是同一口径的逆运算。
+        const plannedDay = resolveLearningDay(new Date(plannedTestAt), settings);
+        const key = `${listId}\u0000${plannedDay}`;
+        const batch = batches.get(key) ?? {
+          plannedDay, wordIds: new Set<string>(), longTermOnly: true,
+          algorithmVersion: String(event.metadata["algorithmVersion"] ?? ""),
+        };
+        batch.wordIds.add(event.targetId);
+        if (event.metadata["taskType"] !== "长期验证") batch.longTermOnly = false;
+        batches.set(key, batch);
+      } else if (event.eventType === "testFollowedByReviewCompleted" && event.targetType === "List") {
+        const days = event.metadata["answeredPlannedDays"];
+        if (!Array.isArray(days)) continue;
+        const covered = coveredDaysByList.get(event.targetId) ?? new Set<string>();
+        for (const day of days) {
+          if (typeof day === "string") covered.add(day);
+        }
+        coveredDaysByList.set(event.targetId, covered);
+      }
+    }
+    const result: PendingPaperReviewBatch[] = [];
+    for (const [key, batch] of batches) {
+      const listId = key.split("\u0000")[0];
+      if (listId === undefined) continue;
+      const covered = coveredDaysByList.get(listId);
+      if (covered?.has(batch.plannedDay)) continue;
+      const taskType = batch.longTermOnly ? "长期验证" : "短期测试";
+      const overdueDays = Math.max(0, daysBetweenLearningDays(batch.plannedDay, today));
+      const algorithmVersion = batch.algorithmVersion;
+      result.push({
+        task: {
+          taskId: deriveListTaskId({ algorithmVersion, listId, taskType, scheduledDay: batch.plannedDay }),
+          listId,
+          taskType,
+          scheduledDay: batch.plannedDay,
+          workload: 2,
+          overdueDays,
+          dueReason: "测试后复习",
+          algorithmVersion,
+          payload: { workload: 2, overdueDays, activeWordIds: [], testDemands: [], reviewDemands: [] },
+        },
+        plannedDays: [batch.plannedDay],
+      });
+    }
+    result.sort((a, b) =>
+      a.task.listId !== b.task.listId
+        ? a.task.listId < b.task.listId ? -1 : 1
+        : a.task.scheduledDay < b.task.scheduledDay ? -1 : a.task.scheduledDay > b.task.scheduledDay ? 1 : 0,
+    );
+    return result;
   }
 
   /** 同一 Word 上修改显示拼写和义项，保留全部学习历史；改规范键需二次确认。 */
@@ -385,28 +483,38 @@ export class BookLearningService {
   }
 
   /**
-   * 本地会话只是执行位置；已确认作答事件才是跨端事实。按任务、Word 和计划时刻三者
-   * 同时匹配，避免把另一轮同词测试误算进当前会话。稳定分区保留已答与未答各自的原顺序，
+   * 本地会话只是执行位置；已确认作答事件才是跨端事实。匹配键 = 词 + 计划时刻，
+   * 不含任务标识：任务标识由需求集合哈希派生、会随作答和时间漂移，答案却不可变，
+   * 按任务标识过滤会让已答进度在漂移后配不上对。稳定分区保留已答与未答各自的原顺序，
    * 因而远端只回答中间词时，当前位置仍指向真正的首个未答 Word。
    */
   private reconcileBookSession(session: TestSessionRecord): TestSessionRecord {
     if (session.status === TestSessionExecutionStatus.Completed) return session;
     const confirmed = new Set(
       this.deps.eventStore.listAllEvents()
-        .filter((event) => event.eventType === "testAnswered" && event.targetType === "Word" && event.metadata["taskId"] === session.taskId)
+        .filter((event) => event.eventType === "testAnswered" && event.targetType === "Word")
         .map((event) => `${event.targetId}\u0000${String(event.metadata["plannedTestAt"])}`),
     );
     const locallyAnswered = new Set(session.answeredWordIds);
     const isAnswered = (plan: SessionWordPlan): boolean =>
       locallyAnswered.has(plan.wordId) || confirmed.has(`${plan.wordId}\u0000${plan.plannedTestAt}`);
-    const answered = session.words.filter(isAnswered);
-    const remaining = session.words.filter((plan) => !isAnswered(plan));
+    // 会话绑定的调度快照可能早于用户移除词条的操作；恢复时同步过滤活动词目录，
+    // 使已移除或缺失内容不再成为阻塞项，同时保留其余词的本机顺序和已确认进度。
+    const validPlans = session.words.filter((plan) => {
+      const content = this.deps.wordContentStore.getEntry(plan.wordId);
+      return content !== null && !content.removed;
+    });
+    const answered = validPlans.filter(isAnswered);
+    const remaining = validPlans.filter((plan) => !isAnswered(plan));
     const words = [...answered, ...remaining];
     const answeredWordIds = answered.map((plan) => plan.wordId);
     const currentPosition = answered.length;
-    const status = remaining.length === 0 ? TestSessionExecutionStatus.WaitingForPaperReview : session.status;
+    const status = remaining.length === 0
+      ? TestSessionExecutionStatus.Completed
+      : session.status;
     const changed = currentPosition !== session.currentPosition || status !== session.status
       || words.some((plan, index) => plan !== session.words[index])
+      || words.length !== session.words.length
       || answeredWordIds.length !== session.answeredWordIds.length
       || answeredWordIds.some((wordId, index) => wordId !== session.answeredWordIds[index]);
     if (!changed) return session;

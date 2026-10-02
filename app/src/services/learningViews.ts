@@ -90,10 +90,12 @@ export interface BookReviewTaskView {
   readonly title: string;
   /** "今天到期" / "逾期 N 天"。 */
   readonly dueLabel: string;
-  /** 展开朗读用的活动词（已掌握词不出现，规格 6.4）。 */
+  /** 展开用的词级到期复习词；整 List 纸书复习不伪装成词级词单（规格 6.4）。 */
   readonly words: readonly { wordId: string; originalSpelling: string; manualMeaning: string; meanings: readonly StructuredMeaning[] }[];
   /** 原始派生任务：完成纸质复习用例（BookReviewCompletionService）的输入。 */
   readonly task: PersistedListTask;
+  /** 测试后复习批次覆盖的答案计划日；仅复习卡为空数组。 */
+  readonly answeredPlannedDays: readonly string[];
 }
 
 export interface LearningViews {
@@ -129,9 +131,11 @@ function toBookTaskItem(
   contentsById: ReadonlyMap<string, WordContentRecord>,
 ): TaskItemSnapshot {
   const listRecord = listsById.get(task.listId);
-  // 开放会话保护：会话开始时绑定任务标识，仅匹配的会话计入进度（scheduling.ts 口径）。
+  // 会话当日有效：只有当前学习日的开放会话才匹配任务进度；等待纸质复习不再由
+  // 会话承载（规格：换日作废、纸书由答案事件派生），旧会话不遮蔽任务行显示。
+  const today = resolveLearningDay(deps.clock.now(), deps.settings.getLearningDaySettings());
   let openSession = deps.runtime.testSessionStore.getOpenListSession(task.listId);
-  const sessionMatches = openSession !== null && openSession.taskId === task.taskId;
+  const sessionMatches = openSession !== null && openSession.learningDay === today;
   if (sessionMatches && openSession !== null) {
     // 远端作答已进入本地事件库，但开放会话的位置仍可能是本机上次显示的旧值。
     // 先由应用用例重基准，再读取持久会话统计，避免任务行继续报旧的剩余词数。
@@ -312,15 +316,26 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       const contentsById = new Map(runtime.wordContentStore.listCatalogEntries().map((content) => [content.wordId, content]));
       // 进行中的软件测试仍留在测试页；测试完成的任务从会话启动快照恢复，
       // 防止答案改变调度投影后，纸质复习入口被新任务覆盖。
-      const paperTasks = [
-        ...refresh.tasks.filter((task) => task.taskType === "仅复习"),
-        ...deps.bookLearning.pendingPaperReviewTasks(spaceId),
-      ];
-      return [...new Map(paperTasks.map((task) => [task.taskId, task])).values()]
-        .map((task) => {
+      const reviewOnlyByList = new Map(
+        refresh.tasks.filter((task) => task.taskType === "仅复习").map((task) => [task.listId, task]),
+      );
+      const pendingTestByList = new Map(
+        deps.bookLearning.pendingPaperReviewBatches(spaceId).map((batch) => [batch.task.listId, batch]),
+      );
+      // 调度会把同日需求聚合到 List，但测试完成后的待纸书批次和刷新后的仅复习任务
+      // 可能有不同 taskId；按 List 合并，避免同一天出现重复卡片，并在完成事件里
+      // 一并记账所有到期复习需求。
+      const listIds = new Set([...reviewOnlyByList.keys(), ...pendingTestByList.keys()]);
+      return [...listIds]
+        .map((listId) => {
+          const reviewOnlyTask = reviewOnlyByList.get(listId);
+          const pendingTestBatch = pendingTestByList.get(listId);
+          const task = mergePaperReviewTasks(pendingTestBatch?.task, reviewOnlyTask);
           const listRecord = listsById.get(task.listId);
-          const words = task.payload.reviewDemands
-            .map((demand) => contentsById.get(demand.wordId))
+          // 多个复习原因可能指向同一 Word；界面统计的是需要复习的不同词，而不是需求行数。
+          const dueWordIds = [...new Set(task.payload.reviewDemands.map((demand) => demand.wordId))];
+          const words = dueWordIds
+            .map((wordId) => contentsById.get(wordId))
             .filter((content): content is WordContentRecord => content !== undefined && !content.removed)
             // 已掌握 Word 默认不出现在展开列表（规格 6.4）。
             .filter((content) => replayed.get(content.wordId)?.masteryStatus !== MasteryStatus.Mastered)
@@ -336,6 +351,7 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
             dueLabel: task.overdueDays > 0 ? `逾期 ${task.overdueDays} 天` : "今天到期",
             words,
             task,
+            answeredPlannedDays: pendingTestBatch?.plannedDays ?? [],
           };
         });
     },
@@ -348,5 +364,35 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       const contentsById = new Map(runtime.wordContentStore.listCatalogEntries().map((content) => [content.wordId, content]));
       return refresh.tasks.map((task) => toBookTaskItem(task, deps, replayed, listsById, contentsById));
     },
+  };
+}
+
+/**
+ * 一个 List 同日最多有一张纸书复习卡：待纸书批次与仅复习任务按 List 合并，
+ * 同时合并独立到期词需求，避免显示去重后丢失调度记账。
+ */
+function mergePaperReviewTasks(
+  pendingTestTask: PersistedListTask | undefined,
+  reviewOnlyTask: PersistedListTask | undefined,
+): PersistedListTask {
+  if (pendingTestTask === undefined) {
+    if (reviewOnlyTask === undefined) throw new Error("复习任务合并缺少来源任务");
+    return reviewOnlyTask;
+  }
+  if (reviewOnlyTask === undefined) return pendingTestTask;
+
+  const demands = [...pendingTestTask.payload.reviewDemands, ...reviewOnlyTask.payload.reviewDemands];
+  const demandsByKey = new Map<string, (typeof demands)[number]>();
+  for (const demand of demands) {
+    demandsByKey.set(`${demand.wordId}\u0000${demand.taskType}\u0000${demand.scheduledDay}`, demand);
+  }
+  const reviewDemands = [...demandsByKey.values()];
+  const overdueDays = Math.max(pendingTestTask.overdueDays, reviewOnlyTask.overdueDays);
+  const dueReason = [...new Set([pendingTestTask.dueReason, reviewOnlyTask.dueReason].filter(Boolean))].join("；");
+  return {
+    ...pendingTestTask,
+    overdueDays,
+    dueReason,
+    payload: { ...pendingTestTask.payload, overdueDays, reviewDemands },
   };
 }

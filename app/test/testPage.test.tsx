@@ -61,9 +61,8 @@ describe("测试页：任务列表", () => {
     await user.click(screen.getByTestId("session-next"));
     expect(screen.getByTestId("test-completed")).toHaveTextContent("软件测试完成了");
     await user.click(screen.getByTestId("test-go-review"));
-    expect(screen.getByTestId("review-awaiting-Unit 1 · List 4")).toHaveTextContent("等待纸质复习");
-    await user.click(screen.getByTestId("review-expand-Unit 1 · List 4"));
-    expect(screen.getByTestId("review-words-Unit 1 · List 4")).toHaveTextContent("用法：abandon ship");
+    // 昨晚确认的新口径：测试后整 List 纸书复习没有词级到期词单，直接提示翻纸质书。
+    expect(screen.getByTestId("review-task-Unit 1 · List 4")).toHaveTextContent("请使用纸质书复习本 List");
     await user.click(screen.getByTestId("review-complete-Unit 1 · List 4"));
     expect(services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "testFollowedByReviewCompleted")).toBe(true);
   });
