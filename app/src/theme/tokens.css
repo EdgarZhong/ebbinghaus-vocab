@@ -92,8 +92,12 @@
   --page-margin: 24px;
   --block-gap: 24px;
   --group-gap: 16px;
-  /* 复习页词卡固定行高：展开区最大高度 = 本值 × 20（界面设计规格 9.2）。 */
+  /* 列表卡片统一行高（2026-10-02 用户复核口径）：词汇页词卡与复习页 List 卡/组卡
+     同为列表型主卡片，必须同高；测试页任务卡信息密度更高，不参与此统一。 */
+  --card-list-row-height: 64px;
+  /* 复习页词卡固定行高与卡间距：展开区最大高度 = 行高 × 20 + 间距 × 19（界面设计规格 9.2）。 */
   --review-word-row-height: 44px;
+  --review-word-row-gap: 6px;
   --radius-small: 6px;
   --radius-medium: 8px;
   --radius-large: 12px;

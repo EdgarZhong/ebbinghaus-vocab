@@ -61,13 +61,34 @@
 - seed 只允许经构建环境变量临时注入，禁止写入仓库源码、文档、日志或测试夹具：
   - 云端同步令牌：腾讯云服务器 `/etc/ebbinghaus/server.env` 的 `EBB_SERVER_TOKEN`（`ssh alex` 读取）。
   - LLM API 密钥：由用户在会话中提供；本机无任何明文备份，收到后只在构建进程内存使用。
-- 构建命令（在 `app/` 目录）：
+- 构建命令（在 `app/` 目录；`tauri android build` 默认即 release，**不要加 `--release`**——当前 CLI 无此参数会报错）：
   ```bash
   export VITE_ANDROID_TEST_SEED_CLOUD_TOKEN="<token>"
   export VITE_ANDROID_TEST_SEED_MODEL_API_KEY="<key>"
-  rtk pnpm tauri android build --release --apk --target aarch64 --ci
+  rtk pnpm tauri android build --apk --target aarch64 --ci
   ```
+- **签名**：Gradle release 构建无 signingConfig，产出的是未签名 APK，必须手动用本机 debug 证书签名（2026-10-02 实证补齐此步骤）：
+  ```bash
+  BT=/opt/homebrew/share/android-commandlinetools/build-tools/36.0.0
+  cd app/src-tauri/gen/android/app/build/outputs/apk/universal/release
+  $BT/zipalign -f 4 app-universal-release-unsigned.apk app-universal-release-aligned.apk
+  $BT/apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android \
+    --out Ebbinghaus-<版本>-aarch64-release.apk app-universal-release-aligned.apk
+  $BT/apksigner verify --print-certs Ebbinghaus-<版本>-aarch64-release.apk  # 应显示 Android Debug 证书
+  ```
+- **seed 注入核验**：APK 内前端资源压缩嵌入 `.so`，不可直接 grep；改为核验构建所用 `app/dist/assets/` 的 JS 产物中含两个 seed 的前缀（只数匹配次数，不打印明文），且 APK 构建与该次 vite build 在同一命令链内完成、其间无其他构建覆盖 dist。
 - seed 注入逻辑见 `app/src/main.tsx` 的 `seedAndroidTestConnections`：仅在 Android 上生效，且只在本机未配置对应服务时写入一次，不覆盖用户后改。
+
+### macOS 桌面应用构建与安装（2026-10-02 用户确认口径）
+
+- **本地安装构建只产出 .app**：`rtk pnpm tauri build --bundles app`。禁止默认打 dmg——Tauri 的 dmg 打包步骤（create-dmg）会挂载卷并经 bless/Finder AppleScript 美化布局，实测会在用户桌面弹出安装窗口（2026-10-02 实证），误导用户手动拖拽安装。
+- **安装一律由 Agent 完成，用户不做任何手动操作**：
+  1. `osascript -e 'quit app "Ebbinghaus V2"'` 优雅退出运行中的旧版；
+  2. 旧版 `mv` 到项目根 `.archive/`（带版本与时间戳，不删除）；
+  3. `cp -R` 新构建的 `Ebbinghaus.app` 到 `/Applications/Ebbinghaus V2.app`（固定安装名）；
+  4. 记录可执行文件 SHA-256 并 `open` 启动新版。
+- 只有需要对外分发时才 `--bundles app,dmg` 额外产出 dmg，并提前告知用户构建过程可能短暂弹出 Finder 窗口；**任何时候禁止 `open` dmg 或让用户拖拽安装**。
+- `/Applications/` 下只保留 `Ebbinghaus V2.app` 一个安装副本；发现散落副本（如用户从历史 dmg 拖出的 `Ebbinghaus.app`）应归档到项目 `.archive/` 并告知用户。
 
 ## 技术与代码规范
 

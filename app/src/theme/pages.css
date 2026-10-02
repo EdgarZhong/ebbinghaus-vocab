@@ -152,31 +152,45 @@
   color: var(--color-danger);
 }
 
-/* 复习页卡片（词书 List 卡与常规组卡共用，规格 9.1/9.3）。 */
-.review-card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-medium);
-  background: var(--color-surface);
+/*
+ * 复习页（词书 List 卡与常规组卡共用，规格 9.1/9.3；2026-10-02 用户复核口径）。
+ * 结构：一个复习条目 = 一张独立卡片（button.review-card）+ 展开时位于卡片下方
+ * 的词卡区（.review-word-panel）。词卡区与卡片是兄弟节点，不被卡片边框包裹——
+ * 每个 List/组是一张与测试页任务卡（.task-row）、词汇页词卡（.vocab-card）
+ * 同规格的卡片，展开后下方出现一排独立小词卡，而不是一张大卡片里塞很多词。
+ */
+
+/* 复习条目：卡片与下方词卡区的纵向容器，本身无卡片材质。 */
+.review-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-/* 卡头即展开/收起控件：整行可点，触控目标 ≥44px（移动端可达性回归）。 */
-.review-card-header {
+/*
+ * List 卡/组卡即展开/收起控件（整卡可点，触控目标 ≥44px）。
+ * 卡片规格与其他页面统一：1px 边框、radius-medium 圆角、surface 材质；
+ * 高度与词汇页词卡统一为 --card-list-row-height（64px，2026-10-02 用户复核口径：
+ * 列表型主卡片高度统一，词汇卡同幅降至 64px）。
+ */
+.review-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--group-gap);
   width: 100%;
-  min-height: 44px;
+  min-height: var(--card-list-row-height, 64px);
   padding: 12px 16px;
-  border: none;
-  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
   font: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.review-card-header:hover {
+.review-card:hover {
   background: var(--color-surface-hover, transparent);
 }
 
@@ -200,17 +214,15 @@
   font-weight: 600;
 }
 
-/* 展开区：宽度与 List 卡一致并保留左侧小缩进（规格 9.2）。 */
-.review-card-body {
+/* 词卡区：List 卡下方的独立区域，宽度与 List 卡一致并保留左侧小缩进（规格 9.2）。 */
+.review-word-panel {
   margin-left: 14px;
-  padding-left: 14px;
-  border-left: 2px solid var(--color-border);
-  padding-bottom: 6px;
 }
 
 /*
- * 词列表：区域内部纵向滚动，最大高度 = 20 个词卡片（规格 9.2）。
- * 词卡行高固定（--review-word-row-height），候选词不足 20 个时按实际高度展示。
+ * 词卡列表：区域内部纵向滚动，最大高度 = 20 个词卡片 + 19 个卡间距（规格 9.2）。
+ * 词卡行高固定（--review-word-row-height）、卡间距固定（--review-word-row-gap），
+ * 候选词不足 20 个时按实际高度展示。
  */
 .review-word-list {
   list-style: none;
@@ -218,10 +230,14 @@
   padding: 0;
   display: flex;
   flex-direction: column;
+  gap: var(--review-word-row-gap, 6px);
   overflow-y: auto;
-  max-height: calc(var(--review-word-row-height, 44px) * 20);
+  max-height: calc(
+    var(--review-word-row-height, 44px) * 20 + var(--review-word-row-gap, 6px) * 19
+  );
 }
 
+/* 词卡：独立小卡片（surface 材质 + radius-small），左英文右释义两列，行高固定。 */
 .review-word-card {
   display: flex;
   align-items: center;
@@ -230,11 +246,10 @@
   flex: 0 0 var(--review-word-row-height, 44px);
   height: var(--review-word-row-height, 44px);
   min-width: 0;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.review-word-card:last-child {
-  border-bottom: none;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
 }
 
 /* 左列：英文词条，左对齐，不折行（窄屏也不被释义列挤压错乱）。 */
@@ -288,15 +303,15 @@
   color: var(--color-warning);
 }
 
-/* 移动端（≤375px，Android 小手机形态）：缩进与词卡横向间距收紧，避免释义区过窄。 */
+/* 移动端（≤375px，Android 小手机形态）：词卡区缩进与词卡横向间距收紧，避免释义区过窄。 */
 @media (max-width: 375px) {
-  .review-card-body {
+  .review-word-panel {
     margin-left: 10px;
-    padding-left: 10px;
   }
 
   .review-word-card {
     gap: 8px;
+    padding: 0 10px;
   }
 }
 

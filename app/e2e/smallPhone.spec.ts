@@ -184,19 +184,22 @@ test("360px 复习页：List 卡触控目标、词卡两列排布、释义横滚
   expect(headerBox).not.toBeNull();
   expect(headerBox!.height).toBeGreaterThanOrEqual(44);
 
-  // 点击卡头展开词列表。
+  // 点击卡片展开词列表；词卡区是卡片下方的独立区域，不在卡片按钮内部
+  // （2026-10-02 用户复核口径：每个 List 一张卡，点开后下方出现多个词卡）。
   await header.click();
   const words = page.getByTestId("review-words-Unit 1 · List 3");
   await expect(words).toBeVisible();
+  await expect(header.locator(".review-word-card")).toHaveCount(0);
 
-  // 规格 9.2：区域内部纵向滚动，最大高度 = 20 个词卡片（行高固定 44px）。
+  // 规格 9.2：区域内部纵向滚动，最大高度 = 20 个词卡片 + 19 个卡间距
+  //（行高固定 44px、间距 6px，即 44×20 + 6×19 = 994px）。
   const listMetrics = await words.evaluate((node) => ({
     clientHeight: node.clientHeight,
     scrollHeight: node.scrollHeight,
     maxHeight: getComputedStyle(node).maxHeight,
     overflowY: getComputedStyle(node).overflowY,
   }));
-  expect(listMetrics.maxHeight).toBe("880px");
+  expect(listMetrics.maxHeight).toBe("994px");
   expect(listMetrics.overflowY).toBe("auto");
   expect(listMetrics.clientHeight).toBeLessThan(listMetrics.scrollHeight);
 

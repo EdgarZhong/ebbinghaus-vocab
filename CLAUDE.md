@@ -9,12 +9,30 @@ V2 将 V1 Python/PySide6 应用迁移为 React + TypeScript + Tauri 2 的 macOS/
 | 交付部分 | 当前状态 |
 | --- | --- |
 | 共享协议、哑服务器、客户端本地库与同步引擎 | Android 与 Mac 在同一 List 交错最终确认并双向收敛；服务端事件、两端本地事件、拉取游标、开放会话和当前页面已逐层核对。词书模式“一端初判、另一端最终确认”通过；常规模式同一路径未测 |
-| macOS 桌面应用 | `/Applications/Ebbinghaus V2.app` 已安装 **0.1.2**（复习入口统一改造），arm64 可执行文件安全哈希算法 256 位（Secure Hash Algorithm 256-bit，SHA-256）为 `496b88462a4f62c26578b3b53f96153d4c2aa14b38434bcbfbaab9f0d812fd8b`。真实应用验收通过：今日页新计量文案与测试→复习→首过顺序、测试页 4 个 List 任务（逾期/今天到期标识）、复习页 3 List 卡 27 候选词（与副本集成验证一致，List 1 待测词正确排除防泄答案）、展开词卡左英右义无操作。云同步令牌与 DeepSeek 密钥状态沿用 0.1.1 结论 |
-| Android release APK | 最终 arm64 Android 应用安装包（Android Package Kit，APK）已安装，并实测内置云端访问令牌与 DeepSeek 应用程序编程接口（Application Programming Interface，API）密钥可用；中文转写整理、重复词决策、点错入队和云端同步均有真实设备证据。SHA-256 为 `6f8827d296b3aa0188f75fdf6ac36cb6c95222abbdbb58ae21838a2e88ae742d`；使用本机 Android debug 证书，仅供个人内部安装 |
+| macOS 桌面应用 | `/Applications/Ebbinghaus V2.app` 已安装 **0.1.2**（含复习页卡片视觉修正与卡片高度统一，2026-10-02 第三次构建），可执行文件安全哈希算法 256 位（Secure Hash Algorithm 256-bit，SHA-256）为 `ddd85a8b2df61fad2f65888391fa4c3ced7260c835d42a368131494d54f61d25`。此前真实应用验收通过：今日页新计量文案与测试→复习→首过顺序、测试页 4 个 List 任务（逾期/今天到期标识）、复习页 3 List 卡 27 候选词、展开词卡左英右义无操作。云同步令牌与 DeepSeek 密钥状态沿用 0.1.1 结论 |
+| Android release APK | **0.1.2**（含复习页卡片修正与高度统一，2026-10-02 构建）已产出：`app/src-tauri/gen/android/app/build/outputs/apk/universal/release/Ebbinghaus-0.1.2-aarch64-release.apk`，SHA-256 为 `99b87ec787688848f5f8ebe2917c7ba0cc8d7097d6dd1a9d77fb1c6f1ab2da27`；含云端同步令牌与 DeepSeek 密钥双 seed（已在 dist 产物核验注入），Android debug 证书签名（证书 SHA-256 `d0e51201…`），仅供个人内部安装；待真实设备安装验收 |
 | 正式生产数据迁移 | 进行中；V1 App 在线备份已定位并完成只读核验，V2 云端与 Mac 客户端测试库快照已归档；来源与软删除处理口径待用户确认，尚未改写任何数据库 |
 | 用户级验收 | Android 最终 APK 的凭据、模型、去重与同步验收通过；Mac 设置和双端词书模式同步通过。尚未完成常规模式交错同步及 macOS 原生重复词弹窗验收 |
 
 **生产数据迁移时区口径（2026-10-01）**：用户确认迁移后的 V2 全局学习时区使用 `Asia/Shanghai`。9 月 30 日的首次录入基线按该时区计算；V1 原库和备份保持只读，只在迁移转换结果中应用此设置。
+
+## 复习页卡片视觉修正（2026-10-02，已实现并验证，**未提交**）
+
+**用户反馈（原话要点）**：上一轮复习页表现层丑；① 复习页卡片大小要与其他页面卡片规格统一；② 每个 List/组是一张卡片，点开后**下方**出现多个词卡，而不是一张大卡片里包很多词。复核后追加：③ 全 App 卡片高度不统一——词汇页词卡略高需稍微压矮，复习页 List 卡/组卡必须与词汇页词卡**同高**，词卡高度由 Agent 按视觉和谐度决定（测试页任务卡不参与统一）。
+
+**已改未提交（git status 可见）**：
+
+- `app/src/pages/ReviewPage.tsx`：ReviewCard DOM 重构——外层改为无卡片材质的 `.review-entry` 容器；卡片是 button.review-card 本身（保留全部 data-testid：review-list-*/review-group-* 在外层、*-header-* 在按钮、review-words-*/review-group-words-* 在 ul）；展开词卡区 `.review-word-panel` 改为卡片的**兄弟节点**（不再是卡片内部）。
+- `app/src/theme/tokens.css`：新增 `--card-list-row-height: 64px`（列表型主卡片统一高度：词汇页词卡 = 复习页 List 卡/组卡）与 `--review-word-row-gap: 6px`。
+- `app/src/theme/pages.css`：复习样式重写——`.review-card` 1px 边框、radius-medium、surface、min-height 64px（`--card-list-row-height`）、padding 12px 16px；词卡 `.review-word-card` 为独立小卡（1px 边框、radius-small、固定 44px 行高——词卡非交互控件，44px 阅读行高与外层 64px 形成层级）；`.review-word-list` 6px 卡间距，max-height = 44×20 + 6×19 = 994px；删除 `.review-card-header`/`.review-card-body`（已确认无残留引用）；≤375px 适配同步更新。
+- `app/src/theme/vocabulary.css`：`.vocab-card` 与 `.vocab-card-row-wrap` min-height 76px → `--card-list-row-height`（64px，用户确认"稍微压矮"）；窄列三行形态 112px → 100px 同幅收紧。
+- `app/e2e/smallPhone.spec.ts`：复习用例 maxHeight 断言 880px → 994px，新增"卡片按钮内不含词卡"结构回归断言。
+- `docs/界面设计规格.md`：9.2 补卡片规格统一（高度 64px、词卡区在卡片下方独立）；9.1 词书模式与 9.3 常规模式线框均已改为逐词小卡形态；12.1 补词汇页词卡固定高度 64px 与窄列 100px。
+- `app/e2e/__screenshot-review.mjs` / `app/e2e/__measure-cards.mjs`：一次性桌面端截图与卡片高度量测脚本（种子与 smallPhone 同源，非测试用例，留存可复用）。
+
+**验证结果（2026-10-02 完成）**：vitest app 全量 92 项通过；typecheck 通过；Playwright 四视口 84 项全绿（含 smallPhone 复习页 994px 上限与结构回归）。量测确认 review-card = vocab-card = 64px、review-word-card = 44px。截图证据：`app/e2e/__screenshots__/` 下 `desktop-review-book-collapsed.png`、`desktop-review-book-expanded.png`、`desktop-vocabulary-list.png`（桌面端高度统一对比）、`chromium-mobile-small-phone-review-book.png`（360px 手机端）；视觉复核确认列表型主卡片同高、节奏统一。
+
+**遗留**：macOS 应用已按高度统一后代码重建安装（第三次构建，SHA-256 `ddd85a8b…`，仅 .app 无 dmg 弹窗）；改动尚未提交。
 
 ## 本轮：复习入口口径统一（2026-10-02）——已实现，0.1.2 构建中
 

@@ -1,13 +1,16 @@
-/* 词汇页沿用 V1 的整行词卡交互；表面与文字取 V2 主题令牌，避免深色模式出现白底浅字。 */
-.vocab-card-row-wrap { position: relative; width: 100%; overflow: hidden; min-height: 76px; border-radius: 12px; }
+/* 词汇页沿用 V1 的整行词卡交互；表面与文字取 V2 主题令牌，避免深色模式出现白底浅字。
+   卡片高度 2026-10-02 起由 76px 降为统一的 --card-list-row-height（64px），
+   与复习页 List 卡/组卡同高（用户复核口径：列表型主卡片高度统一）。 */
+.vocab-card-row-wrap { position: relative; width: 100%; overflow: hidden; min-height: var(--card-list-row-height, 64px); border-radius: 12px; }
 .vocab-swipe-delete { position: absolute; inset: 0 auto 0 0; width: 84px; border: 0; border-radius: 12px 0 0 12px; background: #b94b48; color: #fff; font: inherit; cursor: pointer; }
-.vocab-card { position: relative; width: 100%; min-height: 76px; padding: 8px 16px; display: flex; justify-content: center; gap: 0; border-radius: 12px; background: var(--color-surface); transition: transform 160ms ease; outline-offset: -3px; touch-action: pan-y; }
+.vocab-card { position: relative; width: 100%; min-height: var(--card-list-row-height, 64px); padding: 8px 16px; display: flex; justify-content: center; gap: 0; border-radius: 12px; background: var(--color-surface); transition: transform 160ms ease; outline-offset: -3px; touch-action: pan-y; }
 .vocab-card-row-wrap.swiped .vocab-card { transform: translateX(84px); }
 .vocab-card-row { align-items: center; width: 100%; }
 .vocab-card-row.meta { display: none; }
 .vocab-card-term { font-family: var(--font-family-body, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif); font-size: 17px; font-weight: 700; flex: 1; }
 .vocab-card-meaning { flex: 0 1 auto; max-width: 46%; text-align: right; }
-.vocab-list.narrow .vocab-card { min-height: 112px; justify-content: flex-start; }
+/* 窄列三行形态随主卡高度同步收紧（112px → 100px，与主卡 76 → 64 同幅度）。 */
+.vocab-list.narrow .vocab-card { min-height: 100px; justify-content: flex-start; }
 .vocab-list.narrow .vocab-card-row { flex-direction: column; align-items: flex-start; gap: 5px; }
 .vocab-list.narrow .vocab-card-row.meta { display: flex; }
 .vocab-list.narrow .vocab-card-term { flex: 0 0 auto; }

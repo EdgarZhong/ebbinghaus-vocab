@@ -187,16 +187,19 @@ interface ReviewCardProps {
 }
 
 /**
- * 复习卡：整张卡头部是一个展开/收起按钮（触控目标 ≥44px），词列表区宽度与卡
- * 一致并保留左侧小缩进，内部纵向滚动、最大高度 = 20 个词卡片（行高固定，
- * 见 pages.css 的 --review-word-row-height）。
+ * 复习条目 = 一张独立的 List 卡/组卡 + 展开时挂在卡片**下方**的词卡区（2026-10-02
+ * 用户复核口径：卡片规格与测试页任务卡、词汇页词卡统一；词卡区不是大卡片的内部
+ * 区域，而是卡片下面一排独立小词卡）。
+ *
+ * DOM 结构刻意保持"卡片"与"词卡区"为兄弟节点：词卡区不参与卡片边框与背景，
+ * 视觉上每个 List/组是一张与其他页面同规格的卡片，点开后下方出现若干小词卡。
  */
 function ReviewCard(props: ReviewCardProps): ReactNode {
   return (
-    <div className="review-card" data-testid={props.testId}>
+    <div className="review-entry" data-testid={props.testId}>
       <button
         type="button"
-        className="review-card-header"
+        className="review-card"
         aria-expanded={props.expanded}
         onClick={props.onToggle}
         data-testid={props.headerTestId}
@@ -205,7 +208,7 @@ function ReviewCard(props: ReviewCardProps): ReactNode {
         {props.meta === null ? null : <span className="review-card-meta">{props.meta}</span>}
       </button>
       {props.expanded ? (
-        <div className="review-card-body">
+        <div className="review-word-panel">
           <ul className="review-word-list" data-testid={props.wordsTestId}>
             {props.entries.map((entry) => (
               <li
