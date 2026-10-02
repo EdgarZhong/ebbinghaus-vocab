@@ -18,6 +18,7 @@
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import type { LlmConfigurationSnapshot } from "@ebbinghaus/application";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
+import { CLOUD_SYNC_ENDPOINT } from "../adapters/cloudSyncEndpoint.ts";
 import { PageShell } from "../ui/PageShell.tsx";
 import { Modal } from "../ui/Modal.tsx";
 
@@ -515,7 +516,11 @@ export function SettingsPage(): ReactNode {
       {services.cloudSync === null ? null : (
         <section className="card settings-section" aria-labelledby="settings-cloud-heading">
           <h2 className="card-section-title" id="settings-cloud-heading">云端数据托管</h2>
-          <p className="field-hint">数据端点：eb-data.edgarzhong.fyi。本机仍可离线使用，联网后自动同步。</p>
+          {CLOUD_SYNC_ENDPOINT ? (
+            <p className="field-hint">数据端点：{new URL(CLOUD_SYNC_ENDPOINT).host}。本机仍可离线使用，联网后自动同步。</p>
+          ) : (
+            <p className="field-hint">本构建未配置数据端点，云同步不可用；本地学习功能不受影响。</p>
+          )}
           {cloudStatus?.configured && !cloudTokenEditing ? (
             <div className="settings-row">
               <span>访问令牌已保存在本机</span>

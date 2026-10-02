@@ -36,5 +36,10 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./test/setup.ts"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "test/**/*.test.ts", "test/**/*.test.tsx"],
+    // 云同步端点只经构建期环境变量注入；测试使用固定虚构地址，验证端点完全
+    // 来自配置而非源码默认值。
+    env: {
+      VITE_CLOUD_SYNC_URL: "https://sync.example.test",
+    },
   },
 });

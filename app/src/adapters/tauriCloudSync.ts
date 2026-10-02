@@ -1,6 +1,6 @@
 /**
  * Tauri 双端云同步装配：本地 SQLite 始终是 UI 工作库；共享 SyncEngine 负责
- * outbox、幂等拉取与退避，此处只接本机加密令牌、固定 HTTPS 出口和触发时机。
+ * outbox、幂等拉取与退避，此处只接本机加密令牌、构建期配置的 HTTPS 出口和触发时机。
  */
 import { invoke } from "@tauri-apps/api/core";
 import type { Clock } from "@ebbinghaus/application";
@@ -8,8 +8,7 @@ import type { InMemoryRuntime } from "@ebbinghaus/persistence/src/adapters/inMem
 import type { SecretCipher } from "@ebbinghaus/persistence/src/repositories/settings.ts";
 import { buildHttpSyncGateway } from "@ebbinghaus/persistence/src/sync/httpGateway.ts";
 import { SyncEngine, type SyncCycleResult } from "@ebbinghaus/persistence/src/sync/syncEngine.ts";
-
-export const CLOUD_SYNC_ENDPOINT = "https://eb-data.edgarzhong.fyi";
+import { CLOUD_SYNC_ENDPOINT } from "./cloudSyncEndpoint.ts";
 const TOKEN_STORE_KEY = "cloud_sync_auth_token_cipher_v1";
 // 前台轮询遵循技术决策中的 5–10 秒窗口；本地写入仍由独立的短合并窗口优先触发。
 const SYNC_INTERVAL_MS = 10_000;
@@ -48,14 +47,14 @@ export interface CloudSyncController {
 }
 
 /**
- * 只接受共享 HTTP 网关实际产生的字符串或 ArrayBuffer 载荷。Rust 再校验固定域名、
- * 方法和路径；传输层不得把网络错误、令牌或服务端原文写入日志。
+ * 只接受共享 HTTP 网关实际产生的字符串或 ArrayBuffer 载荷。Rust 再校验构建期
+ * 配置的源、方法和路径；传输层不得把网络错误、令牌或服务端原文写入日志。
  */
 function createTauriSyncFetch(authToken: string): typeof fetch {
   return async (input, init) => {
     const source = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(source);
-    if (url.origin !== CLOUD_SYNC_ENDPOINT || url.username || url.password || url.hash) {
+    if (!CLOUD_SYNC_ENDPOINT || url.origin !== CLOUD_SYNC_ENDPOINT || url.username || url.password || url.hash) {
       throw new Error("云同步请求目的地无效");
     }
     const method = init?.method ?? "GET";
@@ -70,7 +69,7 @@ function createTauriSyncFetch(authToken: string): typeof fetch {
     }
     const contentEncoding = new Headers(init?.headers).get("Content-Encoding");
     const response = await invoke<SyncHttpResponse>("sync_http_request", {
-      method, path, authToken, body, contentEncoding,
+      method, path, authToken, body, contentEncoding, origin: CLOUD_SYNC_ENDPOINT,
     });
     return new Response(response.body, {
       status: response.status,
@@ -124,7 +123,8 @@ export function createTauriCloudSync(
 
   async function runCycle(forcePush: boolean): Promise<SyncCycleResult | null> {
     const currentToken = token;
-    if (!currentToken) return null;
+    // 端点未在构建期配置时云同步整体关闭；本地学习与令牌保存不受影响。
+    if (!currentToken || !CLOUD_SYNC_ENDPOINT) return null;
     lastAttemptAt = clock.now().toISOString();
     try {
       // 只有云端事实真正改变本机工作库时才通知学习页面重读。以前每轮同步
@@ -253,7 +253,8 @@ export function createTauriCloudSync(
     getStatusVersion: () => statusVersion,
     getStatus() {
       return {
-        configured: Boolean(token), running: inFlight !== null,
+        // 端点与令牌齐备才算已配置；缺任一项时界面不展示同步操作入口。
+        configured: Boolean(token) && Boolean(CLOUD_SYNC_ENDPOINT), running: inFlight !== null,
         lastSuccessAt, lastAttemptAt, lastError,
         // 内容目录使用独立 content_outbox；漏算会造成界面显示 0 但词条仍待上传。
         pendingOutboxCount: runtime.outbox.pendingCount() + runtime.contentSyncStore.pendingCount(),

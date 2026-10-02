@@ -1,5 +1,6 @@
 //! 云同步的本机 HTTPS 出口。前端复用共享协议网关；本命令只转发该网关需要的
-//! 五类路径，固定目标域名，禁止将设备令牌带到用户提供的任意地址或写入日志。
+//! 五类路径。目标源（origin）由前端按构建期配置传入，此处仍独立校验 HTTPS、
+//! 裸源形态与凭据约束，禁止把设备令牌带到路径注入产生的其他目的地或写入日志。
 
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE};
 use serde::Serialize;
@@ -7,7 +8,6 @@ use std::error::Error as _;
 use std::io::ErrorKind;
 use std::time::Duration;
 
-const ORIGIN: &str = "https://eb-data.edgarzhong.fyi";
 const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -68,6 +68,7 @@ pub(crate) async fn sync_http_request(
     auth_token: String,
     body: Option<Vec<u8>>,
     content_encoding: Option<String>,
+    origin: String,
 ) -> Result<SyncHttpResponse, String> {
     if !allowed_path(&method, &path) {
         return Err("sync:不允许的云同步请求路径".into());
@@ -81,12 +82,14 @@ pub(crate) async fn sync_http_request(
     if content_encoding.as_deref().is_some_and(|value| value != "gzip") {
         return Err("sync:不支持的云同步请求编码".into());
     }
-    let url = reqwest::Url::parse(&format!("{ORIGIN}{path}"))
+    let url = reqwest::Url::parse(&format!("{}{}", origin.trim_end_matches('/'), path))
         .map_err(|_| "sync:云同步请求地址无效".to_string())?;
-    // 即使路径白名单将来扩展，也保留域名和 HTTPS 双重断言，防止 URL 解析规则
-    // 将协议相对地址、凭据或端口解释成新的外发目的地。
-    if url.scheme() != "https" || url.host_str() != Some("eb-data.edgarzhong.fyi")
-        || url.port().is_some() || !url.username().is_empty() || url.password().is_some() {
+    // 即使路径白名单将来扩展，也保留 HTTPS、裸源与凭据三重断言，防止 URL 解析规则
+    // 将协议相对地址、凭据或路径注入解释成新的外发目的地。origin 必须是解析后
+    // 与完整地址一致的裸源（可带非默认端口），不能夹带路径、查询或片段。
+    if url.scheme() != "https"
+        || url.origin().ascii_serialization() != origin.trim_end_matches('/')
+        || !url.username().is_empty() || url.password().is_some() {
         return Err("sync:云同步请求目的地无效".into());
     }
     let method = reqwest::Method::from_bytes(method.as_bytes())

@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { createInMemoryRuntime } from "@ebbinghaus/persistence/src/adapters/inMemoryRuntime.ts";
 import type { SecretCipher } from "@ebbinghaus/persistence/src/repositories/settings.ts";
-import { createTauriCloudSync, CLOUD_SYNC_ENDPOINT } from "../src/adapters/tauriCloudSync.ts";
+import { createTauriCloudSync } from "../src/adapters/tauriCloudSync.ts";
+import { CLOUD_SYNC_ENDPOINT } from "../src/adapters/cloudSyncEndpoint.ts";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -115,7 +116,9 @@ describe("Tauri 云同步适配器", () => {
       return command === "sync_http_request" && request.authToken === "test-only-secret"
         && (request.path === "/settings" || request.path.startsWith("/content?") || request.path.startsWith("/sync/pull?"));
     })).toBe(true);
-    expect(CLOUD_SYNC_ENDPOINT).toBe("https://eb-data.edgarzhong.fyi");
+    // 端点由构建期 VITE_CLOUD_SYNC_URL 注入（测试值见 app/vite.config.ts 的
+    // test.env）；仓库不内置任何默认服务器地址。
+    expect(CLOUD_SYNC_ENDPOINT).toBe("https://sync.example.test");
     controller.stop();
   });
 
