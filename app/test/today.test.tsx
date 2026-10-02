@@ -16,9 +16,9 @@ describe("今日页：空状态与看板骨架", () => {
     renderApp();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/今天/);
     expect(screen.getByTestId("empty-state")).toHaveTextContent("今天的任务完成了");
-    // 任务清单三类入口始终可点（推荐顺序不阻塞选择）。
+    // 任务清单三类入口始终可点（推荐顺序不阻塞选择）；复习入口固定浏览文案（规格 8.2）。
     expect(screen.getByTestId("today-order-test")).toHaveTextContent("暂无待测任务");
-    expect(screen.getByTestId("today-order-review")).toHaveTextContent("暂无待复习任务");
+    expect(screen.getByTestId("today-order-review")).toHaveTextContent("浏览今天关注的词");
     expect(screen.getByTestId("today-order-first-pass")).toBeInTheDocument();
     // 容量两段式：后台刷新完成后建议行出现（绝不阻塞等待）。
     expect(screen.getByTestId("today-target-section")).toBeInTheDocument();

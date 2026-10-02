@@ -35,7 +35,7 @@ describe("测试页：任务列表", () => {
     expect(screen.queryByText(/Unit/)).not.toBeInTheDocument();
   });
 
-  it("词书模式从首过到逐词测试、等待纸质复习，再完成纸质复习", async () => {
+  it("词书模式从首过到逐词测试，完成反馈含成就感文案与剩余工作量，去复习可见候选词", async () => {
     const user = userEvent.setup();
     const mutable = createMutableClock(new Date(FIXED_NOW.getTime() - 2 * 86_400_000));
     const services = createTestServicesWithClock(mutable.clock);
@@ -59,12 +59,59 @@ describe("测试页：任务列表", () => {
     expect(answerPanel).not.toHaveClass("pending");
     expect(screen.getByTestId("session-meaning")).toHaveTextContent("用法：abandon ship");
     await user.click(screen.getByTestId("session-next"));
-    expect(screen.getByTestId("test-completed")).toHaveTextContent("软件测试完成了");
+
+    // 完成反馈（规格 10.4）：成就感文案 + 今日剩余测试工作量；无待测 List 时
+    // "继续测试"改"完成测试"。
+    const completed = screen.getByTestId("test-completed");
+    expect(completed).toHaveTextContent("这个 List 测完了！1 个词全部通过考验。");
+    expect(completed).toHaveTextContent("今天还剩 0 个词待测（0 个 List）。");
+    expect(screen.getByTestId("test-back-to-list")).toHaveTextContent("完成测试");
+
+    // 去复习：今天完成测试的词进入复习候选集（2026-10-02 口径）。
     await user.click(screen.getByTestId("test-go-review"));
-    // 昨晚确认的新口径：测试后整 List 纸书复习没有词级到期词单，直接提示翻纸质书。
-    expect(screen.getByTestId("review-task-Unit 1 · List 4")).toHaveTextContent("请使用纸质书复习本 List");
-    await user.click(screen.getByTestId("review-complete-Unit 1 · List 4"));
-    expect(services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "testFollowedByReviewCompleted")).toBe(true);
+    expect(screen.getByTestId("review-list-Unit 1 · List 4")).toHaveTextContent("今天关注 1 个词");
+    await user.click(screen.getByTestId("review-list-header-Unit 1 · List 4"));
+    expect(screen.getByTestId("review-words-Unit 1 · List 4")).toHaveTextContent("abandon");
+    // 复习页没有任何"完成纸质复习"确认入口，也不产生复习完成事件。
+    expect(screen.queryByRole("button", { name: /完成纸质复习/ })).not.toBeInTheDocument();
+    expect(services.runtime.eventStore.listAllEvents().some((event) => event.eventType === "testFollowedByReviewCompleted")).toBe(false);
+  });
+
+  it("词书完成反馈统计其余待测 List 的剩余工作量，有待测时按钮为继续测试", async () => {
+    const user = userEvent.setup();
+    const mutable = createMutableClock(new Date(FIXED_NOW.getTime() - 2 * 86_400_000));
+    const services = createTestServicesWithClock(mutable.clock);
+    const spaceId = services.getActiveSpace()?.id ?? "";
+    services.bookLearning.recordFirstPass({
+      spaceId, unitNumber: 1, listNumber: 4,
+      entries: [new ConfirmedEntry("abandon", [{ partOfSpeech: "v.", definition: "放弃", usage: null }])],
+    });
+    services.bookLearning.recordFirstPass({
+      spaceId, unitNumber: 1, listNumber: 5,
+      entries: [
+        new ConfirmedEntry("elaborate", [{ partOfSpeech: "ad.", definition: "精细的", usage: null }]),
+        new ConfirmedEntry("access", [{ partOfSpeech: "v.", definition: "进入", usage: null }]),
+      ],
+    });
+    mutable.setNow(FIXED_NOW);
+    renderApp(services);
+    await user.click(screen.getByTestId("nav-test"));
+    const lists = services.runtime.bookCatalogStore.listListsForSpace(spaceId);
+    const firstListId = lists.find((list) => list.listNumber === 4)?.listId ?? "";
+    await user.click(screen.getByTestId(`test-start-${firstListId}`));
+    await user.click(screen.getByTestId("session-recognized"));
+    await user.click(screen.getByTestId("session-next"));
+
+    // 今日剩余测试工作量从当日到期任务投影计算：List 5 尚余 2 个词（规格 10.4）。
+    const completed = screen.getByTestId("test-completed");
+    expect(completed).toHaveTextContent("这个 List 测完了！1 个词全部通过考验。");
+    expect(completed).toHaveTextContent("今天还剩 2 个词待测（1 个 List）。");
+    expect(screen.getByTestId("test-back-to-list")).toHaveTextContent("继续测试");
+
+    // 继续测试返回任务列表，仍能看到另一个待测 List。
+    await user.click(screen.getByTestId("test-back-to-list"));
+    const secondListId = lists.find((list) => list.listNumber === 5)?.listId ?? "";
+    expect(screen.getByTestId(`test-task-${secondListId}`)).toHaveTextContent("Unit 1 · List 5");
   });
 
   it("词书会话确认一词后暂停，任务行与恢复会话都准确显示尚余一词", async () => {

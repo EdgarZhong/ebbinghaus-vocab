@@ -56,12 +56,13 @@ export function seedRegularDueServices(
 }
 
 /**
- * 词书模式种子：Unit 1 · List 4 仅含一个词，首过发生在 3 天前（T0），2 天前
- * 完成第一次短期测试（认识，0→1，新周期起点 T1）→ T1 + 1 的仅复习需求今天已
- * 逾期，而 T1 + 3 晋级测试（= T0 + 4）尚未到期 → 派生任务类型为"仅复习"，
- * 可直接确认纸质复习。
+ * 词书模式种子：Unit 1 · List 4 仅含一个词，首过发生在 3 天前（T0），1 天前
+ * 完成第一次短期测试（认识，0→1，新周期起点 T1）→ T1 + 1 的仅复习日期**正好
+ * 是今天**（2026-10-02 口径：仅复习日期严格当日命中，逾期不再进入候选集），
+ * 而 T1 + 3 晋级测试尚未到期 → 该词是复习页"今天关注"的候选词，且当日没有
+ * 待测任务（复习入口不泄露待测答案）。
  */
-export function seedBookSpaceWithReviewOnlyTask(services: AppServices): string {
+export function seedBookSpaceWithDueReviewCandidate(services: AppServices): string {
   const space = services.spaces.createAndActivate({ name: "种子词书", learningMode: "词书模式" });
   const unitId = "seed-unit-1";
   const listId = "seed-list-4";
@@ -74,7 +75,7 @@ export function seedBookSpaceWithReviewOnlyTask(services: AppServices): string {
     listNumber: 4,
   });
   const firstPassedAt = new Date(FIXED_NOW.getTime() - 3 * 86_400_000);
-  const testedAt = new Date(FIXED_NOW.getTime() - 2 * 86_400_000);
+  const testedAt = new Date(FIXED_NOW.getTime() - 1 * 86_400_000);
   const wordId = "seed-word-1";
   services.runtime.wordContentStore.upsertEntries([
     {

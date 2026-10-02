@@ -152,58 +152,152 @@
   color: var(--color-danger);
 }
 
-/* 词书复习：展开的翻书提示清单（只读，不提供勾选）。 */
-.word-hint-list {
+/* 复习页卡片（词书 List 卡与常规组卡共用，规格 9.1/9.3）。 */
+.review-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+/* 卡头即展开/收起控件：整行可点，触控目标 ≥44px（移动端可达性回归）。 */
+.review-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--group-gap);
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 16px;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-card-header:hover {
+  background: var(--color-surface-hover, transparent);
+}
+
+.review-card-title {
+  font-size: var(--font-size-item);
+  font-weight: 600;
+}
+
+.review-card-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
+  white-space: nowrap;
+}
+
+/* "刚刚忘记"提示：警示色 + 图标 + 文字，不只靠颜色表达（规格 9.3）。 */
+.review-card-meta-warning {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+/* 展开区：宽度与 List 卡一致并保留左侧小缩进（规格 9.2）。 */
+.review-card-body {
+  margin-left: 14px;
+  padding-left: 14px;
+  border-left: 2px solid var(--color-border);
+  padding-bottom: 6px;
+}
+
+/*
+ * 词列表：区域内部纵向滚动，最大高度 = 20 个词卡片（规格 9.2）。
+ * 词卡行高固定（--review-word-row-height），候选词不足 20 个时按实际高度展示。
+ */
+.review-word-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  overflow-y: auto;
+  max-height: calc(var(--review-word-row-height, 44px) * 20);
 }
 
-.word-hint-list li {
+.review-word-card {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  padding: 6px 0;
+  flex: 0 0 var(--review-word-row-height, 44px);
+  height: var(--review-word-row-height, 44px);
+  min-width: 0;
   border-bottom: 1px solid var(--color-border);
-  flex-wrap: wrap;
 }
 
-.word-hint-list li:last-child {
+.review-word-card:last-child {
   border-bottom: none;
 }
 
-.word-hint-term {
-  /* 复习清单的词条同样是词典条目身份：与词卡、详情标题同一衬线族。 */
+/* 左列：英文词条，左对齐，不折行（窄屏也不被释义列挤压错乱）。 */
+.review-word-term {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow-x: auto;
+  white-space: nowrap;
   font-family: var(--font-family-display);
   font-size: var(--font-size-item);
   font-weight: 600;
+  /* 隐藏横向滚动条轨道，滚动能力保留（释义列同理）。 */
+  scrollbar-width: none;
 }
 
-.word-hint-meaning {
+.review-word-term::-webkit-scrollbar {
+  display: none;
+}
+
+/*
+ * 右列：释义（含用法、按词性条目顺序），右对齐；横向放不下时左右滚动
+ * （规格 9.2），绝不折行撑高词卡——词卡行高固定。
+ */
+.review-word-meaning {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  text-align: right;
   color: var(--color-text-secondary);
+  scrollbar-width: none;
 }
 
-/* 常规模式复习组：刚刚忘记置顶（警示色 + "!" 前缀，不只靠颜色）。 */
-.word-hint-forgotten .word-hint-marker {
+.review-word-meaning::-webkit-scrollbar {
+  display: none;
+}
+
+/* "刚刚忘记"行内标注：文字 + 警示图标，紧随释义列之后。 */
+.review-word-flag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--color-warning);
-  font-weight: 700;
-}
-
-.review-reading-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 4px;
-}
-
-.review-reading-title {
-  margin: 0;
-  font-size: var(--font-size-body);
-  color: var(--color-text-secondary);
+  font-size: var(--font-size-secondary);
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.review-word-card.is-forgotten .review-word-term {
+  color: var(--color-warning);
+}
+
+/* 移动端（≤375px，Android 小手机形态）：缩进与词卡横向间距收紧，避免释义区过窄。 */
+@media (max-width: 375px) {
+  .review-card-body {
+    margin-left: 10px;
+    padding-left: 10px;
+  }
+
+  .review-word-card {
+    gap: 8px;
+  }
 }
 
 /* 逐词测试会话。 */

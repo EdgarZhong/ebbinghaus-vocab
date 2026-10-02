@@ -92,6 +92,8 @@
   --page-margin: 24px;
   --block-gap: 24px;
   --group-gap: 16px;
+  /* 复习页词卡固定行高：展开区最大高度 = 本值 × 20（界面设计规格 9.2）。 */
+  --review-word-row-height: 44px;
   --radius-small: 6px;
   --radius-medium: 8px;
   --radius-large: 12px;

@@ -5,9 +5,9 @@
  * 用户旅程逐步点击/键盘操作并断言可见结果，证据截图落盘。与 smoke.spec.ts 的
  * 区别：这里按"任务书"组织，一项任务一个 test，全部通过 = 八项核心任务 100%。
  *
- * 词书模式完整闭环说明（如实记录）：词书逐词测试会话用例尚未移植（UI-2 报告
- * 缺口 1），任务 3 的词书"测试后复习确认"路径当前不可达；本文件以常规模式验证
- * 任务 3 的可达部分（完成测试 → 独立复习页朗读分组），词书路径列为遗留缺口。
+ * 词书模式闭环说明（2026-10-02 口径）：复习入口是纯浏览视图（规格第 9 章），
+ * 不存在"测试后复习确认"路径；词书"完成测试 → 去复习看候选词"由 Vitest 用例
+ * （testPage/reviewPage）覆盖，本文件任务 3 以常规模式验证复习流程的可达部分。
  */
 
 import { mkdirSync } from "node:fs";
@@ -164,10 +164,12 @@ test("任务3：完成软件测试后进入独立复习流程（常规朗读分�
   // 复习页与测试页始终是两个独立一级任务（第 2 章口径 7）；朗读分组只读。
   await expect(page.getByRole("heading", { level: 1, name: "复习" })).toBeVisible();
   await expect(page.getByTestId("review-group-1")).toContainText("已测试 2 个条目");
-  await page.getByTestId("review-group-expand-1").click();
-  // 只读朗读：展开后可见"刚刚忘记/其余已测试条目"内容，无任何完成/确认/推迟操作。
-  await expect(page.getByRole("heading", { name: "其余已测试条目" })).toBeVisible();
-  await expect(page.getByRole("listitem").first()).toContainText("word0");
+  // 2026-10-02 口径：点击组卡主体展开只读词列表（规格 9.3 同款卡片交互）。
+  await page.getByTestId("review-group-header-1").click();
+  const words = page.getByTestId("review-group-words-1");
+  await expect(words).toContainText("word0");
+  await expect(words).toContainText("word1");
+  // 只读朗读：展开后无任何完成/确认/推迟操作。
   expect(await page.getByRole("button", { name: /完成|确认|推迟/ }).count()).toBe(0);
   await screenshot(page, "task3-review-reading");
 });

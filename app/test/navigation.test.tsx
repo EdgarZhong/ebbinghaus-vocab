@@ -47,8 +47,8 @@ describe("应用外壳与一级导航", () => {
     await user.click(screen.getByTestId("nav-review"));
     const reviewTitle = screen.getByRole("heading", { level: 1, name: "复习" });
     expect(reviewTitle).toHaveFocus();
-    expect(screen.getByText("今天没有需要复习的 List")).toBeInTheDocument();
-    expect(screen.getByText("有新的复习任务时，会显示在这里。")).toBeInTheDocument();
+    expect(screen.getByText("今天没有需要关注的词")).toBeInTheDocument();
+    expect(screen.getByText("完成测试或复习计划到期后，今天关注的词会显示在这里。")).toBeInTheDocument();
 
     await user.click(screen.getByTestId("nav-test"));
     expect(screen.getByRole("heading", { level: 1, name: "测试" })).toBeInTheDocument();

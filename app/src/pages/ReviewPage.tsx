@@ -1,22 +1,35 @@
 /**
- * 复习页（功能完整）：词书模式纸质复习确认 + 常规模式只读朗读分组。
+ * 复习页（2026-10-02 口径重写）：两种学习模式统一的**纯浏览入口**。
  *
  * 交互语义对应界面设计规格第 9 章与需求规格 6.4/6.8：
- * - 词书模式：仅复习到期任务与软件测试完成的"等待纸质复习"任务都在此按
- *   List 展示；主要按钮始终为"完成纸质复习"，完成反馈与按钮同名。
- * - 常规模式：说明改为"查看今天已经测试过的条目，方便朗读和背诵"；只展示当天
- *   已有最终测试结果的条目，最终"不认识"置顶并标注"刚刚忘记"；无完成/确认/
- *   推迟操作，关闭页面不产生任何学习事件。
- * - 逾期行使用左侧强调线 + 文字标注表达，不使用整张红色背景（规格 9.2）。
+ * - 词书模式按 List 分组展示今天关注的候选词；常规模式按当天测试组分组展示
+ *   已测条目。两种模式共用同一套卡片结构、展开收起交互与词卡样式（规格 9.3）。
+ * - 点击 List 卡/组卡主体展开词列表，再点收起；展开只改变本机展示状态，不写
+ *   任何数据、不产生学习事件、不计工作量。
+ * - 页面无任何完成/确认/推迟/勾选操作，不显示逾期、到期或完成状态，无 toast；
+ *   词卡片只含左英文（左对齐）+ 右释义（右对齐，含用法、放不下时横滚）两列。
+ * - 常规模式最终"不认识"的条目置顶，并以文字 + 警示图标标注"刚刚忘记"
+ *   （不只依靠颜色表达，规格 9.3）。
  */
 
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import type { BookReviewTaskView, RegularReviewGroupView } from "../services/learningViews.ts";
+import { TestJudgement } from "@ebbinghaus/domain";
+import type {
+  BookReviewListView,
+  RegularReviewGroupView,
+} from "../services/learningViews.ts";
 import { useActiveSpace, useServices } from "../services/servicesContext.tsx";
 import { formatManualMeaning } from "../ui/meaningDisplay.ts";
-import { useToast } from "../shell/ToastContext.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { PageShell } from "../ui/PageShell.tsx";
+
+/** 词书模式复习页说明（规格 9.1）。 */
+const BOOK_DESCRIPTION = "浏览今天关注的词，线下翻开纸质书朗读。";
+/** 常规模式复习页说明（规格 9.3）。 */
+const REGULAR_DESCRIPTION = "查看今天已经测试过的条目，方便朗读和背诵。";
+/** 统一空状态（规格 9.2，两种模式同一文案）。 */
+const EMPTY_TITLE = "今天没有需要关注的词";
+const EMPTY_DESCRIPTION = "完成测试或复习计划到期后，今天关注的词会显示在这里。";
 
 export function ReviewPage(): ReactNode {
   const services = useServices();
@@ -25,24 +38,24 @@ export function ReviewPage(): ReactNode {
 
   const isRegularMode = activeSpace?.learningMode === "常规模式";
 
-  const bookTasks = useMemo(() => {
+  const bookLists = useMemo(() => {
     if (activeSpace === null || activeSpace.learningMode !== "词书模式") {
-      return [] as BookReviewTaskView[];
+      return [] as readonly BookReviewListView[];
     }
-    return services.learningViews.listBookReviewTasks(activeSpace.id);
-    // eslint 语义：version 变化意味着任务（派生态）可能已更新。
+    return services.learningViews.listBookReviewLists(activeSpace.id);
+    // eslint 语义：version 变化意味着候选集（派生态）可能已更新。
   }, [services, version, activeSpace]);
 
   const regularGroups = useMemo(() => {
     if (activeSpace === null || activeSpace.learningMode !== "常规模式") {
-      return [] as RegularReviewGroupView[];
+      return [] as readonly RegularReviewGroupView[];
     }
     return services.learningViews.listRegularReviewGroups(activeSpace.id);
   }, [services, version, activeSpace]);
 
   if (activeSpace === null) {
     return (
-      <PageShell title="复习" description="按 List 翻开纸质词书复习。">
+      <PageShell title="复习" description={BOOK_DESCRIPTION}>
         <EmptyState title="还没有选择 Space" description="从侧边栏顶部选择一个 Space，再回到这里安排复习。" />
       </PageShell>
     );
@@ -51,104 +64,45 @@ export function ReviewPage(): ReactNode {
   return isRegularMode ? (
     <RegularReviewView groups={regularGroups} />
   ) : (
-    <BookReviewView tasks={bookTasks} />
+    <BookReviewView lists={bookLists} />
   );
 }
 
 // ---------------------------------------------------------------------------
-// 词书模式：纸质复习确认
+// 词书模式：按 List 分组的候选词浏览
 // ---------------------------------------------------------------------------
 
-function BookReviewView({ tasks }: { tasks: readonly BookReviewTaskView[] }): ReactNode {
-  const services = useServices();
-  const { showToast } = useToast();
-  /** 展开词清单的任务（规格 9.1：展开只用于翻书提示，不提供逐词勾选）。 */
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  /** 行内完成失败信息（附着到对应任务卡，不建全局日志区）。 */
-  const [taskError, setTaskError] = useState<{ taskId: string; message: string } | null>(null);
-
-  const completeReview = (view: BookReviewTaskView): void => {
-    setTaskError(null);
-    try {
-      services.bookReview.completePaperReview({
-        task: view.task,
-        answeredPlannedDays: view.answeredPlannedDays,
-        learningDaySettings: services.settings.getLearningDaySettings(),
-      });
-      services.notifyChanged();
-      showToast(`${view.title} 已完成复习。`);
-    } catch (cause) {
-      // 前置状态不满足（如软件测试未完成）时展示用例给定的用户可读原因。
-      setTaskError({ taskId: view.taskId, message: cause instanceof Error ? cause.message : String(cause) });
-    }
-  };
+function BookReviewView({ lists }: { lists: readonly BookReviewListView[] }): ReactNode {
+  /** 当前展开的 List 卡标题；null 表示全部收起（纯本机展示状态，规格 9.2）。 */
+  const [expandedTitle, setExpandedTitle] = useState<string | null>(null);
 
   return (
-    <PageShell title="复习" description="按 List 翻开纸质词书复习。">
-      {tasks.length === 0 ? (
-        <EmptyState title="今天没有需要复习的 List" description="有新的复习任务时，会显示在这里。" />
+    <PageShell title="复习" description={BOOK_DESCRIPTION}>
+      {lists.length === 0 ? (
+        <EmptyState title={EMPTY_TITLE} description={EMPTY_DESCRIPTION} />
       ) : (
-        <div className="row-list" data-testid="review-task-list">
-          {tasks.map((view) => {
-            const expanded = expandedId === view.taskId;
+        <div className="row-list" data-testid="review-list">
+          {lists.map((view) => {
+            const expanded = expandedTitle === view.title;
             return (
-              <div
-                className={`task-row${view.dueLabel !== "今天到期" ? " overdue" : ""}`}
-                key={view.taskId}
-                data-testid={`review-task-${view.title}`}
-              >
-                <div className="task-row-main">
-                  <span className="task-row-title">{view.title}</span>
-                  <span className="task-row-meta">
-                    {view.dueLabel !== "今天到期" ? (
-                      <span className="badge badge-overdue">{view.dueLabel}</span>
-                    ) : (
-                      <span className="badge">{view.dueLabel}</span>
-                    )}
-                    {view.words.length > 0 ? (
-                      <span>{view.words.length} 个词需要复习</span>
-                    ) : (
-                      <span>请使用纸质书复习本 List</span>
-                    )}
-                  </span>
-                </div>
-                <div className="task-row-actions">
-                  {view.words.length > 0 ? (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      aria-expanded={expanded}
-                      onClick={() => setExpandedId((current) => (current === view.taskId ? null : view.taskId))}
-                      data-testid={`review-expand-${view.title}`}
-                    >
-                      {expanded ? "收起词清单" : `查看这 ${view.words.length} 个词`}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => completeReview(view)}
-                    data-testid={`review-complete-${view.title}`}
-                  >
-                    完成纸质复习
-                  </button>
-                </div>
-                {taskError !== null && taskError.taskId === view.taskId ? (
-                  <p className="field-error" role="alert" data-testid="review-task-error">
-                    {taskError.message}
-                  </p>
-                ) : null}
-                {expanded ? (
-                  <ul className="word-hint-list" data-testid={`review-words-${view.title}`}>
-                    {view.words.map((word) => (
-                      <li key={word.wordId}>
-                        <span className="word-hint-term">{word.originalSpelling}</span>
-                        <span className="word-hint-meaning">{formatManualMeaning(word.manualMeaning, word.meanings, "；")}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
+              <ReviewCard
+                key={view.listId}
+                testId={`review-list-${view.title}`}
+                headerTestId={`review-list-header-${view.title}`}
+                wordsTestId={`review-words-${view.title}`}
+                title={view.title}
+                meta={<>{`今天关注 ${view.words.length} 个词`}</>}
+                expanded={expanded}
+                onToggle={() =>
+                  setExpandedTitle((current) => (current === view.title ? null : view.title))
+                }
+                entries={view.words.map((word) => ({
+                  key: word.wordId,
+                  term: word.originalSpelling,
+                  // 释义含用法、按词性条目顺序直接展示；放不下时由释义区横滚承接。
+                  meaning: formatManualMeaning(word.manualMeaning, word.meanings, "；"),
+                }))}
+              />
             );
           })}
         </div>
@@ -158,81 +112,136 @@ function BookReviewView({ tasks }: { tasks: readonly BookReviewTaskView[] }): Re
 }
 
 // ---------------------------------------------------------------------------
-// 常规模式：只读朗读分组
+// 常规模式：按当天测试组分组的已测条目朗读
 // ---------------------------------------------------------------------------
 
 function RegularReviewView({ groups }: { groups: readonly RegularReviewGroupView[] }): ReactNode {
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  /** 当前展开的组卡序号；null 表示全部收起。 */
+  const [expandedOrdinal, setExpandedOrdinal] = useState<number | null>(null);
 
   return (
-    <PageShell title="复习" description="查看今天已经测试过的条目，方便朗读和背诵。">
+    <PageShell title="复习" description={REGULAR_DESCRIPTION}>
       {groups.length === 0 ? (
-        <EmptyState
-          title="今天还没有已测试的条目"
-          description="在测试页完成逐词测试后，可以在这里朗读刚刚测试过的内容。"
-        />
+        <EmptyState title={EMPTY_TITLE} description={EMPTY_DESCRIPTION} />
       ) : (
         <div className="row-list" data-testid="review-group-list">
           {groups.map((group) => {
-            const expanded = expandedId === group.ordinal;
+            const expanded = expandedOrdinal === group.ordinal;
             return (
-              <div className="task-row" key={group.ordinal} data-testid={`review-group-${group.ordinal}`}>
-                <div className="task-row-main">
-                  <span className="task-row-title">第 {group.ordinal} 组 · 已测试 {group.testedCount} 个条目</span>
-                  <span className="task-row-meta">
-                    {group.forgottenCount > 0 ? (
-                      <span className="badge badge-overdue">刚刚忘记 {group.forgottenCount} 个</span>
-                    ) : null}
-                  </span>
-                </div>
-                <div className="task-row-actions">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    aria-expanded={expanded}
-                    onClick={() => setExpandedId((current) => (current === group.ordinal ? null : group.ordinal))}
-                    data-testid={`review-group-expand-${group.ordinal}`}
-                  >
-                    {expanded ? "收起" : `查看这 ${group.testedCount} 个条目`}
-                  </button>
-                </div>
-                {expanded ? (
-                  <div className="review-reading-body">
-                    {group.forgotten.length > 0 ? (
-                      <>
-                        <h4 className="review-reading-title">刚刚忘记</h4>
-                        <ul className="word-hint-list">
-                          {group.forgotten.map((entry) => (
-                            <li key={entry.wordId} className="word-hint-forgotten">
-                              <span className="word-hint-marker" aria-hidden="true">!</span>
-                              <span className="word-hint-term">{entry.originalSpelling}</span>
-                              <span className="word-hint-meaning">{formatManualMeaning(entry.manualMeaning, entry.meanings, "；")}</span>
-                              <span className="badge badge-overdue">刚刚忘记</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : null}
-                    {group.others.length > 0 ? (
-                      <>
-                        <h4 className="review-reading-title">其余已测试条目</h4>
-                        <ul className="word-hint-list">
-                          {group.others.map((entry) => (
-                            <li key={entry.wordId}>
-                              <span className="word-hint-term">{entry.originalSpelling}</span>
-                              <span className="word-hint-meaning">{formatManualMeaning(entry.manualMeaning, entry.meanings, "；")}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
+              <ReviewCard
+                key={group.ordinal}
+                testId={`review-group-${group.ordinal}`}
+                headerTestId={`review-group-header-${group.ordinal}`}
+                wordsTestId={`review-group-words-${group.ordinal}`}
+                title={`第 ${group.ordinal} 组 · 已测试 ${group.testedCount} 个条目`}
+                meta={
+                  group.forgottenCount > 0 ? (
+                    <span className="review-card-meta-warning">
+                      <WarningIcon />
+                      {`刚刚忘记 ${group.forgottenCount} 个`}
+                    </span>
+                  ) : null
+                }
+                expanded={expanded}
+                onToggle={() =>
+                  setExpandedOrdinal((current) => (current === group.ordinal ? null : group.ordinal))
+                }
+                // 规格 9.3：最终"不认识"的条目始终排在最前，其后才是"认识"的条目。
+                entries={[...group.forgotten, ...group.others].map((entry) => ({
+                  key: entry.wordId,
+                  term: entry.originalSpelling,
+                  meaning: formatManualMeaning(entry.manualMeaning, entry.meanings, "；"),
+                  forgotten: entry.lastJudgement === TestJudgement.NotRecognized,
+                }))}
+              />
             );
           })}
         </div>
       )}
     </PageShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 共用卡片结构（词书 List 卡与常规组卡同一套，规格 9.3）
+// ---------------------------------------------------------------------------
+
+/** 词卡片一行的展示内容：左英文词条 + 右释义； forgotten 行额外带"刚刚忘记"标注。 */
+interface ReviewWordRow {
+  readonly key: string;
+  readonly term: ReactNode;
+  readonly meaning: ReactNode;
+  readonly forgotten?: boolean;
+}
+
+interface ReviewCardProps {
+  readonly testId: string;
+  readonly headerTestId: string;
+  readonly wordsTestId: string;
+  readonly title: ReactNode;
+  /** 标题行右侧信息；无到期/逾期/完成语义（规格 9.2 禁止状态标识）。 */
+  readonly meta: ReactNode | null;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly entries: readonly ReviewWordRow[];
+}
+
+/**
+ * 复习卡：整张卡头部是一个展开/收起按钮（触控目标 ≥44px），词列表区宽度与卡
+ * 一致并保留左侧小缩进，内部纵向滚动、最大高度 = 20 个词卡片（行高固定，
+ * 见 pages.css 的 --review-word-row-height）。
+ */
+function ReviewCard(props: ReviewCardProps): ReactNode {
+  return (
+    <div className="review-card" data-testid={props.testId}>
+      <button
+        type="button"
+        className="review-card-header"
+        aria-expanded={props.expanded}
+        onClick={props.onToggle}
+        data-testid={props.headerTestId}
+      >
+        <span className="review-card-title">{props.title}</span>
+        {props.meta === null ? null : <span className="review-card-meta">{props.meta}</span>}
+      </button>
+      {props.expanded ? (
+        <div className="review-card-body">
+          <ul className="review-word-list" data-testid={props.wordsTestId}>
+            {props.entries.map((entry) => (
+              <li
+                key={entry.key}
+                className={entry.forgotten === true ? "review-word-card is-forgotten" : "review-word-card"}
+              >
+                <span className="review-word-term">{entry.term}</span>
+                <span className="review-word-meaning">{entry.meaning}</span>
+                {entry.forgotten === true ? (
+                  <span className="review-word-flag">
+                    <WarningIcon />
+                    刚刚忘记
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 警示图标（规格 9.3："刚刚忘记"必须同时有文字与图标，不只靠颜色）。 */
+function WarningIcon(): ReactNode {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+      <path
+        d="M7 1.6 12.8 12H1.2Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <path d="M7 5.4v2.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="7" cy="10.5" r="0.9" fill="currentColor" />
+    </svg>
   );
 }

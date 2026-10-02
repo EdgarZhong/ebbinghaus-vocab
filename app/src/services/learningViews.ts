@@ -3,9 +3,13 @@
  *
  * 职责边界（AGENTS.md 分层规则）：本文件不实现任何业务规则——调度、FSRS、冲突
  * 与事件产出全部在 packages/application 与 packages/domain；这里只把既有用例的
- * 输出（调度派生任务、事件重放状态、内容目录）**拼装**为界面直接可渲染的视图
- * 快照，并完成"内部术语 → 行为语言"的展示映射（界面设计规格第 15 章禁止
- * `T0 + 1` 之类枚举原文上屏）。
+ * 输出（调度派生任务、复习候选集、事件重放状态、内容目录）**拼装**为界面直接
+ * 可渲染的视图快照，并完成"内部术语 → 行为语言"的展示映射（界面设计规格第 15 章
+ * 禁止 `T0 + 1` 之类枚举原文上屏）。
+ *
+ * 2026-10-02 口径：复习页是纯浏览入口（需求规格 6.4）。词书复习候选集来自
+ * ReviewCandidatesService（当日到期仅复习词 ∪ 今日已测词 − 当日未答词），视图层
+ * 只做 List 分组标题拼装与词条内容联接，不引入任何任务/到期/完成语义。
  *
  * 页面只经 `useServices()` 消费本文件的视图对象，绝不直接触碰端口实现。
  */
@@ -24,6 +28,7 @@ import {
   replayWordStates,
   type BookLearningService,
   type PersistedListTask,
+  type ReviewCandidatesService,
   type SettingsService,
   type SchedulingService,
   type TaskItemSnapshot,
@@ -63,6 +68,14 @@ export interface VocabularyTimelineItemView {
   readonly detail: string;
 }
 
+/** 复习页词卡片的两列词条内容（左英文、右释义；释义含用法，横放不下时横滚）。 */
+export interface ReviewWordContentView {
+  readonly wordId: string;
+  readonly originalSpelling: string;
+  readonly manualMeaning: string;
+  readonly meanings: readonly StructuredMeaning[];
+}
+
 /** 常规模式复习组内的只读条目（仅展示已有最终测试结果的条目）。 */
 export interface RegularReviewEntryView {
   readonly wordId: string;
@@ -83,19 +96,20 @@ export interface RegularReviewGroupView {
   readonly others: readonly RegularReviewEntryView[];
 }
 
-/** 词书模式复习页任务卡，包含仅复习与已完成软件测试的纸质复习。 */
-export interface BookReviewTaskView {
-  readonly taskId: string;
+/**
+ * 词书模式复习页 List 卡（界面设计规格 9.1/9.2）。
+ *
+ * 只承载"Unit / List 定位 + 今天关注的候选词内容"：候选词公式与过滤全部由
+ * ReviewCandidatesService 决定（当日到期仅复习词 ∪ 今日已测词 − 当日未答词，
+ * 只含活动未掌握 Word、多项需求去重）。视图不再携带任务标识、到期标签、
+ * 完成状态或任何写操作入参——复习页没有"完成任务"概念。
+ */
+export interface BookReviewListView {
+  readonly listId: string;
   /** 行为语言标题："Unit 2 · List 3"。 */
   readonly title: string;
-  /** "今天到期" / "逾期 N 天"。 */
-  readonly dueLabel: string;
-  /** 展开用的词级到期复习词；整 List 纸书复习不伪装成词级词单（规格 6.4）。 */
-  readonly words: readonly { wordId: string; originalSpelling: string; manualMeaning: string; meanings: readonly StructuredMeaning[] }[];
-  /** 原始派生任务：完成纸质复习用例（BookReviewCompletionService）的输入。 */
-  readonly task: PersistedListTask;
-  /** 测试后复习批次覆盖的答案计划日；仅复习卡为空数组。 */
-  readonly answeredPlannedDays: readonly string[];
+  /** 候选词内容（候选稳定顺序：仅复习词在前、今日已测词随后）。 */
+  readonly words: readonly ReviewWordContentView[];
 }
 
 export interface LearningViews {
@@ -104,8 +118,8 @@ export interface LearningViews {
   listVocabularyTimeline(wordId: string): readonly VocabularyTimelineItemView[];
   /** 常规模式复习页：当天已有最终测试结果的条目分组。 */
   listRegularReviewGroups(spaceId: string): readonly RegularReviewGroupView[];
-  /** 词书模式复习页：今天需要纸质复习的 List 任务。 */
-  listBookReviewTasks(spaceId: string): readonly BookReviewTaskView[];
+  /** 词书模式复习页：今天每个 List 的复习候选词（纯浏览视图，规格 9.2）。 */
+  listBookReviewLists(spaceId: string): readonly BookReviewListView[];
   /** 词书模式测试列表：全部派生任务（测试页与今日看板同一数据源）。 */
   bookTaskItems(spaceId: string): readonly TaskItemSnapshot[];
 }
@@ -119,6 +133,7 @@ export interface CreateLearningViewsDeps {
   readonly settings: SettingsService;
   readonly scheduling: SchedulingService;
   readonly bookLearning: BookLearningService;
+  readonly reviewCandidates: ReviewCandidatesService;
   readonly clock: Clock;
 }
 
@@ -126,7 +141,6 @@ export interface CreateLearningViewsDeps {
 function toBookTaskItem(
   task: PersistedListTask,
   deps: CreateLearningViewsDeps,
-  states: ReadonlyMap<string, import("@ebbinghaus/domain").ReplayedWordState>,
   listsById: ReadonlyMap<string, ListCatalogRecord>,
   contentsById: ReadonlyMap<string, WordContentRecord>,
 ): TaskItemSnapshot {
@@ -144,16 +158,12 @@ function toBookTaskItem(
   }
   const sessionStatus: TestSessionExecutionStatus | null = sessionMatches && openSession !== null ? openSession.status : null;
   const completedCount = sessionMatches && openSession !== null ? openSession.currentPosition : 0;
-  // 待测/待复习词数：测试任务取测试需求；仅复习取复习需求（与调度工作量口径一致）。
-  const demandWordIds =
-    task.taskType === "仅复习"
-      ? task.payload.reviewDemands.map((demand) => demand.wordId)
-      : task.payload.testDemands.map((demand) => demand.wordId);
+  // 待测词数：调度自 2026-10-02 起只生成测试任务，payload 只有 testDemands
+  // （工作量口径 = 待测词数，与 packages/application 派生任务一致）。
+  const demandWordIds = task.payload.testDemands.map((demand) => demand.wordId);
   const activeWords = demandWordIds
     .map((wordId) => contentsById.get(wordId))
     .filter((content): content is WordContentRecord => content !== undefined && !content.removed)
-    // 复习展开默认不显示已掌握词（规格 6.4）；测试需求本身只对未掌握词生成。
-    .filter((content) => states.get(content.wordId)?.masteryStatus !== MasteryStatus.Mastered)
     .map((content) => ({
       wordId: content.wordId,
       originalSpelling: content.originalSpelling,
@@ -308,37 +318,24 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       });
     },
 
-    listBookReviewTasks(spaceId: string): readonly BookReviewTaskView[] {
-      const learningDaySettings = settings.getLearningDaySettings();
-      const replayed = states();
-      const refresh = scheduling.refreshSpaceTasks({ spaceId, learningDaySettings });
+    /**
+     * 词书模式复习页：今天每个 List 的候选词浏览分组（规格 9.1/9.2）。
+     *
+     * 候选集公式（当日到期仅复习词 ∪ 今日已测词 − 当日未答词、活动未掌握、
+     * 多需求去重）由 ReviewCandidatesService 完整负责；这里只把候选词标识联接
+     * 词条内容并按 List 拼出 "Unit X · List Y" 标题。候选服务已保证候选词全部
+     * 活动未掌握，联接时仅防御性剔除内容目录缺失/已移除的条目。
+     */
+    listBookReviewLists(spaceId: string): readonly BookReviewListView[] {
       const listsById = new Map(runtime.bookCatalogStore.listListsForSpace(spaceId).map((list) => [list.listId, list]));
       const contentsById = new Map(runtime.wordContentStore.listCatalogEntries().map((content) => [content.wordId, content]));
-      // 进行中的软件测试仍留在测试页；测试完成的任务从会话启动快照恢复，
-      // 防止答案改变调度投影后，纸质复习入口被新任务覆盖。
-      const reviewOnlyByList = new Map(
-        refresh.tasks.filter((task) => task.taskType === "仅复习").map((task) => [task.listId, task]),
-      );
-      const pendingTestByList = new Map(
-        deps.bookLearning.pendingPaperReviewBatches(spaceId).map((batch) => [batch.task.listId, batch]),
-      );
-      // 调度会把同日需求聚合到 List，但测试完成后的待纸书批次和刷新后的仅复习任务
-      // 可能有不同 taskId；按 List 合并，避免同一天出现重复卡片，并在完成事件里
-      // 一并记账所有到期复习需求。
-      const listIds = new Set([...reviewOnlyByList.keys(), ...pendingTestByList.keys()]);
-      return [...listIds]
-        .map((listId) => {
-          const reviewOnlyTask = reviewOnlyByList.get(listId);
-          const pendingTestBatch = pendingTestByList.get(listId);
-          const task = mergePaperReviewTasks(pendingTestBatch?.task, reviewOnlyTask);
-          const listRecord = listsById.get(task.listId);
-          // 多个复习原因可能指向同一 Word；界面统计的是需要复习的不同词，而不是需求行数。
-          const dueWordIds = [...new Set(task.payload.reviewDemands.map((demand) => demand.wordId))];
-          const words = dueWordIds
+      return deps.reviewCandidates
+        .bookReviewCandidates({ spaceId, learningDaySettings: settings.getLearningDaySettings() })
+        .map((group) => {
+          const listRecord = listsById.get(group.listId);
+          const words = group.wordIds
             .map((wordId) => contentsById.get(wordId))
             .filter((content): content is WordContentRecord => content !== undefined && !content.removed)
-            // 已掌握 Word 默认不出现在展开列表（规格 6.4）。
-            .filter((content) => replayed.get(content.wordId)?.masteryStatus !== MasteryStatus.Mastered)
             .map((content) => ({
               wordId: content.wordId,
               originalSpelling: content.originalSpelling,
@@ -346,53 +343,19 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
               meanings: content.meanings,
             }));
           return {
-            taskId: task.taskId,
+            listId: group.listId,
             title: `Unit ${listRecord?.unitNumber ?? "?"} · List ${listRecord?.listNumber ?? "?"}`,
-            dueLabel: task.overdueDays > 0 ? `逾期 ${task.overdueDays} 天` : "今天到期",
             words,
-            task,
-            answeredPlannedDays: pendingTestBatch?.plannedDays ?? [],
           };
         });
     },
 
     bookTaskItems(spaceId: string): readonly TaskItemSnapshot[] {
-      const replayed = states();
       const learningDaySettings = settings.getLearningDaySettings();
       const refresh = scheduling.refreshSpaceTasks({ spaceId, learningDaySettings });
       const listsById = new Map(runtime.bookCatalogStore.listListsForSpace(spaceId).map((list) => [list.listId, list]));
       const contentsById = new Map(runtime.wordContentStore.listCatalogEntries().map((content) => [content.wordId, content]));
-      return refresh.tasks.map((task) => toBookTaskItem(task, deps, replayed, listsById, contentsById));
+      return refresh.tasks.map((task) => toBookTaskItem(task, deps, listsById, contentsById));
     },
-  };
-}
-
-/**
- * 一个 List 同日最多有一张纸书复习卡：待纸书批次与仅复习任务按 List 合并，
- * 同时合并独立到期词需求，避免显示去重后丢失调度记账。
- */
-function mergePaperReviewTasks(
-  pendingTestTask: PersistedListTask | undefined,
-  reviewOnlyTask: PersistedListTask | undefined,
-): PersistedListTask {
-  if (pendingTestTask === undefined) {
-    if (reviewOnlyTask === undefined) throw new Error("复习任务合并缺少来源任务");
-    return reviewOnlyTask;
-  }
-  if (reviewOnlyTask === undefined) return pendingTestTask;
-
-  const demands = [...pendingTestTask.payload.reviewDemands, ...reviewOnlyTask.payload.reviewDemands];
-  const demandsByKey = new Map<string, (typeof demands)[number]>();
-  for (const demand of demands) {
-    demandsByKey.set(`${demand.wordId}\u0000${demand.taskType}\u0000${demand.scheduledDay}`, demand);
-  }
-  const reviewDemands = [...demandsByKey.values()];
-  const overdueDays = Math.max(pendingTestTask.overdueDays, reviewOnlyTask.overdueDays);
-  const dueReason = [...new Set([pendingTestTask.dueReason, reviewOnlyTask.dueReason].filter(Boolean))].join("；");
-  return {
-    ...pendingTestTask,
-    overdueDays,
-    dueReason,
-    payload: { ...pendingTestTask.payload, overdueDays, reviewDemands },
   };
 }

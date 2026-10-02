@@ -359,6 +359,7 @@ test("逐词测试主路径：今日页 ≤2 次点击进入，作答到完成",
 
   // 完成反馈（规格 10.5）+ 去复习进入常规朗读分组。
   await expect(page.getByTestId("test-completed")).toBeVisible();
+  await screenshot(page, "test-completed");
   await page.getByTestId("test-go-review").click();
   await expect(page.getByRole("heading", { level: 1, name: "复习" })).toBeVisible();
   await expect(page.getByTestId("review-group-1")).toContainText("已测试 3 个条目");

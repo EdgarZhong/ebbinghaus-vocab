@@ -24,7 +24,6 @@
  */
 
 import {
-  BookReviewCompletionService,
   BookLearningService,
   BookDraftService,
   CapacityPlanningService,
@@ -36,6 +35,7 @@ import {
   LlmConfigurationService,
   resolveLlmConfiguration,
   RegularLearningService,
+  ReviewCandidatesService,
   SchedulingService,
   SettingsService,
   SpaceManagementService,
@@ -166,8 +166,8 @@ export interface AppServices {
   readonly scheduling: SchedulingService;
   /** 两段式容量规划：读侧纯缓存视图 + 后台刷新（今日页固定交互语义）。 */
   readonly capacityPlanning: CapacityPlanningService;
-  /** 词书纸质复习完成的事件产出口径（复习页确认入口）。 */
-  readonly bookReview: BookReviewCompletionService;
+  /** 词书模式复习入口候选集：纯派生只读视图，无任何写路径（需求规格 6.4）。 */
+  readonly reviewCandidates: ReviewCandidatesService;
   /** 词书模式首过、逐词测试与 Word 内容维护。 */
   readonly bookLearning: BookLearningService;
   /** V1 词汇页双向手动掌握，用不可变事件驱动两种模式各自的调度。 */
@@ -310,13 +310,14 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     scheduling,
   });
 
-  // 词书纸质复习完成：确认"仅复习/测试后复习"并按口径产出完成事件。
-  const bookReview = new BookReviewCompletionService({
-    eventRecorder,
+  // 复习入口候选集（2026-10-02 口径）：当日到期仅复习词 ∪ 今日已测词 − 当日未答词，
+  // 纯只读派生视图——复习页不再有任何"完成纸质复习"确认入口与写路径。
+  const reviewCandidates = new ReviewCandidatesService({
+    clock,
     eventStore: runtime.eventStore,
     wordContentStore: runtime.wordContentStore,
     bookCatalogStore: runtime.bookCatalogStore,
-    unitOfWork: runtime.unitOfWork,
+    scheduling,
   });
 
   // 词书操作与常规模式共用事件、目录和事务端口；页面只调用应用层用例。
@@ -361,8 +362,8 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     clock,
   });
 
-  // 组合根侧界面只读视图（词汇/常规复习组/词书任务转换）。
-  const learningViews = createLearningViews({ runtime, settings, scheduling, bookLearning, clock });
+  // 组合根侧界面只读视图（词汇/常规复习组/词书复习候选与任务转换）。
+  const learningViews = createLearningViews({ runtime, settings, scheduling, bookLearning, reviewCandidates, clock });
 
   // 词书任务提供者（组合根侧视图转换）：把调度派生任务拼装为界面任务快照。
   // 任务列表与可恢复会话均由同一词书用例和调度投影提供。
@@ -423,7 +424,7 @@ export function createAppServices(options: CreateAppServicesOptions = {}): AppSe
     regularLearning,
     scheduling,
     capacityPlanning,
-    bookReview,
+    reviewCandidates,
     bookLearning,
     vocabularyMastery,
     dictionary,

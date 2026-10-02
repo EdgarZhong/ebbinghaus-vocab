@@ -56,9 +56,9 @@ export function TestPage(): ReactNode {
       if (JSON.stringify(next) === JSON.stringify(sessionState.snapshot)) return;
       // 第一阶段初判只在本机页面内暂存。另一终端已确认当前 Word 后，旧初判
       // 绝不能套用到收敛后的下一词；同词内容或其他计数更新则仍保留初判。
+      // 2026-10-02 起会话终态只有"已完成"（不存在"等待纸质复习"状态）。
       if (next.currentWord?.wordId !== sessionState.snapshot.currentWord?.wordId
-        || next.currentWord === null || next.status === TestSessionExecutionStatus.Completed
-        || next.status === TestSessionExecutionStatus.WaitingForPaperReview) {
+        || next.currentWord === null || next.status === TestSessionExecutionStatus.Completed) {
         setRevealed(null);
       }
       setSessionState({ spaceId: sessionState.spaceId, snapshot: next });
@@ -134,32 +134,49 @@ export function TestPage(): ReactNode {
   const remainingOf = (task: TaskItemSnapshot): number => Math.max(0, task.totalCount - task.completedCount);
   const isResumable = (task: TaskItemSnapshot): boolean =>
     task.completedCount > 0 || task.sessionStatus !== null;
-  const hasOtherPending = tasks.some((task) => remainingOf(task) > 0);
 
-  // ---- 会话完成视图 ----
+  // ---- 会话完成视图（规格 10.4 词书 / 10.5 常规） ----
   if (session !== null && session.currentWord === null) {
-    return (
-      <PageShell title="测试" description={isRegularMode ? "完成一组再进入下一组，或到复习页朗读。" : undefined}>
-        <section className="card test-completed" data-testid="test-completed">
-          <p className="empty-state-title">{isRegularMode ? "今天的测试完成了" : "软件测试完成了"}</p>
-          <p className="empty-state-description">
-            {!isRegularMode
-              ? `现在请翻开纸质词书，复习 Unit ${session.unitNumber} · List ${session.listNumber}。`
-              : hasOtherPending
-              ? "这一组测试完成了。可以继续下一组，或到复习页朗读刚刚测试过的条目。"
-              : "可以到复习页朗读刚刚测试过的条目。"}
-          </p>
-          <div className="modal-actions">
-            {isRegularMode && hasOtherPending ? (
+    if (isRegularMode) {
+      return (
+        <PageShell title="测试" description="完成一组再进入下一组，或到复习页朗读。">
+          <section className="card test-completed" data-testid="test-completed">
+            <p className="empty-state-title">今天的测试完成了</p>
+            <p className="empty-state-description">可以到复习页朗读刚刚测试过的条目。</p>
+            <div className="modal-actions">
               <button
                 type="button"
                 className="btn btn-primary"
-                data-testid="test-continue-next-group"
+                data-testid="test-go-review"
+                onClick={() => navigate(routes.review)}
+              >
+                去复习
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                data-testid="test-back-to-list"
                 onClick={exitSession}
               >
-                继续下一组
+                返回测试
               </button>
-            ) : null}
+            </div>
+          </section>
+        </PageShell>
+      );
+    }
+    // 词书模式：成就感文案 + 今日剩余测试工作量（数据从当日到期任务投影计算）。
+    // 刚完成的 List 若仍留在投影里，剩余数为 0，自然不重复计数。
+    const pendingTasks = tasks.filter((task) => remainingOf(task) > 0);
+    const remainingWords = pendingTasks.reduce((sum, task) => sum + remainingOf(task), 0);
+    return (
+      <PageShell title="测试">
+        <section className="card test-completed" data-testid="test-completed">
+          <p className="empty-state-title">这个 List 测完了！{session.totalCount} 个词全部通过考验。</p>
+          <p className="empty-state-description">
+            {`今天还剩 ${remainingWords} 个词待测（${pendingTasks.length} 个 List）。`}
+          </p>
+          <div className="modal-actions">
             <button
               type="button"
               className="btn btn-primary"
@@ -174,7 +191,7 @@ export function TestPage(): ReactNode {
               data-testid="test-back-to-list"
               onClick={exitSession}
             >
-              {isRegularMode ? "返回测试" : "稍后复习"}
+              {pendingTasks.length > 0 ? "继续测试" : "完成测试"}
             </button>
           </div>
         </section>

@@ -113,9 +113,8 @@ export function TodayPage(): ReactNode {
     );
   }
 
-  // ---- 任务分类（复习/测试分开，规格 8.2"今天的学习顺序"） ----
-  const testTasks = snapshot.tasks.filter((task) => task.taskType !== "仅复习");
-  const reviewTasks = snapshot.tasks.filter((task) => task.taskType === "仅复习");
+  // ---- 任务分类（复习不是任务：入口行固定为浏览文案，规格 8.2） ----
+  const testTasks = snapshot.tasks;
   const remainingOf = (task: TaskItemSnapshot): number => Math.max(0, task.totalCount - task.completedCount);
   const isResumable = (task: TaskItemSnapshot): boolean =>
     task.completedCount > 0 || task.sessionStatus !== null;
@@ -126,9 +125,8 @@ export function TodayPage(): ReactNode {
   const capacityRefreshing = snapshot.capacityStale && snapshot.capacityAlgorithmVersion !== "";
   const workloadUnit = isRegularMode ? "个条目" : "份学习";
 
-  // ---- 下一步选择（规格 8.3：测试 → 复习 → 首过 → 完成） ----
+  // ---- 下一步选择（规格 8.3：测试 → 首过 → 完成；复习是浏览入口，不再是任务） ----
   const nextTest = testTasks[0];
-  const nextReview = reviewTasks[0];
   const noSample = snapshot.recentActualSampleCount === 0;
 
   const todayTitle = formatTodayTitle(services.settings.getLearningScheduleSettings().timezoneName, services.clock.now());
@@ -139,17 +137,18 @@ export function TodayPage(): ReactNode {
       description={
         isRegularMode
           ? "以条目测试为主，朗读复习是可选的辅助入口。"
-          : "按顺序完成测试、纸质复习，再根据建议决定是否首过新 List。"
+          : "先完成测试，再浏览今天关注的词，最后根据建议决定是否首过新 List。"
       }
     >
-      {nextTest === undefined && nextReview === undefined && suggestedCount <= 0 ? (
-        // 三类任务都为空：完成状态，不制造虚假任务（规格 8.3 规则 6）。
+      {nextTest === undefined && suggestedCount <= 0 ? (
+        // 测试与建议都为空：完成状态，不制造虚假任务（规格 8.3 规则 5/6；
+        // 复习是浏览入口，不进入下一步优先级）。
         <EmptyState
           title={isRegularMode ? "今天的测试完成了" : "今天的任务完成了"}
           description={
             isRegularMode
               ? "可以朗读今天的条目，或自行录入新内容。"
-              : "可以休息，或自行学习新的 List。测试与复习任务将在到期后出现在这里。"
+              : "可以休息，或自行学习新的 List。测试到期后会显示在这里。"
           }
           action={
             <button type="button" className="btn btn-primary" onClick={() => navigate(routes.firstPass)}>
@@ -180,25 +179,6 @@ export function TodayPage(): ReactNode {
                 onClick={() => navigate(routes.test)}
               >
                 {isResumable(nextTest) ? "继续测试" : "开始测试"}
-              </button>
-            </>
-          ) : nextReview !== undefined ? (
-            <>
-              <div className="next-step-main">
-                <h2 className="next-step-title" data-testid="today-next-title">
-                  {`复习 Unit ${nextReview.unitNumber} · List ${nextReview.listNumber}`}
-                </h2>
-                <p className="next-step-description" data-testid="today-next-description">
-                  请翻开纸质词书复习。
-                </p>
-              </div>
-              <button
-                type="button"
-                className="btn btn-primary"
-                data-testid="today-start-review"
-                onClick={() => navigate(routes.review)}
-              >
-                去复习
               </button>
             </>
           ) : (
@@ -250,9 +230,8 @@ export function TodayPage(): ReactNode {
                 ? regularReviewGroups.length === 0
                   ? "暂无可朗读条目"
                   : `今天已有 ${regularReviewGroups.reduce((sum, group) => sum + group.testedCount, 0)} 个条目可朗读，不计入工作量`
-                : reviewTasks.length === 0
-                  ? "暂无待复习任务"
-                  : `${reviewTasks.length} 个 List 待纸质复习`}
+                : /* 词书模式：复习入口不再是任务，固定浏览文案（规格 8.2）。 */
+                  "浏览今天关注的词"}
             </span>
             <button type="button" className="btn btn-secondary" onClick={() => navigate(routes.review)}>
               查看复习
@@ -289,8 +268,10 @@ export function TodayPage(): ReactNode {
             error={targetError}
             hint={
               isRegularMode
-                ? "录入和测试各算 1 个条目；复习只供朗读，不计入工作量。"
-                : "首过或单独复习算 1 份；测试并复习算 2 份。"
+                ? /* 常规模式计量口径：录入 1、测试 1、朗读 0（需求规格 6.8）。 */
+                  "录入和测试各算 1 个条目；复习只供朗读，不计入工作量。"
+                : /* 词书模式计量口径（2026-10-02）：首过 1、每个已确认词测试判断 1、纸质复习 0。 */
+                  "首过算 1 份；每个词的测试判断算 1 份；纸质复习计 0 份。"
             }
             testId="today-daily-target"
           />
