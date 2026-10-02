@@ -22,7 +22,7 @@ import type Database from "better-sqlite3";
 import { buildApp } from "@ebbinghaus/server/app";
 import { openDatabase } from "@ebbinghaus/server/db";
 import type { ApplicationEvent, FirstPassDraftRecord, Space, WordContentRecord } from "@ebbinghaus/application";
-import { DEFAULT_SPACE_DEFINITIONS, initializeDefaultApplicationData, SettingsService } from "@ebbinghaus/application";
+import { DEFAULT_SPACE_DEFINITIONS, initializeDefaultApplicationData, SettingsService, SchedulingService, replayWordStates } from "@ebbinghaus/application";
 import {
   createInMemoryRuntime,
   createNodeClientRuntime,
@@ -252,6 +252,12 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
     clientA.bookCatalogStore.addUnit(unit);
     clientA.bookCatalogStore.addList(list);
     clientA.wordContentStore.upsertEntries([word]);
+    // 模拟迁移旧词只有内容移除、没有独立 wordRemoved；学习历史仍由真实服务器同步。
+    clientA.eventStore.appendEvents([{
+      ...makeEvent(9999, clientA.deviceIdentity.getDeviceId(), "soft-removed"),
+      targetId: list.listId, occurredAt: "2026-07-13T09:00:00.000Z", learningDay: "2026-07-13",
+      metadata: { workload: 1, wordCount: 1, wordIds: [word.wordId] },
+    }]);
     expect(clientA.contentSyncStore.pendingCount()).toBe(4);
 
     const pushed = await clientA.syncEngine!.runCycle();
@@ -264,6 +270,11 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
     expect(clientB.spaceStore.getSpace(space.id)?.name).toBe("词书同步");
     expect(clientB.bookCatalogStore.getList(list.listId)).toEqual(list);
     expect(clientB.wordContentStore.getEntry(word.wordId)?.manualMeaning).toBe("使一致");
+    const scheduleOf = (client: NodeClientRuntime) => new SchedulingService({
+      clock, eventStore: client.eventStore, wordContentStore: client.wordContentStore,
+      bookCatalogStore: client.bookCatalogStore,
+    }).refreshSpaceTasks({ spaceId: space.id, learningDaySettings: { timeZone: "Asia/Shanghai", rolloverTime: "04:00" } });
+    expect(scheduleOf(clientB).tasks).toHaveLength(1);
 
     clientB.spaceStore.updateSpace({ ...space, name: "词书已改名" });
     clientB.wordContentStore.markRemoved(word.wordId, CLOCK_ISO);
@@ -271,6 +282,11 @@ describe("双端 localhost 联调（真实服务器，进程内双实例）", ()
     await clientA.syncEngine!.runCycle();
     expect(clientA.spaceStore.getSpace(space.id)?.name).toBe("词书已改名");
     expect(clientA.wordContentStore.getEntry(word.wordId)?.removed).toBe(true);
+    for (const client of [clientA, clientB]) {
+      expect(replayWordStates(client).get(word.wordId)?.removed).toBe(true);
+      expect(scheduleOf(client).tasks).toEqual([]);
+      expect(client.eventStore.listAllEvents().some((event) => event.eventType === "wordRemoved" && event.targetId === word.wordId)).toBe(false);
+    }
 
     clientB.spaceStore.deleteSpace(space.id);
     await clientB.syncEngine!.runCycle();

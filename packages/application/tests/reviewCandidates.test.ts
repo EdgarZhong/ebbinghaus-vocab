@@ -122,6 +122,17 @@ function candidatesByList(world: World): Map<string, readonly string[]> {
 }
 
 describe("复习候选集：今天完成测试的词", () => {
+  it("仅内容移除且保留今日答案的词退出候选，其他今日已测词保留", () => {
+    const world = buildWorld();
+    const [removed, active] = recordList(world, 1, ["abandon", "obtain"]);
+    world.clock.setInstant("2026-07-14T09:00:00Z");
+    answerDueWords(world);
+    world.wordContentStore.markRemoved(removed!, world.clock.now().toISOString());
+    expect([...candidatesByList(world).values()]).toEqual([[active]]);
+    expect(world.eventStore.listAllEvents().filter((event) => event.eventType === "testAnswered")).toHaveLength(2);
+    expect(world.eventStore.listAllEvents().some((event) => event.eventType === "wordRemoved")).toBe(false);
+  });
+
   it("当日待测且未测的词不进入候选集（防泄答案）；今天测完后进入候选集", () => {
     const world = buildWorld();
     // T0 = 07-13；今天 07-14：T0+1 测试到期（也仅有测试到期）。
@@ -164,6 +175,19 @@ describe("复习候选集：今天完成测试的词", () => {
 });
 
 describe("复习候选集：当日到期的仅复习词", () => {
+  it("仅内容移除的当日仅复习词退出候选，不生成空候选分组", () => {
+    const world = buildWorld();
+    const wordId = recordList(world, 1, ["abandon"])[0]!;
+    seedAnswer(world, wordId, "2026-07-13T10:00:00Z", {
+      shortTermPassCount: 1, masteryStatus: "未掌握",
+      t0: "2026-07-13T09:00:00.000Z", t1: "2026-07-13T10:00:00.000Z",
+    });
+    world.clock.setInstant("2026-07-14T09:00:00Z");
+    expect([...candidatesByList(world).values()]).toEqual([[wordId]]);
+    world.wordContentStore.markRemoved(wordId, world.clock.now().toISOString());
+    expect(candidatesByList(world).size).toBe(0);
+  });
+
   it("当日到期的仅复习词进入候选集，且当天不产生任何任务", () => {
     const world = buildWorld();
     const wordId = recordList(world, 1, ["abandon"])[0]!;

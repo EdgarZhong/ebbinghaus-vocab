@@ -82,6 +82,8 @@ export interface WordCatalogEntry {
   readonly spaceId: string | null;
   readonly originalSpelling: string;
   readonly normalizedKey: string;
+  /** 当前内容的软移除事实；可省略以兼容只依据事件重放的调用方。 */
+  readonly removed?: boolean;
 }
 
 export interface ReplayInput {
@@ -202,6 +204,9 @@ function metadataView(event: ReplayableLearningEvent): Record<string, unknown> {
 export function replayLearningEvents(input: ReplayInput): ReplayResult {
   const words = new Map<string, MutableWordState>();
   const lists = new Map<string, MutableListState>();
+  // 内容与事件分通道同步，目录墓碑没有可用于历史排序的发生时刻。独立记录排除事实，
+  // 聚合检查可据此忽略已移除词，但旧学习事件仍完整重放，最后才合并到当前输出。
+  const catalogRemovedWordIds = new Set<string>();
 
   const ensureWord = (wordId: string): MutableWordState => {
     const existing = words.get(wordId);
@@ -248,6 +253,7 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
   // 词内容登记表先行落位：目录是词身份的权威来源（见模块头协议边界说明）。
   if (input.wordCatalog !== undefined) {
     for (const entry of input.wordCatalog) {
+      if (entry.removed === true) catalogRemovedWordIds.add(entry.wordId);
       const word = ensureWord(entry.wordId);
       word.listId = entry.listId;
       word.spaceId = entry.spaceId;
@@ -306,7 +312,7 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
         const word = ensureWord(event.targetId);
         word.listId = listId;
         word.normalizedKey = normalizedKey;
-        word.removed = false;
+        // 同一 Word 的移除不可撤销；重新录入必须使用新标识，旧新增事件不能复活旧词。
         ensureList(listId).wordIds.add(event.targetId);
         // 新增词以事件发生时刻进入短期通过次数 0（复习调度算法 5.2 第 1 条）。
         if (word.t0 === null) {
@@ -348,7 +354,8 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
           if (markedMastered) {
             const allMastered = [...list.wordIds].every((id) => {
               const candidate = words.get(id);
-              return candidate?.removed === true || candidate?.masteryStatus === MasteryStatus.Mastered;
+              return catalogRemovedWordIds.has(id) || candidate?.removed === true
+                || candidate?.masteryStatus === MasteryStatus.Mastered;
             });
             list.aggregateStatus = allMastered ? MasteryStatus.Mastered : MasteryStatus.Unmastered;
             if (allMastered) list.stage = WordListStage.Mastered;
@@ -479,6 +486,10 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
       }
     }
   }
+
+  // 两通道任一明确移除均须排除；目录 false 不覆盖事件墓碑，目录 true 也不被历史
+  // 首过、新增或答案复活。只合并 removed，不改变 T0/T1/T2、掌握或答案审计字段。
+  for (const wordId of catalogRemovedWordIds) ensureWord(wordId).removed = true;
 
   // 冻结输出：派生状态一经产出不可被调用方原地改写。
   const frozenWords = new Map<string, ReplayedWordState>();

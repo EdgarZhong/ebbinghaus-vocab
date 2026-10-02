@@ -8,8 +8,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
-import { renderApp } from "./helpers.tsx";
-import { screen, within } from "@testing-library/react";
+import { createTestServices, renderApp } from "./helpers.tsx";
+import { act, render, screen, within } from "@testing-library/react";
+import { App } from "../src/App.tsx";
 
 /**
  * 模拟移动端视口：仅 "(max-width: 900px)" 查询返回 matches=true，其余查询
@@ -32,6 +33,39 @@ function stubMobileMatchMedia(): void {
 }
 
 describe("应用外壳与一级导航", () => {
+  it("首次进入先绘制骨架，两帧后才读取页面数据", () => {
+    const services = createTestServices();
+    const read = vi.spyOn(services.dashboard, "dashboardSnapshot");
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextId = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = ++nextId;
+      frames.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    const advanceFrame = (): void => {
+      const scheduled = [...frames.values()];
+      frames.clear();
+      act(() => { scheduled.forEach((callback) => callback(0)); });
+    };
+    try {
+      render(<App services={services} />);
+      expect(screen.getByTestId("route-skeleton")).toBeInTheDocument();
+      expect(read).not.toHaveBeenCalled();
+      // 单个 requestAnimationFrame 仍位于绘制前，必须等到第二帧才挂载数据页。
+      advanceFrame();
+      expect(screen.getByTestId("route-skeleton")).toBeInTheDocument();
+      expect(read).not.toHaveBeenCalled();
+      advanceFrame();
+      expect(screen.queryByTestId("route-skeleton")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 1, name: /今天/ })).toBeInTheDocument();
+      expect(read).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("首次初始化后默认进入今日页，侧边栏显示当前 Space", () => {
     renderApp();
     // 首次初始化创建四个默认 Space 并激活第一个（必考词）。

@@ -152,6 +152,23 @@ describe("词汇页", () => {
     void services;
   });
 
+  it("远端移除事件先到时隐藏旧词卡，并拒绝旧卡片的掌握操作", async () => {
+    const { services } = seedVocabulary();
+    const spaceId = services.getActiveSpace()?.id ?? "";
+    const content = services.runtime.wordContentStore.listCatalogEntries().find((word) => word.normalizedKey === "abandon")!;
+    services.runtime.eventStore.appendEvents([services.eventRecorder.record({
+      eventType: "wordRemoved", targetType: "条目", targetId: content.wordId,
+      source: "远端移除", metadata: { spaceId, normalizedKey: content.normalizedKey },
+    })]);
+    expect(services.runtime.wordContentStore.getEntry(content.wordId)?.removed).toBe(false);
+    const countBefore = services.runtime.eventStore.listAllEvents().length;
+    expect(() => services.vocabularyMastery.mark({ spaceId, wordId: content.wordId, mastered: true })).toThrow("词条不存在");
+    expect(services.runtime.eventStore.listAllEvents()).toHaveLength(countBefore);
+    renderApp(services);
+    await userEvent.setup().click(screen.getByTestId("nav-vocabulary"));
+    expect(screen.queryByTestId("vocab-card-abandon")).not.toBeInTheDocument();
+  });
+
   it("详情双向掌握立即写事件并刷新卡片；删除先展开确认再移除", async () => {
     const user = userEvent.setup();
     const { services } = seedVocabulary();

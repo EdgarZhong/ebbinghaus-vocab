@@ -76,7 +76,9 @@ function PageLoading({ path }: { readonly path: RoutePath }): ReactNode {
 
 export function App({ services = getRuntime(), deferPageMount = true }: AppProps): ReactNode {
   const path = useHashRoute();
-  const [readyPath, setReadyPath] = useState<RoutePath>(path);
+  // 初次挂载也需要先绘制骨架，不能在首帧直接冷读业务数据。组件业务测试可显式
+  // 关闭帧调度，正式应用与切页共用下方两帧流程，保证外壳已有一次实际绘制机会。
+  const [readyPath, setReadyPath] = useState<RoutePath | null>(deferPageMount ? null : path);
   useEffect(() => {
     if (!deferPageMount || path === readyPath) return;
     // 第二帧再挂载数据页，保证第一帧的外壳/骨架能真正显示；快速连续导航时

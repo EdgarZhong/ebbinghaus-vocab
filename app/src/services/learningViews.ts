@@ -206,7 +206,9 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       for (const listRecord of lists) {
         contents.push(...runtime.wordContentStore.listEntriesForList(listRecord.listId));
       }
-      const withIndex = contents.map((content, index) => ({ content, index }));
+      // 事件移除先到、内容墓碑尚未到时也立即隐藏，避免旧卡片继续提供维护操作。
+      const withIndex = contents.map((content, index) => ({ content, index }))
+        .filter(({ content }) => replayed.get(content.wordId)?.removed !== true);
       // 规格 12.1/6.6：未掌握固定排在已掌握前；同一状态内最新录入在最上方；
       // 同批录入（同一时刻）保持用户保存时的顺序（按目录插入序倒序还原）。
       withIndex.sort((a, b) => {
@@ -355,7 +357,10 @@ export function createLearningViews(deps: CreateLearningViewsDeps): LearningView
       const refresh = scheduling.refreshSpaceTasks({ spaceId, learningDaySettings });
       const listsById = new Map(runtime.bookCatalogStore.listListsForSpace(spaceId).map((list) => [list.listId, list]));
       const contentsById = new Map(runtime.wordContentStore.listCatalogEntries().map((content) => [content.wordId, content]));
-      return refresh.tasks.map((task) => toBookTaskItem(task, deps, listsById, contentsById));
+      // 调度排除失效词是主边界；内容或会话在读取间隙更新时，共享任务出口再剔除
+      // 无待测词快照，保证今日看板和测试页都不会展示只有历史记录的空 List。
+      return refresh.tasks.map((task) => toBookTaskItem(task, deps, listsById, contentsById))
+        .filter((task) => task.totalCount > task.completedCount);
     },
   };
 }

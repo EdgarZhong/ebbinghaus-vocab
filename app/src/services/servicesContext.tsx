@@ -3,7 +3,7 @@
  * 经 useActiveSpace() 订阅活动 Space——任何组件不得直接触碰端口对象。
  */
 
-import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import type { Space } from "@ebbinghaus/domain";
 import type { AppServices } from "../composition.ts";
 
@@ -34,6 +34,9 @@ export function useServices(): AppServices {
  */
 export function useActiveSpace(): Space | null {
   const services = useServices();
-  useSyncExternalStore(services.subscribeChanged, services.getVersion, services.getVersion);
-  return services.getActiveSpace();
+  const version = useSyncExternalStore(services.subscribeChanged, services.getVersion, services.getVersion);
+  // 活动 Space 只随业务通知变更；揭示答案、输入文本等局部重绘不需要同步访问
+  // SQLite。沿用现有业务版本订阅，既避免阻塞查询，也保持对象引用稳定，防止
+  // 依赖 activeSpace 的 effect 在每次局部点击时重新执行。切换与远端更新仍立即重读。
+  return useMemo(() => services.getActiveSpace(), [services, version]);
 }

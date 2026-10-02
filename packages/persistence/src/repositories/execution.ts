@@ -64,6 +64,7 @@ export class SqliteTestSessionStore implements TestSessionStore {
 
   private readonly addStmt;
   private readonly updateStmt;
+  private readonly reconcileStmt;
   private readonly reorderWordsStmt;
   private readonly getStmt;
   private readonly openRegularStmt;
@@ -89,6 +90,12 @@ export class SqliteTestSessionStore implements TestSessionStore {
     `);
     this.reorderWordsStmt = this.db.prepare(`
       UPDATE test_sessions SET words_json = @wordsJson, last_active_at = @lastActiveAt
+      WHERE session_id = @sessionId
+    `);
+    this.reconcileStmt = this.db.prepare(`
+      UPDATE test_sessions SET
+        words_json = @wordsJson, current_position = @currentPosition, status = @status,
+        answered_word_ids_json = @answeredWordIdsJson, last_active_at = @lastActiveAt
       WHERE session_id = @sessionId
     `);
     this.getStmt = this.db.prepare(
@@ -152,6 +159,34 @@ export class SqliteTestSessionStore implements TestSessionStore {
     if (result.changes === 0) {
       throw new Error(`测试会话不存在：${session.sessionId}`);
     }
+  }
+
+  /**
+   * 软移除与远端答案会改变本机执行队列。队列和游标必须同批落盘，否则下次读取
+   * 会把失效词恢复或让游标套到旧顺序。校验仅允许原计划子集，不能凭空新增题目；
+   * 开场任务快照、计划时刻和学习事件保留，校对本身不代表用户测试了被剔除的词。
+   */
+  reconcileSession(session: TestSessionRecord): void {
+    this.db.transaction(() => {
+      const stored = this.getSession(session.sessionId);
+      if (stored === null) throw new Error(`测试会话不存在：${session.sessionId}`);
+      const remaining = new Map<string, number>();
+      for (const plan of stored.words) {
+        const key = JSON.stringify(plan);
+        remaining.set(key, (remaining.get(key) ?? 0) + 1);
+      }
+      for (const plan of session.words) {
+        const key = JSON.stringify(plan);
+        const count = remaining.get(key) ?? 0;
+        if (count === 0) throw new Error("测试会话校对不得新增或改写 Word 计划");
+        remaining.set(key, count - 1);
+      }
+      this.reconcileStmt.run({
+        sessionId: session.sessionId, wordsJson: JSON.stringify(session.words),
+        currentPosition: session.currentPosition, status: session.status,
+        answeredWordIdsJson: JSON.stringify(session.answeredWordIds), lastActiveAt: session.lastActiveAt,
+      });
+    })();
   }
 
   /**

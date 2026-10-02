@@ -18,7 +18,7 @@
  * - 保存成功后留在录入页并显示短暂反馈，立即可以开始下一批录入。
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   ConfirmedEntry,
   BookEntryConflictError,
@@ -160,12 +160,16 @@ function buildConfirmedEntries(
 export function FirstPassPage(): ReactNode {
   const services = useServices();
   const activeSpace = useActiveSpace();
+  const version = useSyncExternalStore(services.subscribeChanged, services.getVersion, services.getVersion);
   const { showToast } = useToast();
 
   const isRegularMode = activeSpace?.learningMode === "常规模式";
-  const smartOrganizingEnabled = services.settings.getFeatureFlags().smartOrganizing;
-  const existingBookDraft = !isRegularMode && activeSpace !== null
-    ? services.bookDrafts.listOpenDrafts(activeSpace.id)[0] ?? null : null;
+  const smartOrganizingEnabled = useMemo(() => services.settings.getFeatureFlags().smartOrganizing, [services, version]);
+  // 草稿仅用于首次挂载时初始化下方表单，随后编辑以页面状态与自动保存为准。
+  // 每个按键重读同一草稿既不能更新已初始化的 state，又增加同步数据库往返。
+  // 导航返回会重新挂载，仍从本机草稿恢复；不改变即时自动保存的时机。
+  const [existingBookDraft] = useState(() => !isRegularMode && activeSpace !== null
+    ? services.bookDrafts.listOpenDrafts(activeSpace.id)[0] ?? null : null);
   const cachedRegularBatch = isRegularMode && activeSpace !== null
     ? regularBatchCache.get(services) : null;
   const regularBatch = cachedRegularBatch?.spaceId === activeSpace?.id ? cachedRegularBatch : null;

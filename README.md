@@ -82,6 +82,8 @@ Ebbinghaus-v2/
 
 ## 运行环境与开发命令
 
+已移除词保留内容墓碑与不可变历史，但退出当前词表、调度任务、复习候选、容量预测、List 聚合与开放会话。内容标记和移除事件任一成立均排除；词条删除墓碑落地为软移除，不物理删除已有内容。行为边界见 `docs/需求规格.md` 6.3，真实 SQLite 队列重开与两通道同步回归见 `packages/persistence/tests/repositories.test.ts`、`packages/persistence/tests/sync.integration.test.ts`。
+
 - Node.js 24.21.0 LTS（mise 管理）、pnpm 12.3.4（根 `package.json` 的 `packageManager` 锁定）、Rust 1.98.1（rustup 固定）。
 - 依赖安装：`rtk pnpm install`（镜像源已在 `.npmrc` 固定为 npmmirror；依赖一律精确版本，`pnpm-lock.yaml` 随源码提交）。
 - 测试：`rtk pnpm test`（根 Vitest 以 projects 模式聚合各包 `vitest.config.ts`）。
@@ -95,7 +97,7 @@ Ebbinghaus-v2/
 - macOS 原生自动验收：先在 `app/` 启动 `rtk pnpm dev --host 127.0.0.1`，再在 `app/src-tauri/` 执行 `rtk cargo build --features wdio-test`，最后在 `app/` 执行 `rtk pnpm e2e:native`。`wdio-test` 仅用于测试构建；正式包不启用内嵌 WebDriver。
 - Android 模拟器开发命令：在 `app/` 执行 `rtk bash src-tauri/android-medium-phone.sh`，脚本使用 mise 管理的 JDK 21，在本次进程设置 Android 工具链，构建、安装并启动 `medium_phone` 上的调试包，不修改系统全局 Java 设置。
 - 同步服务器（本地）：`rtk pnpm server:start`（CLI `--db= --token= --port=`，缺省 127.0.0.1:8787）、在线备份 `rtk pnpm server:backup`；部署口径见 `docs/服务器部署留档.md`。
-- 正式 macOS 应用包：`rtk pnpm --filter @ebbinghaus/app tauri build --bundles app`，产物位于 `app/src-tauri/target/release/bundle/macos/Ebbinghaus.app`。需要磁盘映像时运行 `rtk pnpm --filter @ebbinghaus/app tauri build`，产物位于相邻 `dmg/` 目录。本机验收安装路径为 `/Applications/Ebbinghaus V2.app`，与 V1 `/Applications/Ebbinghaus.app` 分开。
+- 正式 macOS 应用包：`rtk pnpm --filter @ebbinghaus/app tauri build --bundles app`，产物位于 `app/src-tauri/target/release/bundle/macos/Ebbinghaus.app`。仅对外分发需要磁盘映像时显式使用 `--bundles app,dmg`，产物位于相邻 `dmg/` 目录。本机安装路径为 `/Applications/Ebbinghaus V2.app`，与 V1 `/Applications/Ebbinghaus.app` 分开；个人 release 的自动安装、凭据保留、数据备份与恢复要求见 `AGENTS.md`。
 
 ## 重要文档索引
 

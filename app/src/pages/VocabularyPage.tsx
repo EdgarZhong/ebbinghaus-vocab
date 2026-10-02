@@ -190,7 +190,9 @@ export function VocabularyPage(): ReactNode {
     return () => main.removeEventListener("click", closeOnMainBlankClick);
   }, [detailWordId, closeDetail]);
 
-  const dictionaryEnabled = services.settings.getFeatureFlags().onlineDictionary;
+  // 筛选输入和详情展开属于局部交互，不需要逐次跨同步数据库桥重读开关。
+  // 沿用业务版本读取设置，在线词典及列表更新仍由原有通知与 effect 驱动。
+  const dictionaryEnabled = useMemo(() => services.settings.getFeatureFlags().onlineDictionary, [services, version]);
   useEffect(() => {
     if (detailWordId === null || !dictionaryEnabled) {
       setDictionaryView(null);

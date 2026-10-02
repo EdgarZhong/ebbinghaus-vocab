@@ -223,10 +223,14 @@ export class BookLearningService {
     if (task.payload.testDemands.length === 0) {
       throw new ReviewTestingError("测试任务缺少到期 Word 快照");
     }
+    // 任务需求可能早于软移除；一次读取当前 List，再按冻结需求顺序构建会话，
+    // 保留有效性检查，避免开始测试时为每个 Word 单独跨同步桥查询。
+    const contentsById = new Map(this.deps.wordContentStore.listEntriesForList(task.listId)
+      .map((content) => [content.wordId, content]));
     const words: SessionWordPlan[] = task.payload.testDemands.flatMap((demand) => {
-      const content = this.deps.wordContentStore.getEntry(demand.wordId);
+      const content = contentsById.get(demand.wordId);
       // 调度快照可能早于内容移除；只跳过失效词，保留同一 List 里仍有效的到期词继续测试。
-      if (content === null || content.removed) return [];
+      if (content === undefined || content.removed) return [];
       if (demand.taskType !== "短期测试" && demand.taskType !== "等待校验" && demand.taskType !== "长期验证") {
         throw new ReviewTestingError("测试任务的到期类型无效");
       }
@@ -391,6 +395,8 @@ export class BookLearningService {
   /** 暂停只保存已确认进度，未提交的初判由页面丢弃。 */
   pauseBookTest(input: { readonly sessionId: string }): TestSessionSnapshot {
     const session = this.reconcileBookSession(this.requireSession(input.sessionId));
+    // 删除或远端作答已经结束会话时，旧页面的暂停意图就是正常离开；不写多余事件。
+    if (session.status === TestSessionExecutionStatus.Completed) return this.snapshot(session);
     if (session.status !== TestSessionExecutionStatus.InProgress) throw new ReviewTestingError("只有进行中的测试会话可以暂停");
     const now = this.deps.clock.now();
     const paused = { ...session, status: TestSessionExecutionStatus.Paused, lastActiveAt: now.toISOString() };
@@ -454,21 +460,27 @@ export class BookLearningService {
    * 因而远端只回答中间词时，当前位置仍指向真正的首个未答 Word。
    */
   private reconcileBookSession(session: TestSessionRecord): TestSessionRecord {
+    if (session.listId === null) throw new ReviewTestingError("词书测试会话缺少 List 标识");
     if (session.status === TestSessionExecutionStatus.Completed) return session;
+    const events = this.deps.eventStore.listAllEvents();
     const confirmed = new Set(
-      this.deps.eventStore.listAllEvents()
+      events
         .filter((event) => event.eventType === "testAnswered" && event.targetType === "Word")
         .map((event) => `${event.targetId}\u0000${String(event.metadata["plannedTestAt"])}`),
     );
     const locallyAnswered = new Set(session.answeredWordIds);
     const isAnswered = (plan: SessionWordPlan): boolean =>
       locallyAnswered.has(plan.wordId) || confirmed.has(`${plan.wordId}\u0000${plan.plannedTestAt}`);
-    // 会话绑定的调度快照可能早于用户移除词条的操作；恢复时同步过滤活动词目录，
-    // 使已移除或缺失内容不再成为阻塞项，同时保留其余词的本机顺序和已确认进度。
-    const validPlans = session.words.filter((plan) => {
-      const content = this.deps.wordContentStore.getEntry(plan.wordId);
-      return content !== null && !content.removed;
-    });
+    // 会话快照可能早于用户移除词条或本地内容缺失；按 List 一次读取活动词目录，
+    // 避免 SQLite 同步桥接为每个会话 Word 各发一次请求。只用 ID 集合判断有效性，
+    // 仍按会话原顺序筛选，后续已答/未答稳定分区和当前 Word 身份校验保持原语义。
+    const contents = this.deps.wordContentStore.listEntriesForList(session.listId);
+    const activeWordIds = new Set(contents.map((word) => word.wordId));
+    // 事件移除可能先于内容墓碑到达；复用本次已读取的事件和 List 内容进行领域重放，
+    // 同时检查两通道，避免旧页面显示无法确认的 Word，也不增加逐词或全库读取。
+    const states = replayLearningEvents({ events, wordCatalog: contents }).words;
+    const validPlans = session.words.filter((plan) => activeWordIds.has(plan.wordId)
+      && states.get(plan.wordId)?.removed === false);
     const answered = validPlans.filter(isAnswered);
     const remaining = validPlans.filter((plan) => !isAnswered(plan));
     const words = [...answered, ...remaining];
@@ -485,7 +497,7 @@ export class BookLearningService {
     if (!changed) return session;
     // 投影更新不制造新的学习事实，也不刷新 lastActiveAt；同步仍只传输用户确认的事件。
     const reconciled = { ...session, words, answeredWordIds, currentPosition, status };
-    this.deps.sessionStore.updateSession(reconciled);
+    this.deps.sessionStore.reconcileSession(reconciled);
     return reconciled;
   }
 
@@ -503,6 +515,11 @@ export class BookLearningService {
   private requireWord(wordId: string): WordContentRecord {
     const word = this.deps.wordContentStore.getEntry(wordId);
     if (word === null || word.removed) throw new ReviewTestingError("Word 不存在或已移除");
+    // 维护页面也可能停留在内容通道尚未收敛的旧词；事件墓碑已到即拒绝旧写入口，
+    // 不再制造内容更新或重复移除事件。仅用于低频维护入口，不增加逐词测试热路径读取。
+    if (replayWordStates(this.deps).get(wordId)?.removed === true) {
+      throw new ReviewTestingError("Word 不存在或已移除");
+    }
     return word;
   }
 
@@ -512,6 +529,8 @@ export class BookLearningService {
       wordCatalog: this.deps.wordContentStore.listCatalogEntries().map((word) => ({
         wordId: word.wordId, listId: word.listId, spaceId: word.spaceId,
         originalSpelling: word.originalSpelling, normalizedKey: word.normalizedKey,
+        // 补录锁的 List 聚合也必须排除内容墓碑，不能在独立入口丢弃软移除事实。
+        removed: word.removed,
       })),
     });
     return replay.lists.get(listId)?.additionsLocked ?? false;

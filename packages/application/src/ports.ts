@@ -258,7 +258,7 @@ export const TestSessionExecutionStatus = {
 export type TestSessionExecutionStatus =
   (typeof TestSessionExecutionStatus)[keyof typeof TestSessionExecutionStatus];
 
-/** 会话内一个待测条目的计划快照（开始会话时定格，之后状态变化不影响本会话）。 */
+/** 会话内单个条目的计划快照；计划时刻定格，失效条目可从本机执行队列剔除。 */
 export interface SessionWordPlan {
   readonly wordId: string;
   /** 计划测试时刻（UTC ISO8601，通常为会话开始时刻）。 */
@@ -283,7 +283,7 @@ export interface TestSessionRecord {
   readonly taskId: string | null;
   /** 词书会话启动时的完整任务快照；跨日及作答后的任务重派生不改变本会话。 */
   readonly taskSnapshot?: PersistedListTask | null;
-  /** 会话开始时固定的 Word 计划集合；“点错了”只允许调整本机未答顺序，不改成员与计划时刻。 */
+  /** 开始时的计划队列；校对可剔除失效词并合入远端已答前缀，不新增成员或改计划时刻。 */
   readonly words: readonly SessionWordPlan[];
   readonly currentPosition: number;
   readonly status: TestSessionExecutionStatus;
@@ -303,6 +303,8 @@ export interface TestSessionRecord {
 export interface TestSessionStore {
   addSession(session: TestSessionRecord): void;
   updateSession(session: TestSessionRecord): void;
+  /** 原子保存校对后的原计划子集、顺序与进度；不得新增或改写计划，不产生学习事件。 */
+  reconcileSession(session: TestSessionRecord): void;
   /** 仅重排已有计划的本机执行顺序；不得增删 Word 或修改计划时刻，也不产生同步事实。 */
   reorderSessionWords(session: TestSessionRecord): void;
   getSession(sessionId: string): TestSessionRecord | null;

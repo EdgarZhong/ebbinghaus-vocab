@@ -257,6 +257,72 @@ describe("SQLite 仓储（端口合同落实）", () => {
       })).toThrow(/不得增删或改写/);
       expect(runtime.testSessionStore.getSession("sess-1")?.words).toEqual(session.words);
     });
+
+    it("SQLite 会话校对原子保存失效词剔除和远端已答前缀，重新打开后不复活", () => {
+      const dbPath = join(mkdtempSync(join(tmpdir(), "ebb-session-reconcile-")), "client.sqlite3");
+      const local = createNodeClientRuntime({ dbPath, clock });
+      try {
+        local.testSessionStore.addSession(session);
+        const reconciled = {
+          ...session, words: [session.words[2]!, session.words[1]!],
+          currentPosition: 1, answeredWordIds: ["w-3"], status: "已暂停" as const,
+        };
+        local.testSessionStore.reconcileSession(reconciled);
+        expect(local.testSessionStore.getSession(session.sessionId)?.words).toEqual(reconciled.words);
+      } finally {
+        local.close();
+      }
+      const reopened = createNodeClientRuntime({ dbPath, clock });
+      try {
+        const stored = reopened.testSessionStore.getSession(session.sessionId);
+        expect(stored?.words.map((word) => word.wordId)).toEqual(["w-3", "w-2"]);
+        expect(stored?.currentPosition).toBe(1);
+        expect(stored?.answeredWordIds).toEqual(["w-3"]);
+        expect(stored?.status).toBe("已暂停");
+        expect(stored?.startedAt).toBe(session.startedAt);
+        expect(reopened.eventStore.listAllEvents()).toEqual([]);
+      } finally {
+        reopened.close();
+      }
+    });
+
+    it("会话校对禁止新增或改写计划，校验失败不部分修改进度", () => {
+      runtime.testSessionStore.addSession(session);
+      for (const plan of [
+        { wordId: "other", plannedTestAt: CLOCK_ISO },
+        { ...session.words[0]!, plannedTestAt: "2026-07-16T09:00:00.000Z" },
+      ]) {
+        expect(() => runtime.testSessionStore.reconcileSession({
+          ...session, words: [plan], currentPosition: 1, answeredWordIds: [plan.wordId], status: "已完成",
+        })).toThrow(/不得新增或改写/);
+        expect(runtime.testSessionStore.getSession(session.sessionId)).toMatchObject({
+          words: session.words, currentPosition: 0, status: "进行中", answeredWordIds: [],
+        });
+      }
+      runtime.testSessionStore.reconcileSession({ ...session, words: [], status: "已完成" });
+      expect(runtime.testSessionStore.getOpenRegularSession("s-1", "2026-07-15")).toBeNull();
+    });
+  });
+
+  it("远端词删除墓碑保留软移除内容，旧活动版本不能复活", () => {
+    const word: WordContentRecord = {
+      wordId: "legacy-tombstone-word", listId: "legacy-list", spaceId: null,
+      originalSpelling: "legacy", normalizedKey: "legacy", manualMeaning: "历史词",
+      meanings: [], removed: false, recordedAt: CLOCK_ISO,
+    };
+    runtime.wordContentStore.upsertEntries([word]);
+    const deviceId = runtime.deviceIdentity.getDeviceId();
+    runtime.contentSyncStore.applyRemote([{
+      entityType: "word", entityId: word.wordId, value: null, deleted: true,
+      updatedAt: "2026-07-16T09:00:00.000Z", deviceId, serverSeq: 1,
+    }]);
+    expect(runtime.wordContentStore.getEntry(word.wordId)).toMatchObject({ ...word, removed: true });
+    expect(runtime.contentSyncStore.applyRemote([{
+      entityType: "word", entityId: word.wordId, value: word, deleted: false,
+      updatedAt: CLOCK_ISO, deviceId, serverSeq: 2,
+    }])).toBe(0);
+    expect(runtime.wordContentStore.listEntriesForList(word.listId!)).toEqual([]);
+    expect(runtime.wordContentStore.listCatalogEntries()).toHaveLength(1);
   });
 
   describe("同步设置通道", () => {

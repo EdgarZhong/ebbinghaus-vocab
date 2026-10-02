@@ -23,6 +23,58 @@ async function screenshot(page: Page, key: string): Promise<void> {
   await page.screenshot({ path: join(screenshotsDir, `${projectName}-accept-${key}.png`) });
 }
 
+test("软移除词退出逾期测试，测完返回空列表，切页不复活", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: /^今天 ·/, level: 1 })).toBeVisible();
+  await page.evaluate(() => {
+    const services = (window as unknown as { __ebbinghaus: {
+      getActiveSpace(): { id: string };
+      runtime: {
+        bookCatalogStore: { addUnit(value: unknown): void; addList(value: unknown): void };
+        wordContentStore: { upsertEntries(values: unknown[]): void };
+        eventStore: { appendEvents(values: unknown[]): void };
+      };
+      eventRecorder: { record(value: unknown): unknown };
+      notifyChanged(): void;
+    } }).__ebbinghaus;
+    const spaceId = services.getActiveSpace().id;
+    const listId = "e2e-soft-removed-list";
+    const recordedAt = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    services.runtime.bookCatalogStore.addUnit({ id: "e2e-soft-removed-unit", spaceId, number: 1 });
+    services.runtime.bookCatalogStore.addList({ listId, spaceId, unitId: "e2e-soft-removed-unit", unitNumber: 1, listNumber: 1 });
+    // 正式问题的最小形态：已移除内容仍有首过历史，但没有独立 wordRemoved 事件。
+    services.runtime.wordContentStore.upsertEntries(["removed", "visible"].map((term) => ({
+      wordId: `e2e-soft-${term}`, listId, spaceId: null,
+      originalSpelling: term, normalizedKey: term, manualMeaning: "验收释义",
+      meanings: [{ partOfSpeech: "n.", definition: "验收释义", usage: null }],
+      removed: term === "removed", recordedAt,
+    })));
+    services.runtime.eventStore.appendEvents([services.eventRecorder.record({
+      eventType: "firstPassRecorded", targetType: "List", targetId: listId,
+      source: "软移除回归种子", occurredAt: new Date(recordedAt),
+      metadata: { workload: 1, wordCount: 2, wordIds: ["e2e-soft-removed", "e2e-soft-visible"] },
+    })]);
+    services.notifyChanged();
+  });
+  await navTo(page, "nav-test");
+  const card = page.getByTestId("test-task-e2e-soft-removed-list");
+  await expect(card).toContainText("本 List 有 1 个词");
+  await page.getByTestId("test-start-e2e-soft-removed-list").click();
+  await expect(page.getByTestId("session-word")).toHaveText("visible");
+  await page.getByTestId("session-recognized").click();
+  await expect(page.getByTestId("session-meaning")).toContainText("验收释义");
+  await screenshot(page, "soft-removed-answer");
+  await page.getByTestId("session-next").click();
+  await expect(page.getByTestId("test-completed")).toContainText("今天还剩 0 个词待测（0 个 List）");
+  await page.getByTestId("test-back-to-list").click();
+  await expect(card).toHaveCount(0);
+  await expect(page.getByTestId("empty-state")).toContainText("今天没有需要测试的 List");
+  await screenshot(page, "soft-removed-completed");
+  await navTo(page, "nav-today");
+  await navTo(page, "nav-test");
+  await expect(card).toHaveCount(0);
+});
+
 test.beforeAll(() => {
   mkdirSync(screenshotsDir, { recursive: true });
 });

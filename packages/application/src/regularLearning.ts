@@ -34,6 +34,7 @@ import {
   nextIntervalDaysBetween,
   normalizeEntryKey,
   resolveLearningDay,
+  replayLearningEvents,
   sortRegularDueWords,
   splitRegularTestGroups,
   TestJudgement,
@@ -564,7 +565,7 @@ export class RegularLearningService {
       throw new Error("当前条目已经确认过结果");
     }
     const content = this.deps.wordContentStore.getEntry(wordId);
-    if (content === null || content.spaceId === null) {
+    if (content === null || content.removed || content.spaceId === null) {
       throw new Error("当前测试条目不存在");
     }
     const card = this.deps.fsrsCardStore.get(wordId);
@@ -669,6 +670,8 @@ export class RegularLearningService {
       throw new Error("常规模式测试会话不存在");
     }
     const session = this.rebaseRegularSession(persistedSession);
+    // 最后一个词被删除或同步确认后，暂停应正常离开已完成会话，不被内部状态阻挡。
+    if (session.status === TestSessionExecutionStatus.Completed) return this.regularSessionSnapshot(session);
     if (session.status !== TestSessionExecutionStatus.InProgress) {
       throw new Error("只有进行中的测试会话可以暂停");
     }
@@ -733,12 +736,13 @@ export class RegularLearningService {
 
   /** 已确认事件是权威进度；本机会话仅保留顺序与未提交的执行位置。 */
   private rebaseRegularSession(session: TestSessionRecord): TestSessionRecord {
+    const events = this.deps.eventStore.listAllEvents();
     const alreadyAnswered = new Set(session.answeredWordIds);
     const plansByWordId = new Map(session.words.map((word) => [word.wordId, word]));
     // 旧快照把所有计划时刻写成 startedAt，缺少 FSRS 到期时刻；只能降级为
     // 同条目且会话启动后的已确认事件匹配，无法准确区分同日的另一轮计划。
     const isLegacySnapshot = session.words.every((word) => word.plannedTestAt === session.startedAt);
-    for (const event of this.deps.eventStore.listAllEvents()) {
+    for (const event of events) {
       if (event.eventType !== "testAnswered" || event.targetType !== "条目") {
         continue;
       }
@@ -758,8 +762,16 @@ export class RegularLearningService {
     }
     // 稳定分区不改变两侧各自的会话原顺序；已答条目成为前缀后，当前位置
     // 恰为已答数量，非连续远端结果也不会把未答词隐藏在游标之前。
-    const answeredPlans = session.words.filter((word) => alreadyAnswered.has(word.wordId));
-    const unansweredPlans = session.words.filter((word) => !alreadyAnswered.has(word.wordId));
+    // 内容墓碑与移除事件可能先后到达；任一侧已移除都必须立刻退出本机队列。
+    // 批量读当前 Space，保留原计划时刻与有效条目顺序，不逐词跨 SQLite 桥查询。
+    const contents = session.spaceId === null ? [] : this.deps.wordContentStore.listEntriesForSpace(session.spaceId);
+    const states = replayLearningEvents({ events, wordCatalog: contents }).words;
+    const activeWordIds = new Set(contents
+      .filter((content) => states.get(content.wordId)?.removed !== true)
+      .map((content) => content.wordId));
+    const validPlans = session.words.filter((word) => activeWordIds.has(word.wordId));
+    const answeredPlans = validPlans.filter((word) => alreadyAnswered.has(word.wordId));
+    const unansweredPlans = validPlans.filter((word) => !alreadyAnswered.has(word.wordId));
     const words = [...answeredPlans, ...unansweredPlans];
     const answeredWordIds = answeredPlans.map((word) => word.wordId);
     const currentPosition = answeredPlans.length;
@@ -768,6 +780,7 @@ export class RegularLearningService {
       : session.status;
     const changed = currentPosition !== session.currentPosition
       || status !== session.status
+      || words.length !== session.words.length
       || words.some((word, index) => word.wordId !== session.words[index]?.wordId)
       || answeredWordIds.length !== session.answeredWordIds.length
       || answeredWordIds.some((wordId, index) => wordId !== session.answeredWordIds[index]);
@@ -781,7 +794,7 @@ export class RegularLearningService {
       currentPosition,
       status,
     };
-    this.deps.sessionStore.updateSession(rebased);
+    this.deps.sessionStore.reconcileSession(rebased);
     return rebased;
   }
 
@@ -791,7 +804,7 @@ export class RegularLearningService {
     let currentWord: ReviewWordSnapshot | null = null;
     if (currentPlan !== undefined) {
       const content = this.deps.wordContentStore.getEntry(currentPlan.wordId);
-      if (content === null) {
+      if (content === null || content.removed) {
         throw new Error("测试会话当前条目不存在");
       }
       currentWord = {

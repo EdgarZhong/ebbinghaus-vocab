@@ -49,6 +49,89 @@ function makeEvent(input: {
 
 const SETTINGS = { timezoneName: "Asia/Shanghai", rolloverTime: "04:00" };
 
+describe("内容目录与事件的软移除事实", () => {
+  const catalog = (wordId: string, removed: boolean) => ({
+    wordId, listId: "list-removed", spaceId: null,
+    originalSpelling: wordId, normalizedKey: wordId, removed,
+  });
+  const firstPass = () => makeEvent({
+    eventType: "firstPassRecorded", targetType: "List", targetId: "list-removed",
+    occurredAt: "2026-07-15T09:00:00Z", learningDay: "2026-07-15", metadata: {},
+  });
+
+  it("没有移除事件的目录移除词仍保留首过历史，但不进入任务需求", () => {
+    const result = replayLearningEvents({
+      events: [firstPass()], wordCatalog: [catalog("active", false), catalog("removed", true)],
+    });
+    expect(result.words.get("removed")).toMatchObject({ removed: true, t0: "2026-07-15T09:00:00Z" });
+    expect(result.lists.get("list-removed")?.wordIds).toEqual(["active", "removed"]);
+    const list = schedulableListsFromReplay(result, SETTINGS)[0]!;
+    expect(list.words.map((word) => word.word.id)).toEqual(["active"]);
+    expect(generateListTask(list, "2026-07-16")?.testDemands.map((demand) => demand.wordId)).toEqual(["active"]);
+  });
+
+  it("目录中所有词均已移除时不生成测试任务", () => {
+    const result = replayLearningEvents({ events: [firstPass()], wordCatalog: [catalog("removed", true)] });
+    const list = schedulableListsFromReplay(result, SETTINGS)[0]!;
+    expect(list.words).toEqual([]);
+    expect(generateListTask(list, "2026-07-16")).toBeNull();
+  });
+
+  it("旧新增与答案事件不会复活目录移除词，历史答案字段仍完整重放", () => {
+    // 当前目录的移除不带历史发生时间，不能因此跳过旧学习事实或伪造移除事件。
+    const result = replayLearningEvents({
+      wordCatalog: [catalog("removed", true)],
+      events: [makeEvent({
+        eventType: "wordAdded", targetType: "Word", targetId: "removed",
+        occurredAt: "2026-07-15T09:00:00Z", learningDay: "2026-07-15",
+        metadata: { listId: "list-removed", normalizedKey: "removed" },
+      }), makeEvent({
+        eventType: "testAnswered", targetType: "Word", targetId: "removed",
+        occurredAt: "2026-07-16T09:00:00Z", learningDay: "2026-07-16",
+        metadata: { finalJudgement: "认识", afterState: {
+          shortTermPassCount: 1, masteryStatus: "未掌握", t0: "2026-07-15T09:00:00Z",
+          t1: "2026-07-16T09:00:00Z", t2: null,
+        } },
+      })],
+    });
+    expect(result.words.get("removed")).toMatchObject({
+      removed: true, shortTermPassCount: 1, masteryStatus: MasteryStatus.Unmastered,
+      t0: "2026-07-15T09:00:00Z", t1: "2026-07-16T09:00:00Z", t2: null,
+      lastJudgement: TestJudgement.Recognized, cumulativeRecognizedCount: 1,
+    });
+    expect(generateListTask(schedulableListsFromReplay(result, SETTINGS)[0]!, "2026-07-19")).toBeNull();
+  });
+
+  it("内容仍为活动时，移除事件也不可被后续旧新增状态复活", () => {
+    const result = replayLearningEvents({
+      wordCatalog: [catalog("removed", false)],
+      events: [makeEvent({
+        eventType: "wordRemoved", targetType: "Word", targetId: "removed",
+        occurredAt: "2026-07-15T09:00:00Z", learningDay: "2026-07-15", metadata: {},
+      }), makeEvent({
+        eventType: "wordAdded", targetType: "Word", targetId: "removed",
+        occurredAt: "2026-07-16T09:00:00Z", learningDay: "2026-07-16",
+        metadata: { listId: "list-removed", normalizedKey: "removed" },
+      })],
+    });
+    expect(result.words.get("removed")?.removed).toBe(true);
+  });
+
+  it("最后一个有效词手动掌握时，目录已移除词不阻挡 List 聚合掌握", () => {
+    const result = replayLearningEvents({
+      wordCatalog: [catalog("active", false), catalog("removed", true)],
+      events: [firstPass(), makeEvent({
+        eventType: "wordManuallyMarkedMastered", targetType: "Word", targetId: "active",
+        occurredAt: "2026-07-16T09:00:00Z", learningDay: "2026-07-16", metadata: {},
+      })],
+    });
+    expect(result.lists.get("list-removed")).toMatchObject({
+      stage: WordListStage.Mastered, aggregateStatus: MasteryStatus.Mastered, additionsLocked: true,
+    });
+    expect(result.words.get("removed")?.masteryStatus).toBe(MasteryStatus.Unmastered);
+  });
+});
+
 describe("事件重放器：词书模式", () => {
   it("首过事件 + 词内容登记表 → List 创建，登记词以首过时刻进入短期通过次数 0", () => {
     const result = replayLearningEvents({

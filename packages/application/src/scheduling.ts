@@ -140,6 +140,8 @@ export class SchedulingService {
           spaceId: entry.spaceId,
           originalSpelling: entry.originalSpelling,
           normalizedKey: entry.normalizedKey,
+          // 迁移内容可能只有墓碑而没有 wordRemoved，保留标记才能与事件共同判定活动词。
+          removed: entry.removed,
         })),
       }),
       input.learningDaySettings,
@@ -193,6 +195,8 @@ export function replayWordStates(deps: {
       spaceId: entry.spaceId,
       originalSpelling: entry.originalSpelling,
       normalizedKey: entry.normalizedKey,
+      // 公共重放供会话、复习与容量等用例复用，不能只沿用事件通道的旧活动状态。
+      removed: entry.removed,
     })),
   });
   return replay.words;

@@ -175,6 +175,35 @@ describe("getTodaysCapacityView：读侧铁律", () => {
 });
 
 describe("refreshTodaysPlan：指纹命中与重算", () => {
+  it("软移除历史词退出真实 List 投影与当日压力，活动词仍计入容量", () => {
+    const world = buildWorld();
+    world.bookCatalogStore.addList({
+      listId: "list-history", spaceId: SPACE_ID, unitId: "unit-history", unitNumber: 1, listNumber: 1,
+    });
+    world.wordContentStore.upsertEntries(["active", "removed"].map((wordId) => ({
+      wordId, listId: "list-history", spaceId: null, originalSpelling: wordId, normalizedKey: wordId,
+      manualMeaning: "词义", meanings: [], removed: false, recordedAt: CLOCK_ISO,
+    })));
+    world.eventStore.appendEvents([world.eventRecorder.record({
+      eventType: "firstPassRecorded", targetType: "List", targetId: "list-history",
+      source: "首过预览保存", metadata: { workload: 1, wordCount: 2, draftId: "draft-history" },
+    })]);
+    world.clock.setInstant("2026-07-16T09:00:00Z");
+    const before = world.capacity.refreshTodaysPlan(planInput());
+    expect(before.dueWorkload).toBe(2);
+    const planKey = { learningDay: "2026-07-16", spaceId: SPACE_ID };
+    const beforeFingerprint = world.dailyPlanStore.get(planKey)!.riskMetrics.inputFingerprint;
+    // 真实调度服务和蒙特卡洛预测均继续运行，只改变内容通道的移除事实。
+    world.wordContentStore.markRemoved("removed", world.clock.now().toISOString());
+    const after = world.capacity.refreshTodaysPlan(planInput());
+    expect(after.dueWorkload).toBe(1);
+    expect(world.dailyPlanStore.get(planKey)!.riskMetrics.inputFingerprint).not.toBe(beforeFingerprint);
+    expect(world.scheduling.projectSpaceLists(planInput())[0]?.words.map((word) => word.word.id)).toEqual(["active"]);
+    world.wordContentStore.markRemoved("active", world.clock.now().toISOString());
+    expect(world.capacity.refreshTodaysPlan(planInput()).dueWorkload).toBe(0);
+    expect(world.eventStore.listAllEvents()).toHaveLength(1);
+  });
+
   it("首次刷新运行一次模拟并落盘；快照字段与常量口径一致", () => {
     const world = buildWorld();
 

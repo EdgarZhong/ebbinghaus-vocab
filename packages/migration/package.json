@@ -1,6 +1,6 @@
 {
   "name": "@ebbinghaus/migration",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "description": "V1 正式 SQLite 数据只读审计与一次性迁移工具",

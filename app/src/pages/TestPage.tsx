@@ -44,8 +44,13 @@ export function TestPage(): ReactNode {
   } | null>(null);
   const [revealed, setRevealed] = useState<TestJudgementType | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
+  // 会话由开始/确认用例直接返回最新快照；页面局部状态变化不是新业务事实。
+  // 只对尚未处理的业务通知校对远端进度，避免揭示答案也逐词查询 SQLite。
+  const reconciledVersion = useRef(version);
 
   useEffect(() => {
+    if (reconciledVersion.current === version) return;
+    reconciledVersion.current = version;
     if (sessionState === null || sessionState.spaceId !== activeSpace?.id) return;
     try {
       // 同步通知只表示本地副本有新事实，不能继续依赖打开页面时保存的会话快照。
@@ -71,6 +76,7 @@ export function TestPage(): ReactNode {
   /** 仅当会话属于当前活动 Space 时才进入会话视图；否则等价于无会话。 */
   const session =
     sessionState !== null && sessionState.spaceId === activeSpace?.id ? sessionState.snapshot : null;
+  const sessionInProgress = session !== null && session.currentWord !== null;
 
   // 列表态的行内提示属于旧 Space 的上下文：渲染期检测 Space 变化即清空
   //（React 官方"渲染中调整状态"模式：丢弃本次输出立刻重渲染，不闪旧提示）。
@@ -84,7 +90,9 @@ export function TestPage(): ReactNode {
   //（会话是设备本地执行状态，下次进入经任务行"继续测试"恢复）。
 
   const tasksPage = useMemo(() => {
-    if (activeSpace === null) {
+    // 逐词视图不显示任务列表；完成、暂停或退出后才需要重派生任务与剩余工作量。
+    // 作答用例仍实时校对事件并事务提交，不通过冻结业务数据来减少阻塞。
+    if (activeSpace === null || sessionInProgress) {
       return null;
     }
     try {
@@ -93,7 +101,7 @@ export function TestPage(): ReactNode {
       return null;
     }
     // eslint 语义：version 变化意味着需要重读任务列表。
-  }, [services, version, activeSpace]);
+  }, [services, version, activeSpace, sessionInProgress]);
 
   const startTask = (task: TaskItemSnapshot): void => {
     setTaskError(null);
@@ -104,6 +112,7 @@ export function TestPage(): ReactNode {
       const snapshot = activeSpace.learningMode === "常规模式"
         ? services.regularLearning.startOrResumeRegularTest({ taskId: task.taskId })
         : services.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: activeSpace.id });
+      reconciledVersion.current = services.getVersion();
       setSessionState({ spaceId: activeSpace.id, snapshot });
       setRevealed(null);
     } catch (cause) {
@@ -118,7 +127,7 @@ export function TestPage(): ReactNode {
     setRevealed(null);
   };
 
-  if (activeSpace === null || tasksPage === null) {
+  if (activeSpace === null || (tasksPage === null && session === null)) {
     return (
       <PageShell title="测试" description="在软件里逐词检查记忆，完成后再翻开纸质词书复习。">
         <EmptyState
@@ -129,9 +138,11 @@ export function TestPage(): ReactNode {
     );
   }
 
-  const isRegularMode = tasksPage.learningMode === "常规模式";
-  const tasks = tasksPage.tasks;
+  const isRegularMode = activeSpace.learningMode === "常规模式";
   const remainingOf = (task: TaskItemSnapshot): number => Math.max(0, task.totalCount - task.completedCount);
+  // 页面只展示仍有待测词的任务；完成反馈、空态与列表使用同一集合，避免旧投影
+  // 在同步或会话校对间隙留下 0 词卡片及无意义的开始按钮。
+  const tasks = (tasksPage?.tasks ?? []).filter((task) => remainingOf(task) > 0);
   const isResumable = (task: TaskItemSnapshot): boolean =>
     task.completedCount > 0 || task.sessionStatus !== null;
 
@@ -206,6 +217,9 @@ export function TestPage(): ReactNode {
         view={{ snapshot: session, revealed }}
         isRegularMode={isRegularMode}
         onChange={(next) => {
+          // 用例已返回校对后的快照；其自身发出的通知不再重复读取同一会话。
+          // 之后独立到来的同步通知会推进版本，仍走上方远端进度校对。
+          if (next.snapshot !== session) reconciledVersion.current = services.getVersion();
           // 函数式更新（rerender-functional-setstate）：保留会话的 Space 归属标签，
           // 只推进快照；会话已被并发清空时（理论不可达）不复活。
           setSessionState((current) => (current === null ? null : { ...current, snapshot: next.snapshot }));
@@ -303,7 +317,9 @@ function RegularSessionView({
   const currentWordId = currentWord?.wordId ?? null;
   const currentWordIdRef = useRef(currentWordId);
   currentWordIdRef.current = currentWordId;
-  const dictionaryEnabled = services.settings.getFeatureFlags().onlineDictionary;
+  const version = useSyncExternalStore(services.subscribeChanged, services.getVersion, services.getVersion);
+  // 在线词典开关只在业务设置改变后读取；单纯揭示答案无需访问本地设置表。
+  const dictionaryEnabled = useMemo(() => services.settings.getFeatureFlags().onlineDictionary, [services, version]);
 
   useEffect(() => {
     lookupCancelled.current = false;
@@ -355,7 +371,9 @@ function RegularSessionView({
             : services.bookLearning.getBookTestSessionSnapshot(snapshot.sessionId);
           if (latest.currentWord?.wordId !== currentWord?.wordId || latest.currentPosition !== snapshot.currentPosition) {
             onChange({ snapshot: latest, revealed: null });
-            setSessionError("当前 Word 已由另一设备确认，已更新进度，请重新作答。");
+            // 删除或同步已使旧按钮失效，成功校对属于正常操作；刷新下一张卡片，
+            // 不用内部状态错误阻挡用户，也不把旧词的答案套到新词。
+            setSessionError(null);
             return;
           }
         } catch {
@@ -400,7 +418,8 @@ function RegularSessionView({
           : services.bookLearning.getBookTestSessionSnapshot(snapshot.sessionId);
         if (latest.currentWord?.wordId !== currentWord.wordId || latest.currentPosition !== snapshot.currentPosition) {
           onChange({ snapshot: latest, revealed: null });
-          setSessionError("当前 Word 已由另一设备确认，已更新进度，请重新作答。");
+          // 队列失效已成功自动校对，保留用户可继续操作的正常状态。
+          setSessionError(null);
           return;
         }
       } catch {

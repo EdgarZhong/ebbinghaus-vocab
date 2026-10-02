@@ -181,7 +181,7 @@ describe("词书模式完整学习链", () => {
     const ctx = threeWordSession();
     appendConfirmedAnswer(ctx, 0);
     const eventCount = ctx.eventStore.listAllEvents().length;
-    const update = vi.spyOn(ctx.sessionStore, "updateSession");
+    const update = vi.spyOn(ctx.sessionStore, "reconcileSession");
     const snapshot = ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId);
     expect(snapshot.currentPosition).toBe(1);
     expect(snapshot.currentWord?.wordId).toBe(ctx.plans[1]!.wordId);
@@ -245,6 +245,116 @@ describe("词书模式完整学习链", () => {
       ctx.plans[1]!.wordId, ctx.plans[0]!.wordId, ctx.plans[2]!.wordId,
     ]);
     expect(ctx.bookLearning.startOrResumeBookTest({ taskId: ctx.task.taskId, spaceId: SPACE_ID }).currentWord?.wordId).toBe(ctx.plans[0]!.wordId);
+  });
+
+  it("60 词会话读取快照只批量查询一次活动词，并只单查当前 Word", () => {
+    const ctx = world();
+    const entries = Array.from({ length: 60 }, (_, index) => entry(
+      `word${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + index % 26)}`,
+      `释义${index}`,
+    ));
+    ctx.bookLearning.recordFirstPass({ spaceId: SPACE_ID, unitNumber: 1, listNumber: 4, entries });
+    ctx.clock.setInstant("2026-07-16T09:00:00Z");
+    const task = ctx.scheduling.refreshSpaceTasks({
+      spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings(),
+    }).tasks[0]!;
+    const listEntries = vi.spyOn(ctx.wordContentStore, "listEntriesForList");
+    const getEntry = vi.spyOn(ctx.wordContentStore, "getEntry");
+    const started = ctx.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: SPACE_ID });
+    const plannedWordIds = ctx.sessionStore.getSession(started.sessionId)!.words.map((plan) => plan.wordId);
+    // 创建会话与恢复校对同样不能按待测词数逐次跨桥查询。
+    expect(listEntries).toHaveBeenCalledExactlyOnceWith(task.listId);
+    expect(getEntry).toHaveBeenCalledExactlyOnceWith(plannedWordIds[0]);
+    listEntries.mockClear();
+    getEntry.mockClear();
+
+    // 计数从会话创建之后开始，避免首过和任务生成的仓储读取混入快照路径。
+    const snapshot = ctx.bookLearning.getBookTestSessionSnapshot(started.sessionId);
+    expect(snapshot.totalCount).toBe(60);
+    expect(snapshot.currentPosition).toBe(0);
+    expect(snapshot.currentWord).toMatchObject({
+      wordId: plannedWordIds[0], originalSpelling: "wordaa", manualMeaning: "v. 释义0",
+    });
+    expect(ctx.sessionStore.getSession(started.sessionId)!.words.map((plan) => plan.wordId)).toEqual(plannedWordIds);
+    expect(listEntries).toHaveBeenCalledExactlyOnceWith(task.listId);
+    expect(getEntry).toHaveBeenCalledExactlyOnceWith(plannedWordIds[0]);
+  });
+
+  it("恢复时移除已软删除及内容缺失的 Word，保留其余会话词顺序", () => {
+    const ctx = threeWordSession();
+    const [removed, missing, surviving] = ctx.plans;
+    ctx.wordContentStore.markRemoved(removed!.wordId, ctx.clock.now().toISOString());
+    const activeEntries = ctx.wordContentStore.listEntriesForList(ctx.task.listId);
+    // 模拟本地内容行缺失：活动词批量查询中没有该 Word，不能让旧会话停在失效词上。
+    vi.spyOn(ctx.wordContentStore, "listEntriesForList")
+      .mockReturnValue(activeEntries.filter((word) => word.wordId !== missing!.wordId));
+    const snapshot = ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId);
+    expect(snapshot.totalCount).toBe(1);
+    expect(snapshot.currentWord?.wordId).toBe(surviving!.wordId);
+    expect(ctx.sessionStore.getSession(snapshot.sessionId)?.words.map((plan) => plan.wordId)).toEqual([surviving!.wordId]);
+  });
+
+  it("事件先移除而内容仍活动时跳过旧词，旧页面最终确认不写答案", () => {
+    const ctx = threeWordSession();
+    const removed = ctx.plans[0]!.wordId;
+    // 内容和事件分通道拉取：先到的移除事件已足够排除旧会话中的 Word。
+    ctx.eventStore.appendEvents([ctx.eventRecorder.record({
+      eventType: "wordRemoved", targetType: "Word", targetId: removed,
+      source: "Word 内容维护", metadata: { listId: ctx.task.listId, normalizedKey: "abandon" },
+    })]);
+    expect(ctx.wordContentStore.getEntry(removed)?.removed).toBe(false);
+    const eventCount = ctx.eventStore.listAllEvents().length;
+    const eventReads = vi.spyOn(ctx.eventStore, "listAllEvents");
+    const snapshot = ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId);
+    expect(snapshot.totalCount).toBe(2);
+    expect(snapshot.currentWord?.wordId).toBe(ctx.plans[1]!.wordId);
+    // 会话校对复用同次读取的事件集，不为移除检查重复读取全事件库。
+    expect(eventReads).toHaveBeenCalledTimes(1);
+    expect(() => ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: snapshot.sessionId, expectedWordId: removed,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    })).toThrow("当前 Word 已变化");
+    expect(ctx.eventStore.listAllEvents()).toHaveLength(eventCount);
+  });
+
+  it("全部会话词的移除事件先到时自动完成，不伪造学习事件或更新活动时间", () => {
+    const ctx = threeWordSession();
+    ctx.eventStore.appendEvents(ctx.plans.map((plan) => ctx.eventRecorder.record({
+      eventType: "wordRemoved", targetType: "Word", targetId: plan.wordId,
+      source: "Word 内容维护", metadata: { listId: ctx.task.listId, normalizedKey: plan.wordId },
+    })));
+    const eventCount = ctx.eventStore.listAllEvents().length;
+    expect(ctx.bookLearning.pauseBookTest({ sessionId: ctx.snapshot.sessionId }).status).toBe(TestSessionExecutionStatus.Completed);
+    const snapshot = ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId);
+    expect(snapshot).toMatchObject({ status: TestSessionExecutionStatus.Completed, totalCount: 0, currentWord: null });
+    expect(ctx.sessionStore.getSession(snapshot.sessionId)?.lastActiveAt).toBe(ctx.session.lastActiveAt);
+    expect(ctx.eventStore.listAllEvents()).toHaveLength(eventCount);
+  });
+
+  it("事件已移除但内容尚活动时，旧维护入口不能改内容或重复写移除事件", () => {
+    const ctx = threeWordSession();
+    const wordId = ctx.plans[0]!.wordId;
+    ctx.eventStore.appendEvents([ctx.eventRecorder.record({
+      eventType: "wordRemoved", targetType: "Word", targetId: wordId,
+      source: "Word 内容维护", metadata: { listId: ctx.task.listId, normalizedKey: "abandon" },
+    })]);
+    const contentBefore = ctx.wordContentStore.getEntry(wordId);
+    const eventCount = ctx.eventStore.listAllEvents().length;
+    expect(contentBefore?.removed).toBe(false);
+    expect(() => ctx.bookLearning.updateWordContent({ wordId, entry: entry("abandon", "旧页面修改") }))
+      .toThrow("Word 不存在或已移除");
+    expect(() => ctx.bookLearning.removeWord({ wordId, firstConfirmation: true, secondConfirmation: true }))
+      .toThrow("Word 不存在或已移除");
+    expect(ctx.wordContentStore.getEntry(wordId)).toEqual(contentBefore);
+    expect(ctx.eventStore.listAllEvents()).toHaveLength(eventCount);
+  });
+
+  it("词书测试会话缺少 List 标识时明确拒绝读取", () => {
+    const ctx = threeWordSession();
+    // 普通进度更新不允许改写会话归属；直接构造错误历史快照来验证防御边界。
+    const sessionId = "invalid-list-session";
+    ctx.sessionStore.addSession({ ...ctx.session, sessionId, listId: null });
+    expect(() => ctx.bookLearning.getBookTestSessionSnapshot(sessionId)).toThrow("词书测试会话缺少 List 标识");
   });
 
   it("本机已答首词与远端已答末词合并后，只留下中间 Word 待答", () => {
@@ -403,6 +513,26 @@ describe("答案驱动的 List 聚合事件", () => {
       })),
     }).lists.get(listId);
   }
+
+  it("没有移除事件的软移除词不阻挡有效词最后答案触发 List 同步", () => {
+    const ctx = twoWordCycleToPromotion();
+    const plans = ctx.sessionStore.getSession(ctx.promotion.sessionId)!.words;
+    ctx.wordContentStore.markRemoved(plans[1]!.wordId, ctx.clock.now().toISOString());
+    const snapshot = ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: ctx.promotion.sessionId, expectedWordId: plans[0]!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(snapshot.status).toBe(TestSessionExecutionStatus.Completed);
+    const synchronized = ctx.eventStore.listAllEvents().filter((event) => event.eventType === "listSynchronized");
+    expect(synchronized).toHaveLength(1);
+    expect(synchronized[0]?.occurredAt).toBe(ctx.clock.now().toISOString());
+    expect(replayList(ctx, ctx.promotionTask.listId)?.stage).toBe("长期验证");
+    // 调用补录锁查询同样经过目录重放，保留原有永久锁行为。
+    expect(() => ctx.bookLearning.recordFirstPass({
+      spaceId: SPACE_ID, unitNumber: 1, listNumber: 4, entries: [entry("obtain", "获得")],
+    })).toThrow("新增 Word");
+    expect(ctx.eventStore.listAllEvents().some((event) => event.eventType === "wordRemoved")).toBe(false);
+  });
 
   it("最后一词使同步条件首次满足：listSynchronized 与该答案同一批写入，occurredAt = 答案时刻", () => {
     const ctx = twoWordCycleToPromotion();

@@ -156,6 +156,21 @@ function seedBookTestAnswer(
 }
 
 describe("refreshSpaceTasks：事件重放到任务派生", () => {
+  it("仅内容标记移除的历史词在公共重放与 List 投影中均退出，全部移除后无任务", () => {
+    const world = buildWorld();
+    seedFirstPass(world, { listId: LIST_A, wordIds: ["active", "removed"], atIso: CLOCK_ISO });
+    world.clock.setInstant("2026-07-16T09:00:00Z");
+    // 复现正式迁移数据：内容带移除事实，事件库没有 wordRemoved。
+    world.wordContentStore.markRemoved("removed", world.clock.now().toISOString());
+    expect(replayWordStates(world).get("removed")).toMatchObject({ removed: true, t0: new Date(CLOCK_ISO).toISOString() });
+    const input = { spaceId: SPACE_ID, learningDaySettings: LEARNING_DAY_SETTINGS };
+    expect(world.scheduling.projectSpaceLists(input)[0]?.words.map((word) => word.word.id)).toEqual(["active"]);
+    expect(world.scheduling.refreshSpaceTasks(input).tasks[0]?.payload.testDemands.map((demand) => demand.wordId)).toEqual(["active"]);
+    world.wordContentStore.markRemoved("active", world.clock.now().toISOString());
+    expect(world.scheduling.refreshSpaceTasks(input).tasks).toEqual([]);
+    expect(world.eventStore.listAllEvents().some((event) => event.eventType === "wordRemoved")).toBe(false);
+  });
+
   it("首过次日派生 T0+1 短期测试任务：工作量 = 待测词数，原因与算法版本齐全", () => {
     const world = buildWorld();
     seedSpace(world.spaceStore, { id: SPACE_ID, learningMode: "词书模式", name: "考研词汇" });

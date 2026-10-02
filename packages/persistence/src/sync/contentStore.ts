@@ -130,6 +130,14 @@ export class SqliteContentSyncStore implements ContentSyncStore {
 
   private applyValue(entry: Exclude<ContentEntry, { entityType: "draft" }>): void {
     if (entry.deleted || entry.value === null) {
+      if (entry.entityType === "word") {
+        // 兼容旧端的内容删除墓碑：词的历史事件不可删除，内容也必须保留为排除事实。
+        // 物理删行会丢失 catalogue.removed，使旧学习事件重新创建可调度的幽灵词；
+        // 原版本记录仍由 applyRemote 保存，过时活动内容无法覆盖该墓碑。
+        this.db.prepare("UPDATE word_contents SET removed = 1, removed_at = ? WHERE word_id = ?")
+          .run(entry.updatedAt, entry.entityId);
+        return;
+      }
       const tableAndKey = {
         space: ["spaces", "id"], unit: ["study_units", "unit_id"],
         list: ["list_catalog", "list_id"], word: ["word_contents", "word_id"],

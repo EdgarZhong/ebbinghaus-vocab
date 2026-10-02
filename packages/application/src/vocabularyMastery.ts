@@ -50,6 +50,8 @@ export class VocabularyMasteryService {
       eventStore: this.deps.eventStore,
       wordContentStore: this.deps.wordContentStore,
     }).get(input.wordId);
+    // 移除事件先于内容通道到达时，旧卡片上的操作同样无效，不能借手动标记复活词。
+    if (state?.removed === true) throw new Error("词条不存在");
     const previousStatus = state?.masteryStatus ?? MasteryStatus.Unmastered;
     const nextStatus = input.mastered ? MasteryStatus.Mastered : MasteryStatus.Unmastered;
     if (previousStatus === nextStatus) {

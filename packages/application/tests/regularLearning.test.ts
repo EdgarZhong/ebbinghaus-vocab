@@ -582,6 +582,59 @@ describe("测试会话闭环", () => {
     return [...seeded.wordIds, third];
   }
 
+  it.each(["内容标记", "移除事件"] as const)("开放会话按%s跳过已移除条目，旧答案不落盘", (source) => {
+    const world = buildWorld();
+    const seeded = seedTwoDueEntries(world);
+    world.clock.setInstant("2026-07-16T09:00:00Z");
+    const started = world.service.startOrResumeRegularTest({ taskId: `regular-group|${SPACE_ID}|${seeded.learningDay}|1` });
+    const removedId = seeded.wordIds[0]!;
+    const remainingId = seeded.wordIds[1]!;
+    // 两个同步通道可能先后到达：分别只给内容墓碑或只给移除事件，不能要求二者
+    // 同时具备才停止测试；迁移历史还可能只有内容标记而没有 wordRemoved。
+    if (source === "内容标记") {
+      world.wordContentStore.markRemoved(removedId, world.clock.now().toISOString());
+    } else {
+      world.eventStore.appendEvents([world.eventRecorder.record({
+        eventType: "wordRemoved", targetType: "条目", targetId: removedId,
+        source: "远端移除", metadata: { spaceId: SPACE_ID, normalizedKey: "alpha" },
+      })]);
+    }
+    const countBefore = world.eventStore.listAllEvents().length;
+    const oldCard = world.fsrsCardStore.get(removedId);
+    const snapshot = world.service.getRegularTestSessionSnapshot(started.sessionId);
+    expect(snapshot.currentWord?.wordId).toBe(remainingId);
+    expect(snapshot.totalCount).toBe(1);
+    expect(() => world.service.confirmRegularTestAnswer({
+      sessionId: started.sessionId, expectedWordId: removedId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    })).toThrow("当前条目已变化");
+    expect(world.eventStore.listAllEvents()).toHaveLength(countBefore);
+    expect(world.fsrsCardStore.get(removedId)).toEqual(oldCard);
+    const completed = world.service.confirmRegularTestAnswer({
+      sessionId: started.sessionId, expectedWordId: remainingId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(completed.status).toBe(TestSessionExecutionStatus.Completed);
+    expect(completed.totalCount).toBe(1);
+    expect(world.sessionStore.getSession(started.sessionId)?.words.map((word) => word.wordId)).toEqual([remainingId]);
+  });
+
+  it("开放会话全部条目移除后完成本机游标，不制造测试答案或遗留空测试组", () => {
+    const world = buildWorld();
+    const seeded = seedTwoDueEntries(world);
+    world.clock.setInstant("2026-07-16T09:00:00Z");
+    const started = world.service.startOrResumeRegularTest({ taskId: `regular-group|${SPACE_ID}|${seeded.learningDay}|1` });
+    for (const wordId of seeded.wordIds) world.wordContentStore.markRemoved(wordId, world.clock.now().toISOString());
+    const countBefore = world.eventStore.listAllEvents().length;
+    expect(world.service.pauseRegularTest({ sessionId: started.sessionId }).status).toBe(TestSessionExecutionStatus.Completed);
+    const snapshot = world.service.getRegularTestSessionSnapshot(started.sessionId);
+    expect(snapshot.status).toBe(TestSessionExecutionStatus.Completed);
+    expect(snapshot.totalCount).toBe(0);
+    expect(snapshot.currentWord).toBeNull();
+    expect(world.service.regularTaskItems()).toEqual([]);
+    expect(world.eventStore.listAllEvents()).toHaveLength(countBefore);
+  });
+
   it("开始会话：成员顺序快照定格、任务标识稳定、当前词指向队首", () => {
     const world = buildWorld();
     const seeded = seedTwoDueEntries(world);
@@ -835,7 +888,7 @@ describe("测试会话闭环", () => {
     world.clock.setInstant("2026-07-16T09:00:01Z");
     const taskId = `regular-group|${SPACE_ID}|2026-07-16|1`;
     const started = world.service.startOrResumeRegularTest({ taskId });
-    const updates = vi.spyOn(world.sessionStore, "updateSession");
+    const updates = vi.spyOn(world.sessionStore, "reconcileSession");
     expect(world.sessionStore.getSession(started.sessionId)?.words.map((word) => word.plannedTestAt)).toEqual([
       "2026-07-16T09:00:00.000Z",
       "2026-07-16T09:00:00.000Z",
@@ -911,11 +964,14 @@ describe("测试会话闭环", () => {
 
     // 旧版本所有 plannedTestAt 都等于 startedAt，无法识别 dueAt，只能用启动时间作保守边界。
     const persisted = world.sessionStore.getSession(started.sessionId)!;
-    world.sessionStore.updateSession({
+    // 旧计划时刻只能作为历史开场快照播种，不能通过正常进度更新改写计划。
+    const legacySessionId = "legacy-session";
+    world.sessionStore.addSession({
       ...persisted,
+      sessionId: legacySessionId,
       words: persisted.words.map((word) => ({ ...word, plannedTestAt: persisted.startedAt })),
     });
-    expect(world.service.getRegularTestSessionSnapshot(started.sessionId).currentWord?.wordId).toBe(wordIds[1]);
+    expect(world.service.getRegularTestSessionSnapshot(legacySessionId).currentWord?.wordId).toBe(wordIds[1]);
   });
 
   it("到期组已被远端结果清空但旧会话尚未收敛时，任务行仍显示原计划及未答条目", () => {

@@ -27,7 +27,12 @@ describe("录入页：Space 模式分流", () => {
     await user.click(screen.getByTestId("nav-first-pass"));
     requestSyncSoon.mockClear();
     const pendingBefore = services.runtime.contentSyncStore.pendingCount();
+    // 原文编辑仍立即保存草稿，但初始化读取不应随每个按键重复执行。
+    const draftRead = vi.spyOn(services.bookDrafts, "listOpenDrafts");
+    const flagRead = vi.spyOn(services.settings, "getFeatureFlags");
     await user.type(screen.getByTestId("firstpass-raw-input"), "abandon");
+    expect(draftRead).not.toHaveBeenCalled();
+    expect(flagRead).not.toHaveBeenCalled();
     const spaceId = services.getActiveSpace()?.id ?? "";
     expect(services.bookDrafts.listOpenDrafts(spaceId)[0]?.rawText).toBe("abandon");
     expect(services.runtime.contentSyncStore.pendingCount()).toBe(pendingBefore);

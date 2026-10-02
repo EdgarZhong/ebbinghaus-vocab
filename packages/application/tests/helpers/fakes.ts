@@ -246,10 +246,32 @@ export class InMemoryTestSessionStore implements TestSessionStore {
   }
 
   updateSession(session: TestSessionRecord): void {
-    if (!this.sessions.has(session.sessionId)) {
+    const existing = this.sessions.get(session.sessionId);
+    if (existing === undefined) {
       throw new Error(`测试会话不存在：${session.sessionId}`);
     }
-    this.sessions.set(session.sessionId, session);
+    // 与 SQLite 普通进度更新保持相同契约，避免内存整体覆盖掩盖队列没有落盘的问题。
+    this.sessions.set(session.sessionId, { ...existing, currentPosition: session.currentPosition,
+      status: session.status, answeredWordIds: session.answeredWordIds, lastActiveAt: session.lastActiveAt });
+  }
+
+  reconcileSession(session: TestSessionRecord): void {
+    const existing = this.sessions.get(session.sessionId);
+    if (existing === undefined) throw new Error(`测试会话不存在：${session.sessionId}`);
+    const remaining = new Map<string, number>();
+    for (const plan of existing.words) {
+      const key = JSON.stringify(plan);
+      remaining.set(key, (remaining.get(key) ?? 0) + 1);
+    }
+    for (const plan of session.words) {
+      const key = JSON.stringify(plan);
+      const count = remaining.get(key) ?? 0;
+      if (count === 0) throw new Error("测试会话校对不得新增或改写 Word 计划");
+      remaining.set(key, count - 1);
+    }
+    this.sessions.set(session.sessionId, { ...existing, words: [...session.words],
+      currentPosition: session.currentPosition, status: session.status,
+      answeredWordIds: session.answeredWordIds, lastActiveAt: session.lastActiveAt });
   }
 
   reorderSessionWords(session: TestSessionRecord): void {
