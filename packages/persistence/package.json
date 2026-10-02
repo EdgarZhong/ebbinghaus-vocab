@@ -1,6 +1,6 @@
 {
   "name": "@ebbinghaus/persistence",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "客户端持久化与同步引擎：application 端口的 SQLite（better-sqlite3）与内存实现、outbox 出站队列、SyncEngine（push/pull/settings 全量对账）与组合根运行时",

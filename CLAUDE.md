@@ -16,7 +16,7 @@ V2 将 V1 Python/PySide6 应用迁移为 React + TypeScript + Tauri 2 的 macOS/
 
 **生产数据迁移时区口径（2026-10-01）**：用户确认迁移后的 V2 全局学习时区使用 `Asia/Shanghai`。9 月 30 日的首次录入基线按该时区计算；V1 原库和备份保持只读，只在迁移转换结果中应用此设置。
 
-## 本轮：复习入口口径统一（2026-10-02，文档已改、代码未动）
+## 本轮：复习入口口径统一（2026-10-02）——已实现，0.1.2 构建中
 
 **背景**：词书模式的"复习任务/完成纸质复习/等待纸质复习"机制复杂且语义不清。用户确认新口径：
 
@@ -33,17 +33,11 @@ V2 将 V1 Python/PySide6 应用迁移为 React + TypeScript + Tauri 2 的 macOS/
 
 **已完成**：`docs/需求规格.md`（核心概念、4/5/6.1/6.4 重写、6.5/6.7/6.8、7.2 事件、8/10/11 章）、`docs/复习调度算法.md`（1/3/4/5.4/5.5/6/7/8/9/10/12/13/14 章）、`docs/界面设计规格.md`（第 9 章重写 + 8/10/14 章残留）已同步改写。
 
-**待实现（代码）**：domain `scheduling.ts`（不再生成仅复习任务、工作量按确认词累计、移除需求键记账）、`replayer.ts`（同步事件改答案驱动）；application `bookLearning.ts`（答案事务追加 `listSynchronized`、删除 `pendingPaperReviewBatches`）、删除 `bookReview.ts` 用例、`capacityPlanning.ts`/`dashboard.ts` 容量口径、协议事件标注；前端 `ReviewPage.tsx` 重写、`learningViews.ts` 候选集视图、`TodayPage.tsx`/`SettingsPage.tsx` 文案、样式与全部相关测试（Vitest/Playwright/真实应用验收）。
+**已实现（2026-10-02，分支 1+2 全部完成并提交）**：packages 侧（`3f2310d`）调度只生成测试任务、工作量=待测词数、`dueReviewOnlyDemands` 新函数、`listSynchronized`/`listMastered` 随答案翻转判定同批写入（replayer 重复同步取末次时刻）、删除 `bookReview.ts` 用例与 `pendingPaperReviewBatches`、新增 `reviewCandidates.ts` 纯只读候选集服务、容量/看板移除仅复习口径。前端（`35731d2`+`bd917ac`）ReviewPage 重写（统一浏览入口卡片、展开区内嵌滚动 20 词卡高度、词卡左英右义可横滚）、测试完成成就感反馈+剩余工作量、今日页复习入口浏览化、移动端 360px 专项适配。验证：vitest 588 全绿、Playwright 四视口 84 全绿、typecheck 全段通过、正式库副本集成验证通过（131 事件重放、4 任务无仅复习、3 List 27 候选词、今日答案→候选集链路，工具 `packages/persistence/tests/productionCopy.check.test.ts`，EBB_CHECK_DB 门控）。
 
-**本轮任务拆分（依赖顺序）**：
+**进行中**：macOS 0.1.2 构建安装（版本号已全量升至 0.1.2）；APK 等用户提供 DeepSeek API 密钥后按 AGENTS.md SOP 打包（云端令牌已就绪）。
 
-| 分支 | 范围（文件白名单） | 内容 | 完成判据 |
-| --- | --- | --- | --- |
-| A | `packages/domain/src/{scheduling.ts,replayer.ts}`、`packages/protocol/src/events.ts` 及对应 tests | 调度只生成测试任务；工作量=待测词数；`dueReviewDemands` 新函数；记账删除（`reviewDemandKey` 暂留 @deprecated 保编译）；协议事件标注 | domain+protocol 测试通过 |
-| B | `packages/application/**` | 答案事务追加 `listSynchronized`；删 `bookReview.ts` 用例；复习候选集视图；`refreshSpaceTasks`/`capacityPlanning`/`dashboard` 口径；DTO | application 测试通过 |
-| C | `app/src/**` | ReviewPage 重写、learningViews 候选集、今日页/设置页文案、样式、前端测试 | Vitest 通过，Playwright 通过 |
-
-分支 A→B→C 串行（接口依赖），全部由子 agent 实现，主会话逐分支 review 与集成。
+**遗留**：① 双端并发补写同步事件的极端竞争（重放确定收敛，TS 取较晚者，代码已注释）；② `recordedTodayReviewGroups`（常规模式按录入日分组）未被新口径消费，复习页已改用 `listRegularReviewGroups`（按当日测试组），该用例暂无消费方待后续清理；③ Android 模拟器端到端验收本轮未执行（用户明确不需要 GUI 端到端，APK 构建后仅做真实设备安装验证）。
 
 **注意**：本轮文档口径与现有代码不一致，属预期状态；实现完成前不要按旧口径验收。
 
