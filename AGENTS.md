@@ -59,7 +59,7 @@
 
 - 凡是本仓库产出的 Android APK，默认都是用户自用包：本机 debug 证书签名，构建时经 Vite 环境变量注入两个 seed——云端同步令牌与 LLM API 密钥；首次启动自动写入本机，无需手填。分发给其他设备才需正式发布证书重新签名。
 - seed 只允许经构建环境变量临时注入，禁止写入仓库源码、文档、日志或测试夹具：
-  - 云端同步令牌：腾讯云服务器 `/etc/ebbinghaus/server.env` 的 `EBB_SERVER_TOKEN`（`ssh alex` 读取）。
+  - 云端同步令牌：部署者自己同步服务器环境中的 `EBB_SERVER_TOKEN`。
   - LLM API 密钥：由用户在会话中提供；本机无任何明文备份，收到后只在构建进程内存使用。
 - 构建命令（在 `app/` 目录；`tauri android build` 默认即 release，**不要加 `--release`**——当前 CLI 无此参数会报错）：
   ```bash
