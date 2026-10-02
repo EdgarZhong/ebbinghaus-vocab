@@ -60,11 +60,23 @@ const learningDaySchema = z
 
 export const learningEventTypeValues = [
   "firstPassRecorded",
+  /**
+   * 2026-10-02 起停止产生，仅为历史已持久化事件保留兼容：复习页改为纯浏览入口，
+   * 不再有复习确认触发点，应用层不再写入本类型。
+   */
   "reviewOnlyCompleted",
+  /**
+   * 2026-10-02 起停止产生，仅为历史已持久化事件保留兼容（同 reviewOnlyCompleted）；
+   * List 返回短期同步由测试答案 afterState 派生，不再依赖本事件。
+   */
   "testFollowedByReviewCompleted",
   "testAnswered",
   "answerRevised",
   "shortTermPassCountChanged",
+  /**
+   * 随使同步条件首次满足的测试答案同一批写入（2026-10-02 口径）： occurredAt 取
+   * 该答案的发生时刻作为同步起点 TS，不再有独立的复习确认触发点。
+   */
   "listSynchronized",
   "longTermValidationCompleted",
   "wordMastered",
@@ -152,8 +164,12 @@ const firstPassRecordedMetadataSchema = z.looseObject({
  * listMastered 四类 List 级事件的共用 metadata：V1 review_testing.py 中
  * complete_paper_review 把同一个 metadata 对象复用给完成事件与 List 聚合事件，
  * 故本协议对四类事件共用同一 schema。
+ * 2026-10-02 口径：前两类自该日起停止产生（仅为历史已持久化事件保留兼容），
+ * listSynchronized 改随使同步条件首次满足的测试答案同一批写入，
+ * listMastered 在长期验证全部词已掌握时随最后一词答案同一批写入。
  * taskType 已知值域（V1 TaskType 中文枚举）："仅复习" | "短期测试" | "等待校验" |
- * "长期验证"；reviewDemandKeys 是 `wordId|仅复习|scheduledDay` 复合键的排序数组。
+ * "长期验证"；reviewDemandKeys 是 `wordId|仅复习|scheduledDay` 复合键的排序数组
+ * （仅历史事件携带，新事件不再产生复习需求键）。
  */
 const paperReviewCompletedMetadataSchema = z.looseObject({
   taskId: z.string().min(1),

@@ -31,6 +31,7 @@ import {
 } from "@ebbinghaus/domain";
 import { resolveLearningDay, type LearningDay } from "@ebbinghaus/domain";
 import type {
+  ApplicationEvent,
   CapacityCandidatePayload,
   DailyPlanRecord,
   DailyPlanStore,
@@ -228,6 +229,8 @@ export class CapacityPlanningService {
 
     // 开放任务只统计该 Space 内 PENDING/IN_PROGRESS 口径的任务——任务在 V2 是派生态，
     // 这里直接以"当日及之前仍未完成的派生任务"为开放集合（完成事实由事件承载）。
+    // 2026-10-02 口径：调度只生成测试任务且工作量 = 待测词数，到期/逾期工作量因此
+    // 只统计测试任务，复习（计 0）天然不进入容量。
     const refresh = this.deps.scheduling.refreshSpaceTasks({
       spaceId: input.spaceId,
       learningDaySettings: input.learningDaySettings,
@@ -273,7 +276,7 @@ export class CapacityPlanningService {
       activeCounts.length > 0 ? Math.max(1, Math.round(mean(activeCounts))) : 6;
     const reserve = Math.max(1, Math.ceil(input.targetCapacity * 0.15));
     const randomSeed = stableSeed(input.spaceId, today);
-    const actuals = this.actualsForDay({ learningDay: today, listIds });
+    const actuals = this.actualsForDay({ learningDay: today, spaceId: input.spaceId, listIds });
 
     const request = createCapacityPredictionRequest({
       today,
@@ -321,37 +324,51 @@ export class CapacityPlanningService {
   }
 
   /**
-   * 从 List 粒度完成事实计算首过数和正式工作量，忽略词条级辅助事件。
-   * 工作量事件集 = firstPassRecorded / reviewOnlyCompleted / testFollowedByReviewCompleted，
-   * 目标必须是本 Space 的 List（V1 _actuals_for_day 口径）。
+   * 从完成事实事件计算首过数和正式工作量（2026-10-02 口径：只计录入与测试）。
+   * 工作量事件集 = firstPassRecorded（首过，metadata.workload 恒为 1）+ testAnswered
+   * （每个已确认词最终判断计 1；词书侧答案事件不带 workload 字段，按条数计），
+   * 复习不产生事件也不计工作量。目标必须属于本 Space：词书 List 按目录判定，
+   * 常规条目按内容登记的 spaceId 判定（V1 _actuals_for_day 口径的 V2 等价实现）。
    */
   private actualsForDay(input: {
     readonly learningDay: LearningDay;
+    readonly spaceId: string;
     readonly listIds: ReadonlySet<string>;
   }): { readonly actualFirstPassCount: number; readonly actualCompletedWorkload: number } {
-    const workloadEventTypes = new Set([
-      "firstPassRecorded",
-      "reviewOnlyCompleted",
-      "testFollowedByReviewCompleted",
-    ]);
+    const contentsById = new Map(
+      this.deps.wordContentStore.listCatalogEntries().map((entry) => [entry.wordId, entry]),
+    );
+    const belongsToSpace = (event: ApplicationEvent): boolean => {
+      if (event.targetType === "List") {
+        return input.listIds.has(event.targetId);
+      }
+      const content = contentsById.get(event.targetId);
+      return content !== undefined && content.spaceId === input.spaceId;
+    };
     let firstPassCount = 0;
     let completedWorkload = 0;
     for (const event of this.deps.eventStore.listAllEvents()) {
-      if (event.learningDay !== input.learningDay || !workloadEventTypes.has(event.eventType)) {
-        continue;
-      }
-      if (event.eventType !== "firstPassRecorded" && !input.listIds.has(event.targetId)) {
-        // List 级完成事件的目标是 List；条目级首过只看学习日。
+      if (event.learningDay !== input.learningDay) {
         continue;
       }
       if (event.eventType === "firstPassRecorded") {
+        if (!belongsToSpace(event)) {
+          continue;
+        }
         firstPassCount += 1;
+        const workload = event.metadata["workload"];
+        if (typeof workload !== "number" || !Number.isInteger(workload) || workload < 0) {
+          throw new Error("完成事件工作量无效");
+        }
+        completedWorkload += workload;
+      } else if (event.eventType === "testAnswered") {
+        if (!belongsToSpace(event)) {
+          continue;
+        }
+        // 每个已确认词最终判断计 1；改判/次数变化/掌握等伴随事件共享同一答案，
+        // 重复计数会导致工作量虚高，必须排除（与重放器累计口径一致）。
+        completedWorkload += 1;
       }
-      const workload = event.metadata["workload"];
-      if (typeof workload !== "number" || !Number.isInteger(workload) || workload < 0) {
-        throw new Error("完成事件工作量无效");
-      }
-      completedWorkload += workload;
     }
     return { actualFirstPassCount: firstPassCount, actualCompletedWorkload: completedWorkload };
   }

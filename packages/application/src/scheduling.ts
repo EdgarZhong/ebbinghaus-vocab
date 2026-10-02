@@ -49,7 +49,6 @@ export interface ListTaskPayload {
   readonly overdueDays: number;
   readonly activeWordIds: readonly string[];
   readonly testDemands: readonly TaskDemandPayload[];
-  readonly reviewDemands: readonly TaskDemandPayload[];
 }
 
 /** 界面与容量模型共同使用的唯一 List 粒度派生任务。 */
@@ -157,9 +156,7 @@ function toPersistedListTask(task: ListTask): PersistedListTask {
     taskType: task.taskType,
     scheduledDay: task.scheduledDay,
   });
-  const dueReasons = [
-    ...new Set([...task.testDemands, ...task.reviewDemands].map((demand) => demand.reason)),
-  ];
+  const dueReasons = [...new Set(task.testDemands.map((demand) => demand.reason))];
   return {
     taskId,
     listId: task.listId,
@@ -174,12 +171,6 @@ function toPersistedListTask(task: ListTask): PersistedListTask {
       overdueDays: task.overdueDays,
       activeWordIds: [...task.activeWordIds],
       testDemands: task.testDemands.map((demand) => ({
-        wordId: demand.wordId,
-        taskType: demand.taskType,
-        scheduledDay: demand.scheduledDay,
-        reason: demand.reason,
-      })),
-      reviewDemands: task.reviewDemands.map((demand) => ({
         wordId: demand.wordId,
         taskType: demand.taskType,
         scheduledDay: demand.scheduledDay,

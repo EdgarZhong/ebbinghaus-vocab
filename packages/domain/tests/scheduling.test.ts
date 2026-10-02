@@ -20,8 +20,10 @@ import {
   applyTestJudgement,
   createSchedulableList,
   createSchedulableWord,
+  dueReviewOnlyDemands,
   generateListTask,
   listSatisfiesSynchronization,
+  taskDueReasons,
   type SchedulableWord,
 } from "../src/scheduling.ts";
 
@@ -180,8 +182,8 @@ describe("短期状态机：T0/T1/T2 真实时间语义", () => {
   });
 });
 
-describe("统一调度：日期增量、List 聚合与逾期折叠", () => {
-  it("T0 增量按固定起点计算；不同 Word 的测试和仅复习同日只生成一个工作量 2 任务", () => {
+describe("统一调度：日期增量、List 聚合与逾期折叠（2026-10-02 口径：只生成测试任务）", () => {
+  it("T0 增量按固定起点计算；同日测试与仅复习到期只生成测试任务，工作量 = 待测词数", () => {
     const snapshot = createSchedulableList({
       listId: "list-1",
       stage: WordListStage.ShortTermSync,
@@ -192,17 +194,73 @@ describe("统一调度：日期增量、List 聚合与逾期折叠", () => {
     });
     const task = generateListTask(snapshot, day(17));
 
+    // 只有 test-due 的测试需求（T0+1 = 07-17）到期；review-due 只有仅复习到期，
+    // 复习不再生成任务，也不混入任务需求或工作量。
     expect(task).not.toBeNull();
     expect(task?.taskType).toBe(TaskType.ShortTermTest);
-    expect(task?.workload).toBe(2);
+    expect(task?.workload).toBe(1);
     expect(task?.scheduledDay).toBe(day(17));
     expect(task?.testDemands.map((demand) => demand.wordId)).toEqual(["test-due"]);
-    expect(task?.reviewDemands.map((demand) => demand.wordId)).toEqual(["review-due"]);
-    expect(taskDueReasonsOf(task)).toEqual([
-      DueReason.FirstShortTermTest,
-      DueReason.T1ReviewOnly,
-    ]);
+    expect(taskDueReasons(task!)).toEqual([DueReason.FirstShortTermTest]);
     expect(task?.algorithmVersion).toBe(SCHEDULER_ALGORITHM_VERSION);
+  });
+
+  it("当天只有仅复习到期时不生成任何任务；复习入口候选由 dueReviewOnlyDemands 单独派生", () => {
+    const snapshot = createSchedulableList({
+      listId: "list-1",
+      stage: WordListStage.ShortTermSync,
+      words: [projection(word("review-due", ShortTermPassCount.One, { anchorDay: 16 }), 16)],
+    });
+    // T1+1 = 07-17 仅复习到期；T1+3 = 07-19 晋级测试尚未到期。
+    expect(generateListTask(snapshot, day(17))).toBeNull();
+    const candidates = dueReviewOnlyDemands(snapshot, day(17));
+    expect(candidates.map((demand) => demand.wordId)).toEqual(["review-due"]);
+    expect(candidates.every((demand) => demand.taskType === TaskType.ReviewOnly)).toBe(true);
+    expect(candidates[0]?.scheduledDay).toBe(day(17));
+    expect(candidates[0]?.reason).toBe(DueReason.T1ReviewOnly);
+  });
+
+  it("仅复习日期逾期后不再进入候选集：严格当日命中，不做逾期累积", () => {
+    const snapshot = createSchedulableList({
+      listId: "list-1",
+      stage: WordListStage.ShortTermSync,
+      // T1 = 07-14 → 仅复习 07-15、晋级测试 07-17。
+      words: [projection(word("review-due", ShortTermPassCount.One, { anchorDay: 14 }), 14)],
+    });
+    // 昨天（07-15）是仅复习日期：今天不再出现，直到状态推进生成新的仅复习日期。
+    expect(dueReviewOnlyDemands(snapshot, day(16))).toEqual([]);
+    // 逾期仅复习同样不产生任务（当天也没有测试到期）。
+    expect(generateListTask(snapshot, day(16))).toBeNull();
+    // 次日晋级测试到期：只把测试需求放进任务，逾期的仅复习日期不补做。
+    const task = generateListTask(snapshot, day(17));
+    expect(task?.taskType).toBe(TaskType.ShortTermTest);
+    expect(task?.testDemands.map((demand) => demand.wordId)).toEqual(["review-due"]);
+    expect(task?.workload).toBe(1);
+  });
+
+  it("同步条件已满足或 List 处于长期验证/已掌握阶段时，仅复习候选为空", () => {
+    const syncedSnapshot = createSchedulableList({
+      listId: "list-1",
+      stage: WordListStage.ShortTermSync,
+      words: [projection(word("ready", ShortTermPassCount.Two, { anchorDay: 15 }), 15)],
+    });
+    expect(listSatisfiesSynchronization(syncedSnapshot)).toBe(true);
+    expect(dueReviewOnlyDemands(syncedSnapshot, day(30))).toEqual([]);
+
+    const validationSnapshot = createSchedulableList({
+      listId: "list-1",
+      stage: WordListStage.LongTermValidation,
+      words: syncedSnapshot.words,
+      synchronizedDay: day(19),
+    });
+    expect(dueReviewOnlyDemands(validationSnapshot, day(19))).toEqual([]);
+
+    const masteredSnapshot = createSchedulableList({
+      listId: "list-1",
+      stage: WordListStage.Mastered,
+      words: syncedSnapshot.words,
+    });
+    expect(dueReviewOnlyDemands(masteredSnapshot, day(19))).toEqual([]);
   });
 
   it("多日未打开时保留最早计划日并折叠为当前唯一任务，不生成虚拟补做任务", () => {
@@ -213,13 +271,12 @@ describe("统一调度：日期增量、List 聚合与逾期折叠", () => {
     });
     const task = generateListTask(snapshot, day(20));
 
+    // 测试需求 T0+1 = 07-16 逾期 4 天；T0+2 仅复习（07-17）已逾期但不产生任务与工作量。
     expect(task).not.toBeNull();
     expect(task?.scheduledDay).toBe(day(16));
     expect(task?.overdueDays).toBe(4);
-    expect(task?.overdueDays).toBeGreaterThan(0);
     expect(task?.testDemands).toHaveLength(1);
-    expect(task?.reviewDemands).toHaveLength(1);
-    expect(task?.workload).toBe(2);
+    expect(task?.workload).toBe(1);
   });
 
   it("空 List 不满足同步条件且永远没有后续任务", () => {
@@ -230,9 +287,10 @@ describe("统一调度：日期增量、List 聚合与逾期折叠", () => {
     });
     expect(listSatisfiesSynchronization(snapshot)).toBe(false);
     expect(generateListTask(snapshot, day(30))).toBeNull();
+    expect(dueReviewOnlyDemands(snapshot, day(30))).toEqual([]);
   });
 
-  it("全部活动 Word 达到 2 后立即停止短期任务，只有 TS 满 7 天才生成长期验证", () => {
+  it("全部活动 Word 达到 2 后立即停止短期任务，只有 TS 满 7 天才生成长期验证，工作量 = 待测词数", () => {
     const shortSnapshot = createSchedulableList({
       listId: "list-1",
       stage: WordListStage.ShortTermSync,
@@ -251,32 +309,8 @@ describe("统一调度：日期增量、List 聚合与逾期折叠", () => {
     const validation = generateListTask(waitingSnapshot, day(27));
     expect(validation).not.toBeNull();
     expect(validation?.taskType).toBe(TaskType.LongTermValidation);
-    expect(validation?.workload).toBe(2);
+    expect(validation?.workload).toBe(1);
     expect(validation?.scheduledDay).toBe(day(26));
     expect(validation?.overdueDays).toBe(1);
   });
-
-  it("已完成的仅复习需求键不再重复生成任务需求", () => {
-    const reviewWord = projection(word("reviewed", ShortTermPassCount.Zero, { anchorDay: 15 }), 15);
-    const snapshot = createSchedulableList({
-      listId: "list-1",
-      stage: WordListStage.ShortTermSync,
-      words: [reviewWord],
-      completedReviewDemands: new Set(["reviewed|仅复习|2026-07-17"]),
-    });
-    // T0+2 仅复习（07-17）已完成；T0+1 测试（07-16）已过但仍到期——折叠为测试任务。
-    const task = generateListTask(snapshot, day(17));
-    expect(task).not.toBeNull();
-    expect(task?.testDemands).toHaveLength(1);
-    expect(task?.reviewDemands).toHaveLength(0);
-    expect(task?.workload).toBe(2);
-  });
 });
-
-/** 取任务到期原因的稳定顺序输出（与 ListTask.dueReasons 对应）。 */
-function taskDueReasonsOf(task: ReturnType<typeof generateListTask>): string[] {
-  if (task === null) {
-    return [];
-  }
-  return [...task.testDemands, ...task.reviewDemands].map((demand) => demand.reason);
-}

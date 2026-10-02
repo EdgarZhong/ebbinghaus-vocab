@@ -286,7 +286,9 @@ export class InMemoryTestSessionStore implements TestSessionStore {
         (session) =>
           session.learningMode === "词书模式" &&
           session.listId === listId &&
-          (session.status === "进行中" || session.status === "已暂停" || session.status === "等待纸质复习"),
+          // 2026-10-02 起不存在"等待纸质复习"状态：开放会话只剩进行中/已暂停，
+          // 最后一词确认后会话即完成。
+          (session.status === "进行中" || session.status === "已暂停"),
       ) ?? null
     );
   }

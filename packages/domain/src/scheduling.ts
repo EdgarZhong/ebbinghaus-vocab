@@ -5,7 +5,7 @@
  * 负责把绝对时间映射为学习日，因而同一状态、同一学习日和同一算法版本必然得到
  * 完全相同的结果。
  *
- * 状态机不变量（复习调度算法 5-9 章）：
+ * 状态机不变量（复习调度算法 5-9 章，2026-10-02 口径）：
  * - 三个日期增量始终相对同一个 T0 计算（T0+1 测试、T0+2 仅复习、T0+4 晋级测试）；
  *   达到短期通过次数 1 后由同一组增量做阶段差分（T1+1 仅复习、T1+3 晋级测试），
  *   不引入特殊参数。
@@ -13,6 +13,9 @@
  *   并以校验日生成新 T1，绝不伪造 T0。
  * - 等待校验从 T2 起算 7 个自然日，绝不从 T0 或首过日期起算。
  * - 同步条件一旦满足，短期需求立即停止；长期验证阶段是唯一无接触例外。
+ * - 复习不再是任务：调度只生成测试任务，仅复习日期只作为复习入口候选集的
+ *   派生输入（dueReviewOnlyDemands），不生成任务、事件、工作量，也不做任何
+ *   "完成"记账（2026-10-02 起不存在复习确认触发点）。
  * - 逾期不生成虚拟补做任务：计划到期日保持不变并用于计算逾期程度，多个逾期需求
  *   折叠为当前唯一真实任务。
  */
@@ -100,13 +103,6 @@ export interface SchedulableList {
   readonly stage: WordListStageType;
   readonly words: readonly SchedulableWord[];
   readonly synchronizedDay: LearningDay | null;
-  /**
-   * 已完成的仅复习需求稳定键集合。
-   *
-   * 仅复习不改变 Word 状态，其"完成"只能靠需求键记账：整 List 纸质复习会满足
-   * 同日全部 Word 的仅复习需求，逐词逐日重放时必须据此跳过已满足的旧需求。
-   */
-  readonly completedReviewDemands: ReadonlySet<string>;
 }
 
 /** 构造 List 调度快照并校验阶段与 Word 唯一性。 */
@@ -115,7 +111,6 @@ export function createSchedulableList(input: {
   stage: WordListStageType;
   words: readonly SchedulableWord[];
   synchronizedDay?: LearningDay | null;
-  completedReviewDemands?: ReadonlySet<string>;
 }): SchedulableList {
   if (input.listId.trim().length === 0) {
     throw new Error("List 标识不能为空");
@@ -132,7 +127,6 @@ export function createSchedulableList(input: {
     stage: input.stage,
     words: input.words,
     synchronizedDay: input.synchronizedDay ?? null,
-    completedReviewDemands: input.completedReviewDemands ?? new Set(),
   };
 }
 
@@ -144,29 +138,13 @@ export interface DueDemand {
   readonly reason: DueReasonType;
 }
 
-/** 稳定键用于标记不改变 Word 状态的仅复习需求已经完成。 */
-export function dueDemandKey(demand: DueDemand): string {
-  return `${demand.wordId}|${demand.taskType}|${demand.scheduledDay}`;
-}
-
-/** 供应用层在纸质复习完成后构造稳定的完成需求键。 */
-export function reviewDemandKey(wordId: string, scheduledDay: LearningDay): string {
-  return dueDemandKey({
-    wordId,
-    taskType: TaskType.ReviewOnly,
-    scheduledDay,
-    reason: DueReason.T0ReviewOnly,
-  });
-}
-
-/** 界面与容量模型共同使用的唯一 List 粒度任务。 */
+/** 界面与容量模型共同使用的唯一 List 粒度任务（2026-10-02 起只有测试任务）。 */
 export interface ListTask {
   readonly listId: string;
   readonly taskType: TaskTypeType;
   readonly scheduledDay: LearningDay;
   readonly workload: number;
   readonly testDemands: readonly DueDemand[];
-  readonly reviewDemands: readonly DueDemand[];
   readonly activeWordIds: readonly string[];
   /** 计划到期日相对今天的逾期天数；计划日保持不变，不因逾期改写。 */
   readonly overdueDays: number;
@@ -179,7 +157,7 @@ export function isTaskOverdue(task: ListTask): boolean {
 
 /** 按稳定顺序输出可直接持久化或展示的到期原因。 */
 export function taskDueReasons(task: ListTask): readonly string[] {
-  return [...task.testDemands, ...task.reviewDemands].map((demand) => demand.reason);
+  return task.testDemands.map((demand) => demand.reason);
 }
 
 /** 比较到期需求的稳定排序：先按计划日，再按 Word，再按任务类型。 */
@@ -269,13 +247,12 @@ export function listSatisfiesSynchronization(snapshot: SchedulableList): boolean
 }
 
 /**
- * 折叠所有到期需求，返回今天唯一可见的 List 任务；当天没有任何到期需求时返回 null。
+ * 折叠所有到期测试需求，返回今天唯一可见的 List 测试任务；当天没有任何测试需求
+ * 时返回 null（2026-10-02 口径：仅复习不再生成任务）。
  *
  * 聚合规则（复习调度算法 5.5、8、9.1）：
  * - 任一 Word 测试到期即生成测试任务，但只测试真正到期的 Word；
- * - 任一 Word 仅复习到期即生成仅复习任务，纸质范围为全部未掌握 Word；
- * - 同日测试与仅复习合并为测试后复习，工作量固定为 2（绝不按 Word 需求相加成 3）；
- * - 已完成的仅复习需求键不再重复生成；
+ * - 工作量 = 待测词数（testDemands.length）：每个已确认词最终判断计 1，未确认不计；
  * - 逾期需求保持原计划日并据此计算逾期天数，不生成虚拟补做任务。
  */
 export function generateListTask(snapshot: SchedulableList, today: LearningDay): ListTask | null {
@@ -307,62 +284,79 @@ export function generateListTask(snapshot: SchedulableList, today: LearningDay):
       listId: snapshot.listId,
       taskType: TaskType.LongTermValidation,
       scheduledDay,
-      workload: 2,
+      workload: demands.length,
       testDemands: demands,
-      reviewDemands: [],
       activeWordIds,
       overdueDays: Math.max(0, daysBetweenLearningDays(scheduledDay, today)),
       algorithmVersion: SCHEDULER_ALGORITHM_VERSION,
     };
   }
 
-  // 同步条件一旦已经满足，短期需求必须立即停止；应用层会在当次测试后的纸质复习
-  // 完成时正式写入同步事件和 TS，因此这里不能继续生成 T2 等待校验。
+  // 同步条件一旦已经满足，短期需求必须立即停止：应用层随使同步条件首次满足的
+  // 测试答案同一批写入 listSynchronized 与 TS（复习调度算法 7.1，2026-10-02 口径），
+  // 重放侧随后把 List 推进到长期验证，这里不能继续生成 T2 等待校验。
   if (listSatisfiesSynchronization(snapshot)) {
     return null;
   }
 
   const allDemands = snapshot.words.flatMap((item) => shortTermDemands(item));
-  const dueDemands = allDemands.filter((demand) => demand.scheduledDay <= today);
-  const testDemands = dueDemands
+  const testDemands = allDemands
     .filter((demand) => demand.taskType !== TaskType.ReviewOnly)
+    .filter((demand) => demand.scheduledDay <= today)
     .sort((a, b) => compareDemands(a, b, (demand) => demand.taskType));
-  const reviewDemands = dueDemands
-    .filter(
-      (demand) =>
-        demand.taskType === TaskType.ReviewOnly &&
-        !snapshot.completedReviewDemands.has(dueDemandKey(demand)),
-    )
-    .sort((a, b) => compareDemands(a, b, () => ""));
-  if (testDemands.length === 0 && reviewDemands.length === 0) {
+  if (testDemands.length === 0) {
+    // 只有仅复习到期：复习页是纯浏览入口，不生成任务、工作量或事件。
     return null;
   }
-
-  // 只要存在任何测试需求，同日或历史逾期的仅复习都由测试后的整 List 纸质复习一并
-  // 满足，因而工作量固定为 2；任务类型按等待校验优先于普通短期测试展示。
-  let taskType: TaskTypeType;
-  if (testDemands.length > 0) {
-    taskType = testDemands.some((demand) => demand.taskType === TaskType.WaitingCheck)
-      ? TaskType.WaitingCheck
-      : TaskType.ShortTermTest;
-  } else {
-    taskType = TaskType.ReviewOnly;
-  }
-  const workload = testDemands.length > 0 ? 2 : 1;
-  const scheduledDay = [...testDemands, ...reviewDemands]
+  // 任务类型按等待校验优先于普通短期测试展示。
+  const taskType: TaskTypeType = testDemands.some(
+    (demand) => demand.taskType === TaskType.WaitingCheck,
+  )
+    ? TaskType.WaitingCheck
+    : TaskType.ShortTermTest;
+  const scheduledDay = testDemands
     .map((demand) => demand.scheduledDay)
     .reduce((min, day) => (day < min ? day : min));
   return {
     listId: snapshot.listId,
     taskType,
     scheduledDay,
-    workload,
+    workload: testDemands.length,
     testDemands,
-    reviewDemands,
     activeWordIds,
     overdueDays: Math.max(0, daysBetweenLearningDays(scheduledDay, today)),
     algorithmVersion: SCHEDULER_ALGORITHM_VERSION,
   };
+}
+
+/**
+ * 复习入口候选集的"当日到期的仅复习词"部分（复习调度算法 5.5 第 2 条，
+ * 需求规格 6.4）。
+ *
+ * 口径：
+ * - 只返回活动未掌握 Word 中 taskType 为仅复习、且计划日**严格等于** today 的需求；
+ *   逾期（< today）的仅复习日期不再返回——不做逾期累积，直到状态推进生成新的仅复习日期；
+ * - List 处于长期验证/已掌握阶段、或同步条件已满足时返回空：同步后不再有任何
+ *   短期接触需求，长期验证阶段是唯一无接触例外；
+ * - 返回纯派生视图片段：不持久化、不同步，调用方不得改写结果。
+ */
+export function dueReviewOnlyDemands(
+  snapshot: SchedulableList,
+  today: LearningDay,
+): readonly DueDemand[] {
+  if (snapshot.stage !== WordListStage.ShortTermSync) {
+    return [];
+  }
+  if (listSatisfiesSynchronization(snapshot)) {
+    return [];
+  }
+  return snapshot.words
+    .flatMap((item) => shortTermDemands(item))
+    .filter(
+      (demand) =>
+        demand.taskType === TaskType.ReviewOnly && demand.scheduledDay === today,
+    )
+    .sort((a, b) => compareDemands(a, b, () => ""));
 }
 
 /**

@@ -24,7 +24,6 @@ import {
   createSchedulableWord,
   generateListTask,
   listSatisfiesSynchronization,
-  dueDemandKey,
   type ListTask,
   type SchedulableList,
   type SchedulableWord,
@@ -332,7 +331,11 @@ function taskProbability(taskType: TaskType, profile: CandidateListProfile): num
   return profile.shortTermSuccessProbability;
 }
 
-/** 完成当天唯一 List 任务，并让整 List 纸质复习满足同日复习需求。 */
+/**
+ * 完成当天唯一 List 测试任务：对任务覆盖的每个 Word 按通过概率抽样最终判断，
+ * 并沿状态机推进调度快照（2026-10-02 口径：复习不产生任务，模拟里没有任何
+ * 仅复习"完成"记账）。
+ */
 function completeSimulatedTask(
   snapshot: SchedulableList,
   input: {
@@ -342,14 +345,6 @@ function completeSimulatedTask(
     randomSource: () => number;
   },
 ): SchedulableList {
-  const completedReviews = new Set(snapshot.completedReviewDemands);
-  for (const demand of input.task.reviewDemands) {
-    completedReviews.add(dueDemandKey(demand));
-  }
-  if (input.task.testDemands.length === 0) {
-    return { ...snapshot, completedReviewDemands: completedReviews };
-  }
-
   const demandByWord = new Map(input.task.testDemands.map((demand) => [demand.wordId, demand]));
   const updatedWords: SchedulableWord[] = [];
   for (const item of snapshot.words) {
@@ -373,7 +368,6 @@ function completeSimulatedTask(
   const updated: SchedulableList = {
     ...snapshot,
     words: updatedWords,
-    completedReviewDemands: completedReviews,
   };
   if (input.task.taskType === TaskType.LongTermValidation) {
     const allMastered = updated.words.every(
@@ -384,6 +378,8 @@ function completeSimulatedTask(
     }
     return { ...updated, stage: WordListStage.ShortTermSync, synchronizedDay: null };
   }
+  // 模拟口径与应用层写事件口径一致：抽样后同步条件首次满足即视为当批答案写入
+  // listSynchronized，整个 List 从当天进入长期验证（TS = 满足当天）。
   if (listSatisfiesSynchronization(updated)) {
     return {
       ...updated,
@@ -708,7 +704,6 @@ export function computeCapacityInputFingerprint(request: CapacityPredictionReque
       listId: list.listId,
       stage: list.stage,
       synchronizedDay: list.synchronizedDay,
-      completedReviewDemands: [...list.completedReviewDemands].sort(),
       words: list.words.map((item) => ({
         wordId: item.word.id,
         passCount: item.word.shortTermPassCount,

@@ -23,6 +23,11 @@
  * - `taskDeferred` 在协议层尚未固化字段、`testSessionPaused/Resumed` 属于会话
  *   执行状态属于会话事实；历史 `dictionaryFetched/FetchFailed` 属于已停用的
  *   词典查询记录——均不产生调度派生状态，重放时忽略；
+ * - `reviewOnlyCompleted` / `testFollowedByReviewCompleted` 自 2026-10-02 起停止
+ *   产生（复习页改为纯浏览入口，不再有复习确认触发点），重放器仅保留对历史已
+ *   持久化事件的兼容识别；List 返回短期同步改由测试答案 afterState 派生：长期
+ *   验证失败把词重置为短期通过次数 0，重放器据此把仍处于长期验证阶段的 List
+ *   退回短期同步（规格 7.3），V1 迁移数据里答案事件与旧完成事件同现不会冲突；
  * - 常规模式条目的完整 FSRS 卡片快照（稳定性/难度）不在事件 metadata 中，重放
  *   只派生事件实际承载的到期时间、掌握状态与累计认识次数。
  *
@@ -34,7 +39,7 @@ import {
   sortEventsForReplay,
   type ReplayableEvent,
 } from "@ebbinghaus/protocol";
-import { MasteryStatus, TestJudgement, WordListStage, isShortTermPassCount, isMasteryStatus, type ShortTermPassCount, type MasteryStatus as MasteryStatusType, type WordListStage as WordListStageType } from "./enums.ts";
+import { MasteryStatus, ShortTermPassCount as ShortTermPassCountValues, TestJudgement, WordListStage, isShortTermPassCount, isMasteryStatus, type ShortTermPassCount, type MasteryStatus as MasteryStatusType, type WordListStage as WordListStageType } from "./enums.ts";
 import {
   createSchedulableList,
   createSchedulableWord,
@@ -118,8 +123,6 @@ export interface ReplayedWordListState {
   readonly synchronizedAt: string | null;
   readonly additionsLocked: boolean;
   readonly aggregateStatus: MasteryStatusType;
-  /** 已由纸质复习满足的仅复习需求稳定键（调度时据此跳过已满足的旧需求）。 */
-  readonly completedReviewDemandKeys: readonly string[];
   readonly wordIds: readonly string[];
 }
 
@@ -163,7 +166,6 @@ interface MutableListState {
   synchronizedAt: string | null;
   additionsLocked: boolean;
   aggregateStatus: MasteryStatusType;
-  completedReviewDemandKeys: Set<string>;
   wordIds: Set<string>;
 }
 
@@ -237,7 +239,6 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
       synchronizedAt: null,
       additionsLocked: false,
       aggregateStatus: MasteryStatus.Unmastered,
-      completedReviewDemandKeys: new Set(),
       wordIds: new Set(),
     };
     lists.set(listId, created);
@@ -421,14 +422,30 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
             word.cumulativeRecognizedCount += 1;
           }
         }
+        // 长期验证失败的答案派生 List 阶段回退：验证把词重置为短期通过次数 0，
+        // List 若仍处长期验证阶段即返回短期同步（规格 7.3，2026-10-02 答案驱动口径；
+        // 不再有复习确认事件承担该职责）。同步时建立的新增锁永久保留，不回退。
+        if (
+          word.listId !== null &&
+          word.masteryStatus === MasteryStatus.Unmastered &&
+          word.shortTermPassCount !== ShortTermPassCountValues.Two
+        ) {
+          const list = lists.get(word.listId);
+          if (list?.stage === WordListStage.LongTermValidation) {
+            list.stage = WordListStage.ShortTermSync;
+          }
+        }
         break;
       }
       case "listSynchronized": {
         const list = ensureList(event.targetId);
         list.stage = WordListStage.LongTermValidation;
-        if (list.synchronizedAt === null) {
-          list.synchronizedAt = event.occurredAt;
-        }
+        // 2026-10-02 口径：同步事件随答案逐轮写入（含长期验证失败后重新同步的
+        // 第二轮），长期验证日期 = 本轮 TS + 7 个自然日（规格 7.2），因此取
+        // **末次**同步事件时刻，不得用首次守卫——否则重新同步的 List 会沿用
+        // 上一轮 TS 计算长期验证日期。跨端并发各写一个同步事件时，重放序
+        // （occurredAt → deviceSeq → deviceId）保证各端取到同一末次值。
+        list.synchronizedAt = event.occurredAt;
         // List 的新增 Word 功能永久上锁；后续长期验证结果不得解除该锁（规格 7.1）。
         list.additionsLocked = true;
         break;
@@ -442,20 +459,11 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
       }
       case "reviewOnlyCompleted":
       case "testFollowedByReviewCompleted": {
-        const list = ensureList(event.targetId);
-        // 长期验证失败后重新进入短期同步；同步时建立的新增锁仍永久保留。
-        // 全词成功时同批后续 listMastered 事件会把阶段推进到已掌握。
-        if (event.eventType === "testFollowedByReviewCompleted" && metadata["taskType"] === "长期验证") {
-          list.stage = WordListStage.ShortTermSync;
-        }
-        const keys = metadata["reviewDemandKeys"];
-        if (Array.isArray(keys)) {
-          for (const key of keys) {
-            if (typeof key === "string") {
-              list.completedReviewDemandKeys.add(key);
-            }
-          }
-        }
+        // 2026-10-02 起停止产生（复习入口改为纯浏览视图，无复习确认触发点）；仅保留
+        // 对历史已持久化事件的兼容识别，避免重放 V1 迁移数据时抛"未知事件类型"。
+        // V1 历史中"长期验证后确认纸质复习"事件曾把 List 退回短期同步；该职责现由
+        // 测试答案 afterState 派生（见上方 testAnswered 族分支），此处不再消费
+        // reviewDemandKeys——仅复习不存在"完成"概念，词状态一律以答案事件为准。
         break;
       }
       case "taskDeferred":
@@ -484,7 +492,6 @@ export function replayLearningEvents(input: ReplayInput): ReplayResult {
       Object.freeze({
         ...list,
         listId,
-        completedReviewDemandKeys: Object.freeze([...list.completedReviewDemandKeys].sort()),
         wordIds: Object.freeze([...list.wordIds].sort()),
       }),
     );
@@ -579,7 +586,6 @@ export function schedulableListsFromReplay(
         stage: list.stage,
         words: schedulableWords,
         synchronizedDay: toDay(list.synchronizedAt),
-        completedReviewDemands: new Set(list.completedReviewDemandKeys),
       }),
     );
   }

@@ -92,8 +92,6 @@ export class DashboardService {
       learningDaySettings: this.deps.settings.getLearningDaySettings(),
     });
     const tasks = this.taskItems();
-    const reviewCount = tasks.filter((task) => task.taskType === "仅复习").length;
-    const testCount = tasks.length - reviewCount;
     const snapshot = view.snapshot;
     return {
       targetCapacity: snapshot?.targetCapacity ?? spaceSettings.dailyTarget,
@@ -114,8 +112,7 @@ export class DashboardService {
       riskWorkloadByDay: snapshot?.riskWorkloadByDay ?? [],
       capacityAlgorithmVersion: snapshot?.algorithmVersion ?? "",
       capacityStale: view.stale,
-      reviewTaskCount: reviewCount,
-      testTaskCount: testCount,
+      // 2026-10-02 口径：任务列表只含测试任务（复习不是任务），原复习/测试计数移除。
       tasks,
       learningMode: space.learningMode,
     };

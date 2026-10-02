@@ -19,7 +19,8 @@
  * - scheduling.ts：词书模式任务派生（事件重放 → 调度投影 → 任务）。
  * - capacityPlanning.ts：两段式容量规划（缓存读 + 后台刷新）。
  * - regularLearning.ts：常规模式录入、到期分组、朗读复习与测试会话闭环。
- * - bookReview.ts：词书纸质复习完成的事件产出口径。
+ * - bookLearning.ts：词书模式录入、逐词测试会话与 Word 内容维护。
+ * - reviewCandidates.ts：词书模式复习入口候选集只读查询（纯派生视图，无写路径）。
  * - dashboard.ts：今日看板（模式分发 + 容量视图 + 每日目标）。
  * - dto.ts：界面与用例之间的稳定视图快照。
  */
@@ -34,8 +35,8 @@ export * from "./spaceManagement.ts";
 export * from "./scheduling.ts";
 export * from "./capacityPlanning.ts";
 export * from "./regularLearning.ts";
-export * from "./bookReview.ts";
 export * from "./bookLearning.ts";
+export * from "./reviewCandidates.ts";
 export * from "./bookDrafts.ts";
 export * from "./vocabularyMastery.ts";
 export * from "./dictionary.ts";

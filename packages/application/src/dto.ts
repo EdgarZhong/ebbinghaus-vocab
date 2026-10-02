@@ -41,16 +41,6 @@ export interface TaskItemSnapshot {
   readonly activeWords: readonly ReviewWordSnapshot[];
 }
 
-/** 判断任务是否需要软件测试（仅复习任务没有测试入口）。 */
-export function taskRequiresTest(task: TaskItemSnapshot): boolean {
-  return task.taskType !== "仅复习";
-}
-
-/** 判断任务是否处于"软件测试已完成、等待纸质复习确认"状态。 */
-export function taskWaitsForPaperReview(task: TaskItemSnapshot): boolean {
-  return task.sessionStatus === "等待纸质复习";
-}
-
 /** 逐词测试页每次重绘所需的稳定视图快照。 */
 export interface TestSessionSnapshot {
   readonly sessionId: string;
@@ -69,6 +59,7 @@ export interface TestSessionSnapshot {
  *
  * `capacityStale` 是 V2 新增的两段式容量语义标记（AGENTS.md 固定交互）：为 true
  * 表示展示的是最近缓存结果、输入已变化，组合根应触发后台刷新完成后重取快照。
+ * 2026-10-02 口径：任务列表只含测试任务（复习不再是任务），不再单独统计复习数。
  */
 export interface DashboardSnapshot {
   readonly targetCapacity: number;
@@ -89,8 +80,6 @@ export interface DashboardSnapshot {
   readonly riskWorkloadByDay: readonly number[];
   readonly capacityAlgorithmVersion: string;
   readonly capacityStale: boolean;
-  readonly reviewTaskCount: number;
-  readonly testTaskCount: number;
   readonly tasks: readonly TaskItemSnapshot[];
   readonly learningMode: LearningMode;
 }

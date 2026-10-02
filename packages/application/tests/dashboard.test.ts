@@ -7,7 +7,7 @@
  *   FSRS 测试组误显示为"暂无任务"）；词书模式委托词书任务提供者；未注入词书
  *   提供者时明确报错（不静默返回空）；
  * - taskItems 与 dashboardSnapshot 走同一条模式分发路径；
- * - 今日视图聚合：容量快照镜像 + 复习/测试任务计数；无缓存时的保守默认值；
+ * - 今日视图聚合：容量快照镜像 + 任务列表透出；无缓存时的保守默认值；
  * - 每日目标读写走正确通道：Space 级同步设置 KV（不落设备本地）；保存后返回的
  *   快照反映新目标；容量提供者收到的是 Space 级目标；
  * - refreshCapacity 委托两段式容量用例的更新侧。
@@ -59,19 +59,19 @@ function regularTestTask(): TaskItemSnapshot {
   };
 }
 
-/** 仅复习任务夹具（用于看板的复习/测试计数）。 */
-function reviewOnlyTask(): TaskItemSnapshot {
+/** 词书测试任务夹具（2026-10-02 起任务列表只含测试任务）。 */
+function bookTestTask(): TaskItemSnapshot {
   return {
     taskId: "00000000-0000-4000-8000-000000000101",
     listId: "list-1",
     unitNumber: 1,
     listNumber: 1,
-    taskType: "仅复习",
-    dueReason: "T1 + 1 仅复习",
-    workload: 1,
+    taskType: "短期测试",
+    dueReason: "T0 + 1 第一次短期测试",
+    workload: 2,
     overdueDays: 0,
     completedCount: 0,
-    totalCount: 1,
+    totalCount: 2,
     sessionStatus: null,
     activeWords: [],
   };
@@ -189,12 +189,12 @@ describe("模式分发：看板复用测试页的数据源", () => {
 
   it("词书模式：任务来自词书提供者，参数是活动 Space；常规提供者不被调用", () => {
     const world = buildWorld({ activeSpaceId: BOOK_SPACE_ID });
-    world.bookTasks!.tasks = [reviewOnlyTask()];
+    world.bookTasks!.tasks = [bookTestTask()];
 
     const page = world.service.taskItemsPage();
 
     expect(page.learningMode).toBe("词书模式");
-    expect(page.tasks).toEqual([reviewOnlyTask()]);
+    expect(page.tasks).toEqual([bookTestTask()]);
     expect(world.bookTasks!.calls).toEqual([BOOK_SPACE_ID]);
     expect(world.regularTasks.callCount).toBe(0);
   });
@@ -216,9 +216,9 @@ describe("模式分发：看板复用测试页的数据源", () => {
 });
 
 describe("今日视图聚合", () => {
-  it("有容量快照：字段镜像到看板快照并统计复习/测试任务数", () => {
+  it("有容量快照：字段镜像到看板快照；任务列表原样透出（2026-10-02 起只含测试任务）", () => {
     const world = buildWorld();
-    world.regularTasks.tasks = [regularTestTask(), reviewOnlyTask()];
+    world.regularTasks.tasks = [regularTestTask(), bookTestTask()];
     world.capacity.view = { snapshot: fullSnapshot(), stale: false };
 
     const dashboard = world.service.dashboardSnapshot();
@@ -241,9 +241,11 @@ describe("今日视图聚合", () => {
     expect(dashboard.riskWorkloadByDay).toEqual([3, 4, 5]);
     expect(dashboard.capacityAlgorithmVersion).toBe("capacity-monte-carlo-v2");
     expect(dashboard.capacityStale).toBe(false);
-    expect(dashboard.reviewTaskCount).toBe(1);
-    expect(dashboard.testTaskCount).toBe(1);
     expect(dashboard.learningMode).toBe("常规模式");
+    // 任务列表原样透出，复习任务计数已随"复习不是任务"口径移除。
+    expect(dashboard.tasks).toEqual([regularTestTask(), bookTestTask()]);
+    expect("reviewTaskCount" in dashboard).toBe(false);
+    expect("testTaskCount" in dashboard).toBe(false);
     // 容量读取使用 Space 级每日目标（默认 0）与活动 Space。
     expect(world.capacity.viewInputs).toEqual([
       { spaceId: REGULAR_SPACE_ID, targetCapacity: 0 },

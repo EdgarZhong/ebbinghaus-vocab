@@ -10,7 +10,7 @@
  *   （等价"进程重启"）得到完全一致的任务标识序列；
  * - 逾期折叠：计划日保持不变、逾期天数按计划日累计，多日积压折叠为唯一任务，
  *   绝不生成虚拟补做任务（V1 test_overdue_demands_fold_without_virtual_catch_up_tasks）；
- * - 仅复习任务工作量 1、测试类任务工作量 2 的聚合口径；
+ * - 2026-10-02 口径：只生成测试任务，工作量 = 待测词数；仅复习到期不产生任务；
  * - 排序稳定：先按计划日、再按任务标识；
  * - projectSpaceLists：目录是空间归属权威（目录外的 List 不进投影）、软移除词
  *   不参与、已掌握 List 退出投影。
@@ -156,7 +156,7 @@ function seedBookTestAnswer(
 }
 
 describe("refreshSpaceTasks：事件重放到任务派生", () => {
-  it("首过次日派生 T0+1 短期测试任务：工作量 2、原因与算法版本齐全", () => {
+  it("首过次日派生 T0+1 短期测试任务：工作量 = 待测词数，原因与算法版本齐全", () => {
     const world = buildWorld();
     seedSpace(world.spaceStore, { id: SPACE_ID, learningMode: "词书模式", name: "考研词汇" });
     // 首过发生在 2026-07-15（学习日口径），T0 = 07-15，测试需求 T0+1 = 07-16。
@@ -174,8 +174,8 @@ describe("refreshSpaceTasks：事件重放到任务派生", () => {
     expect(task.listId).toBe(LIST_A);
     expect(task.taskType).toBe(TaskType.ShortTermTest);
     expect(task.scheduledDay).toBe("2026-07-16");
-    // 只要存在测试需求，同日/逾期的仅复习由测试后整 List 纸质复习一并满足：工作量固定 2。
-    expect(task.workload).toBe(2);
+    // 2026-10-02 口径：工作量 = 待测词数（testDemands.length），复习不再叠加工作量。
+    expect(task.workload).toBe(1);
     expect(task.overdueDays).toBe(0);
     expect(task.algorithmVersion).toBe("scheduler-v1");
     expect(task.payload.testDemands).toHaveLength(1);
@@ -259,7 +259,8 @@ describe("refreshSpaceTasks：逾期折叠与工作量聚合", () => {
   it("多日积压折叠为唯一任务：计划日不变、逾期天数按计划日累计（V1 口径）", () => {
     const world = buildWorld();
     seedSpace(world.spaceStore, { id: SPACE_ID, learningMode: "词书模式", name: "考研词汇" });
-    // T0 = 07-15；打开日 07-20：测试需求（07-16）与仅复习需求（07-17）全部逾期。
+    // T0 = 07-15；打开日 07-20：测试需求（07-16）逾期，仅复习需求（07-17）同样逾期
+    // 但复习不产生任务——折叠结果只有测试任务本身。
     seedFirstPass(world, { listId: LIST_A, wordIds: ["w-1"], atIso: CLOCK_ISO });
     world.clock.setInstant("2026-07-20T09:00:00Z");
 
@@ -274,9 +275,9 @@ describe("refreshSpaceTasks：逾期折叠与工作量聚合", () => {
     const task = result.tasks[0]!;
     expect(task.scheduledDay).toBe("2026-07-16");
     expect(task.overdueDays).toBe(4);
-    expect(task.workload).toBe(2);
-    // 到期原因 = 测试需求 + 仅复习需求按稳定顺序拼接（"；"连接去重原因集合）。
-    expect(task.dueReason).toBe("T0 + 1 第一次短期测试；T0 + 2 仅复习");
+    expect(task.workload).toBe(1);
+    // 到期原因只来自测试需求：逾期的仅复习不做补做、不拼接原因。
+    expect(task.dueReason).toBe("T0 + 1 第一次短期测试");
     // 逾期不改写任务标识：标识仍由原计划日派生。
     expect(task.taskId).toBe(
       deriveListTaskId({
@@ -288,11 +289,12 @@ describe("refreshSpaceTasks：逾期折叠与工作量聚合", () => {
     );
   });
 
-  it("通过一次短期测试后派生 T1+1 仅复习任务：工作量 1", () => {
+  it("通过一次短期测试后次日只有仅复习到期：不产生任何任务（复习不是任务）", () => {
     const world = buildWorld();
     seedSpace(world.spaceStore, { id: SPACE_ID, learningMode: "词书模式", name: "考研词汇" });
     seedFirstPass(world, { listId: LIST_A, wordIds: ["w-1"], atIso: CLOCK_ISO });
-    // 首过当日晚些时候通过第一次短期测试：T1 = 07-15，仅复习需求 T1+1 = 07-16。
+    // 首过当日晚些时候通过第一次短期测试：T1 = 07-15，仅复习需求 T1+1 = 07-16，
+    // 晋级测试 T1+3 = 07-18 尚未到期。
     world.clock.setInstant("2026-07-15T10:00:00Z");
     seedBookTestAnswer(world, {
       wordId: "w-1",
@@ -311,16 +313,9 @@ describe("refreshSpaceTasks：逾期折叠与工作量聚合", () => {
       learningDaySettings: LEARNING_DAY_SETTINGS,
     });
 
-    expect(result.tasks).toHaveLength(1);
-    const task = result.tasks[0]!;
-    // 仅复习没有测试需求：工作量 1（绝不按词需求相加）。
-    expect(task.taskType).toBe(TaskType.ReviewOnly);
-    expect(task.workload).toBe(1);
-    expect(task.scheduledDay).toBe("2026-07-16");
-    expect(task.payload.testDemands).toHaveLength(0);
-    expect(task.payload.reviewDemands).toHaveLength(1);
-    expect(task.payload.reviewDemands[0]?.reason).toBe("T1 + 1 仅复习");
-    expect(task.dueReason).toBe("T1 + 1 仅复习");
+    // 2026-10-02 口径：仅复习到期不生成任务、不计工作量；复习入口候选集由
+    // ReviewCandidatesService 单独派生（见 reviewCandidates.test.ts）。
+    expect(result.tasks).toHaveLength(0);
   });
 
   it("任务先按计划日、再按任务标识稳定排序", () => {

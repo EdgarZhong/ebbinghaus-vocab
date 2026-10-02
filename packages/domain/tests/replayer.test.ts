@@ -152,7 +152,10 @@ describe("事件重放器：词书模式", () => {
     expect(result.lists.get("list-1")?.aggregateStatus).toBe(MasteryStatus.Mastered);
   });
 
-  it("纸质复习完成事件收集仅复习需求键，调度投影据此跳过已满足需求", () => {
+  it("历史 reviewOnlyCompleted / testFollowedByReviewCompleted 事件可解析且不再影响派生状态", () => {
+    // 2026-10-02 起这两类事件停止产生（复习入口是纯浏览视图，无复习确认触发点），
+    // 但 V1 迁移数据里仍有大量已持久化实例：重放器必须保留兼容识别——既不抛
+    // "未知事件类型"，也不再消费 reviewDemandKeys 做任何"完成"记账。
     const result = replayLearningEvents({
       events: [
         makeEvent({
@@ -168,6 +171,20 @@ describe("事件重放器：词书模式", () => {
             reviewDemandKeys: ["w-1|仅复习|2026-07-17", "w-2|仅复习|2026-07-17"],
           },
         }),
+        makeEvent({
+          eventType: "testFollowedByReviewCompleted",
+          targetType: "List",
+          targetId: "list-1",
+          occurredAt: "2026-07-18T09:00:00Z",
+          learningDay: "2026-07-18",
+          metadata: {
+            taskId: "task-2",
+            taskType: "短期测试",
+            workload: 2,
+            reviewDemandKeys: [],
+            answeredPlannedDays: ["2026-07-16"],
+          },
+        }),
       ],
       wordCatalog: [
         { wordId: "w-1", listId: "list-1", spaceId: null, originalSpelling: "a", normalizedKey: "a" },
@@ -175,10 +192,51 @@ describe("事件重放器：词书模式", () => {
       ],
     });
 
-    expect(result.lists.get("list-1")?.completedReviewDemandKeys).toEqual([
-      "w-1|仅复习|2026-07-17",
-      "w-2|仅复习|2026-07-17",
-    ]);
+    const list = result.lists.get("list-1");
+    expect(list?.stage).toBe(WordListStage.ShortTermSync);
+    // 历史完成事件不改变任何词状态：词仍保持首过后的短期通过次数 0 与未掌握。
+    expect(result.words.get("w-1")?.shortTermPassCount).toBe(0);
+    expect(result.words.get("w-1")?.masteryStatus).toBe(MasteryStatus.Unmastered);
+  });
+
+  it("长期验证失败的答案把 List 从长期验证退回短期同步（新增锁保留）", () => {
+    const result = replayLearningEvents({
+      events: [
+        makeEvent({
+          eventType: "listSynchronized",
+          targetType: "List",
+          targetId: "list-1",
+          occurredAt: "2026-07-20T09:00:00Z",
+          learningDay: "2026-07-20",
+          metadata: { taskId: "task-sync", taskType: "短期测试", workload: 1, reviewDemandKeys: [] },
+        }),
+        makeEvent({
+          eventType: "testAnswered",
+          targetType: "Word",
+          targetId: "w-1",
+          occurredAt: "2026-07-27T09:00:00Z",
+          learningDay: "2026-07-27",
+          metadata: {
+            sessionId: "s-1",
+            initialJudgement: "不认识",
+            finalJudgement: "不认识",
+            answerRevised: false,
+            beforeState: { shortTermPassCount: 2, masteryStatus: "未掌握", t2: "2026-07-20T09:00:00Z" },
+            // 长期验证失败：重置为 0 并以验证当天生成新 T0（规格 7.3）。
+            afterState: { shortTermPassCount: 0, masteryStatus: "未掌握", t0: "2026-07-27T09:00:00Z" },
+            algorithmVersion: "scheduler-v1",
+          },
+        }),
+      ],
+      wordCatalog: [
+        { wordId: "w-1", listId: "list-1", spaceId: null, originalSpelling: "a", normalizedKey: "a" },
+      ],
+    });
+
+    const list = result.lists.get("list-1");
+    expect(list?.stage).toBe(WordListStage.ShortTermSync);
+    expect(list?.additionsLocked).toBe(true);
+    expect(result.words.get("w-1")?.shortTermPassCount).toBe(0);
   });
 
   it("wordAdded 以事件时刻初始化新周期；wordRemoved 软移除且历史保留", () => {
@@ -278,7 +336,8 @@ describe("事件重放器：词书模式", () => {
     const task = generateListTask(snapshots[0]!, "2026-07-16");
     expect(task?.taskType).toBe("短期测试");
     expect(task?.testDemands.map((demand) => demand.wordId)).toEqual(["w-1"]);
-    expect(task?.workload).toBe(2);
+    // 2026-10-02 口径：工作量 = 待测词数（不再叠加复习工作量）。
+    expect(task?.workload).toBe(1);
   });
 
   it("afterState 携带非法短期通过次数时立即失败，绝不静默采用脏数据", () => {

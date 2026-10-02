@@ -247,12 +247,12 @@ export interface SpaceStore {
  *
  * 会话是"正在执行一次测试"的本地过程状态：协议只有 testSessionPaused/Resumed
  * 两个审计事件，会话本身的进度、快照与完成状态不同步、不重放——各终端各自的
- * 会话互不相干（AGENTS.md：派生状态不同步）。
+ * 会话互不相干（AGENTS.md：派生状态不同步）。2026-10-02 起不存在"等待纸质复习"
+ * 状态：最后一词确认后会话即完成，复习入口是纯派生只读视图（reviewCandidates.ts）。
  */
 export const TestSessionExecutionStatus = {
   InProgress: "进行中",
   Paused: "已暂停",
-  WaitingForPaperReview: "等待纸质复习",
   Completed: "已完成",
 } as const;
 export type TestSessionExecutionStatus =

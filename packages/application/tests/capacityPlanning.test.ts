@@ -149,6 +149,13 @@ describe("getTodaysCapacityView：读侧铁律", () => {
     const world = buildWorld();
     const refreshed = world.capacity.refreshTodaysPlan(planInput());
     // 新增当日完成事实：指纹后缀中的实际完成量变化，缓存随之过期。
+    // 常规模式首过必有内容登记（生产不变量），登记后实际完成量才计入本 Space。
+    world.wordContentStore.upsertEntries([{
+      wordId: "entry-1", listId: null, spaceId: SPACE_ID,
+      originalSpelling: "entry-1", normalizedKey: "entry-1",
+      manualMeaning: "词义", meanings: [], removed: false,
+      recordedAt: CLOCK_ISO,
+    }]);
     const event = world.eventRecorder.record({
       eventType: "firstPassRecorded",
       targetType: "条目",
@@ -230,7 +237,13 @@ describe("refreshTodaysPlan：指纹命中与重算", () => {
     world.capacity.refreshTodaysPlan(planInput());
     const callsAfterFirst = predictControl.calls;
     const upsertsAfterFirst = world.dailyPlanStore.upsertCount;
-    // 当日完成 1 个首过、工作量 3：firstPassRecorded（条目级）只看学习日。
+    // 当日完成 1 个首过、工作量 3：firstPassRecorded（条目级）先看内容登记归属本 Space。
+    world.wordContentStore.upsertEntries([{
+      wordId: "entry-1", listId: null, spaceId: SPACE_ID,
+      originalSpelling: "entry-1", normalizedKey: "entry-1",
+      manualMeaning: "词义", meanings: [], removed: false,
+      recordedAt: CLOCK_ISO,
+    }]);
     const event = world.eventRecorder.record({
       eventType: "firstPassRecorded",
       targetType: "条目",

@@ -1,8 +1,7 @@
-/** 词书用户旅程：录入、补录、测试会话、纸质复习与内容维护。 */
+/** 词书用户旅程：录入、补录、测试会话、答案驱动的 List 聚合事件与内容维护。 */
 import { describe, expect, it, vi } from "vitest";
 import { TestJudgement, replayLearningEvents } from "@ebbinghaus/domain";
 import { BookLearningService, BookEntryConflictError, getBookSessionTaskSnapshot } from "../src/bookLearning.ts";
-import { BookReviewCompletionService } from "../src/bookReview.ts";
 import { ConfirmedEntry } from "../src/entryOrganizing.ts";
 import { LearningEventRecorder } from "../src/eventRecorder.ts";
 import { SchedulingService } from "../src/scheduling.ts";
@@ -46,12 +45,9 @@ function world() {
     clock, idGenerator, eventRecorder, eventStore, wordContentStore,
     bookCatalogStore, spaceStore, sessionStore, settings, scheduling, unitOfWork,
   });
-  const bookReview = new BookReviewCompletionService({
-    eventRecorder, eventStore, wordContentStore, bookCatalogStore, unitOfWork,
-  });
   seedSpace(spaceStore, { id: SPACE_ID, learningMode: "词书模式", name: "必考词" });
   settings.setActiveSpaceId(SPACE_ID);
-  return { clock, eventRecorder, eventStore, wordContentStore, bookCatalogStore, sessionStore, settings, scheduling, bookLearning, bookReview };
+  return { clock, eventRecorder, eventStore, wordContentStore, bookCatalogStore, sessionStore, settings, scheduling, bookLearning };
 }
 
 /** 固定三词与同一任务快照，远端事件必须以启动时的计划时刻匹配，不能靠当前调度结果猜测。 */
@@ -134,12 +130,11 @@ describe("词书模式完整学习链", () => {
     expect(ctx.eventStore.listAllEvents().some((event) => event.eventType === "wordRemoved")).toBe(true);
   });
 
-  it("同一学习日内暂停可恢复；全部作答后会话完成并派生待纸书批次", () => {
+  it("同一学习日内暂停可恢复；全部作答后会话即完成，不产生任何复习相关事件", () => {
     const ctx = world();
     const result = ctx.bookLearning.recordFirstPass({ spaceId: SPACE_ID, unitNumber: 1, listNumber: 4, entries: [entry("abandon", "放弃"), entry("elaborate", "详尽的")] });
     ctx.clock.setInstant("2026-07-16T09:00:00Z");
-    const settings = ctx.settings.getLearningDaySettings();
-    const task = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: settings }).tasks[0]!;
+    const task = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
     let session = ctx.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: SPACE_ID });
     expect(session.totalCount).toBe(2);
     session = ctx.bookLearning.confirmBookTestAnswer({ sessionId: session.sessionId, expectedWordId: session.currentWord!.wordId, initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized });
@@ -149,19 +144,17 @@ describe("词书模式完整学习链", () => {
     let resumed = ctx.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: SPACE_ID });
     expect(resumed.sessionId).toBe(session.sessionId);
     expect(resumed.currentWord?.originalSpelling).toBe("elaborate");
-    // 全部作答后会话即完成（不再转“等待纸质复习”长期存活）；待纸书批次由答案事件派生
+    // 全部作答后会话即完成（2026-10-02：不存在"等待纸质复习"长期存活状态，复习入口
+    // 是纯派生只读视图，无任何复习事件）。
     session = ctx.bookLearning.confirmBookTestAnswer({ sessionId: resumed.sessionId, expectedWordId: resumed.currentWord!.wordId, initialJudgement: TestJudgement.NotRecognized, finalJudgement: TestJudgement.NotRecognized });
     expect(session.status).toBe(TestSessionExecutionStatus.Completed);
     expect(getBookSessionTaskSnapshot(ctx.sessionStore.getSession(session.sessionId)!)).toEqual(task);
-    const batches = ctx.bookLearning.pendingPaperReviewBatches(SPACE_ID);
-    expect(batches).toHaveLength(1);
-    expect(batches[0]!.plannedDays).toEqual(["2026-07-16"]);
-    expect(batches[0]!.task.listId).toBe(result.listId);
-    expect(batches[0]!.task.taskType).toBe("短期测试");
-    ctx.bookReview.completePaperReview({ task: batches[0]!.task, answeredPlannedDays: batches[0]!.plannedDays, learningDaySettings: settings });
-    expect(ctx.bookLearning.pendingPaperReviewBatches(SPACE_ID)).toHaveLength(0);
     expect(ctx.sessionStore.getOpenListSession(result.listId)).toBeNull();
-    expect(ctx.eventStore.listAllEvents().some((event) => event.eventType === "testFollowedByReviewCompleted")).toBe(true);
+    const eventTypes = ctx.eventStore.listAllEvents().map((event) => event.eventType);
+    expect(eventTypes.filter((type) => type === "testAnswered")).toHaveLength(2);
+    expect(eventTypes).not.toContain("reviewOnlyCompleted");
+    expect(eventTypes).not.toContain("testFollowedByReviewCompleted");
+    expect(eventTypes).not.toContain("listSynchronized");
   });
 
   it("换日旧会话不阻塞：次日开始测试关闭残留会话并新建，已答词不重复测试", () => {
@@ -297,14 +290,20 @@ describe("词书模式完整学习链", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("远端完成全部 Word 后会话完成并派生待纸书批次，重复开始不会被旧会话挡住", () => {
+  it("远端完成全部 Word 后会话完成；复习相关事件始终不存在，重复开始不会被旧会话挡住", () => {
     const ctx = threeWordSession();
     ctx.plans.forEach((_, index) => appendConfirmedAnswer(ctx, index));
-    expect(ctx.bookLearning.pendingPaperReviewBatches(SPACE_ID)).toHaveLength(1);
     const snapshot = ctx.bookLearning.getBookTestSessionSnapshot(ctx.snapshot.sessionId);
     expect(snapshot.currentPosition).toBe(3);
     expect(snapshot.currentWord).toBeNull();
     expect(snapshot.status).toBe(TestSessionExecutionStatus.Completed);
+    // 2026-10-02 口径：答案之外不再有复习确认事件（远端答案只写 testAnswered 族），
+    // 三个词都只达到短期通过次数 1，也不满足同步条件。
+    const eventTypes = ctx.eventStore.listAllEvents().map((event) => event.eventType);
+    expect(eventTypes.filter((type) => type === "testAnswered")).toHaveLength(3);
+    expect(eventTypes).not.toContain("testFollowedByReviewCompleted");
+    expect(eventTypes).not.toContain("reviewOnlyCompleted");
+    expect(eventTypes).not.toContain("listSynchronized");
     // 答案推进调度后当前没有测试任务：入口如实提示"没有可开始的任务"，
     // 而不是拿旧会话状态拒绝用户。
     expect(() => ctx.bookLearning.startOrResumeBookTest({ taskId: ctx.task.taskId, spaceId: SPACE_ID })).toThrow("该 List 没有可开始的软件测试任务");
@@ -359,5 +358,210 @@ describe("词书模式完整学习链", () => {
     ctx.bookLearning.removeWord({ wordId, firstConfirmation: true, secondConfirmation: true });
     expect(ctx.wordContentStore.getEntry(wordId)?.removed).toBe(true);
     expect(ctx.eventStore.listAllEvents().filter((event) => event.targetId === wordId).map((event) => event.eventType)).toEqual(["wordContentUpdated", "wordRemoved"]);
+  });
+});
+
+/**
+ * 答案驱动的 List 聚合事件（2026-10-02 口径，复习调度算法 7.1/7.3）：
+ * listSynchronized 随使同步条件首次满足的那个词答案同一批写入，
+ * listMastered 在长期验证全部词已掌握时随最后一词答案同一批写入。
+ */
+describe("答案驱动的 List 聚合事件", () => {
+  /** 两词 List 走完整短期闭环：07-16 首测双双 0→1，07-19 晋级测试双双 1→2。 */
+  function twoWordCycleToPromotion() {
+    const ctx = world();
+    ctx.bookLearning.recordFirstPass({
+      spaceId: SPACE_ID, unitNumber: 1, listNumber: 4,
+      entries: [entry("abandon", "放弃"), entry("elaborate", "详尽的")],
+    });
+    ctx.clock.setInstant("2026-07-16T09:00:00Z");
+    const firstTask = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    const first = ctx.bookLearning.startOrResumeBookTest({ taskId: firstTask.taskId, spaceId: SPACE_ID });
+    const firstPlans = ctx.sessionStore.getSession(first.sessionId)!.words;
+    let session = first;
+    for (const plan of firstPlans) {
+      session = ctx.bookLearning.confirmBookTestAnswer({
+        sessionId: session.sessionId, expectedWordId: plan.wordId,
+        initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+      });
+    }
+    expect(session.status).toBe(TestSessionExecutionStatus.Completed);
+    // 07-19（T1+3）晋级测试：两词 1→2 的第二次短期测试。
+    ctx.clock.setInstant("2026-07-19T09:00:00Z");
+    const promotionTask = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    const promotion = ctx.bookLearning.startOrResumeBookTest({ taskId: promotionTask.taskId, spaceId: SPACE_ID });
+    return { ...ctx, promotion, promotionTask };
+  }
+
+  /** 重放出 List 阶段与同步时刻，验证聚合事件的派生效果。 */
+  function replayList(ctx: ReturnType<typeof world>, listId: string) {
+    return replayLearningEvents({
+      events: ctx.eventStore.listAllEvents(),
+      wordCatalog: ctx.wordContentStore.listCatalogEntries().map((item) => ({
+        wordId: item.wordId, listId: item.listId, spaceId: item.spaceId,
+        originalSpelling: item.originalSpelling, normalizedKey: item.normalizedKey,
+      })),
+    }).lists.get(listId);
+  }
+
+  it("最后一词使同步条件首次满足：listSynchronized 与该答案同一批写入，occurredAt = 答案时刻", () => {
+    const ctx = twoWordCycleToPromotion();
+    const plans = ctx.sessionStore.getSession(ctx.promotion.sessionId)!.words;
+    const listId = ctx.promotionTask.listId;
+    // 第一词 1→2：尚有一词为 1，不满足同步条件，不写聚合事件。
+    const firstAnswer = ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: ctx.promotion.sessionId, expectedWordId: plans[0]!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(firstAnswer.currentPosition).toBe(1);
+    const typesAfterFirst = ctx.eventStore.listAllEvents().map((event) => event.eventType);
+    expect(typesAfterFirst).not.toContain("listSynchronized");
+    // 最后一词 1→2：同步条件首次满足，listSynchronized 与 testAnswered 同一批追加。
+    const appendCallsBefore = ctx.eventStore.appendCallCount;
+    const secondAnswer = ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: ctx.promotion.sessionId, expectedWordId: plans[1]!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(secondAnswer.status).toBe(TestSessionExecutionStatus.Completed);
+    // 一次 appendEvents 调用 = 同一批：答案与聚合事件同生共死。
+    expect(ctx.eventStore.appendCallCount).toBe(appendCallsBefore + 1);
+    const events = ctx.eventStore.listAllEvents();
+    const syncEvent = events.find((event) => event.eventType === "listSynchronized")!;
+    expect(syncEvent).toBeDefined();
+    expect(syncEvent.targetType).toBe("List");
+    expect(syncEvent.targetId).toBe(listId);
+    // 该词在首轮测试也有一条答案（07-16）：取晋级轮（与同步事件同时刻）那条比对。
+    const answerEvent = events.find((event) =>
+      event.eventType === "testAnswered" &&
+      event.targetId === plans[1]!.wordId &&
+      event.occurredAt === syncEvent.occurredAt)!;
+    expect(answerEvent).toBeDefined();
+    expect(syncEvent.occurredAt).toBe(answerEvent.occurredAt);
+    expect(syncEvent.occurredAt).toBe("2026-07-19T09:00:00.000Z");
+    expect(syncEvent.metadata["taskId"]).toBe(ctx.promotionTask.taskId);
+    // 重放：List 进入长期验证，同步时刻取该答案时刻（TS）。
+    const list = replayList(ctx, listId);
+    expect(list?.stage).toBe("长期验证");
+    expect(list?.synchronizedAt).toBe(answerEvent.occurredAt);
+    expect(list?.additionsLocked).toBe(true);
+  });
+
+  it("同步条件未满足时不写 listSynchronized", () => {
+    const ctx = world();
+    ctx.bookLearning.recordFirstPass({
+      spaceId: SPACE_ID, unitNumber: 1, listNumber: 4,
+      entries: [entry("abandon", "放弃"), entry("elaborate", "详尽的")],
+    });
+    ctx.clock.setInstant("2026-07-16T09:00:00Z");
+    const task = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    const session = ctx.bookLearning.startOrResumeBookTest({ taskId: task.taskId, spaceId: SPACE_ID });
+    // 只答一词（0→1）：另一词仍为 0，不满足同步条件。
+    ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: session.sessionId, expectedWordId: session.currentWord!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(ctx.eventStore.listAllEvents().map((event) => event.eventType)).not.toContain("listSynchronized");
+  });
+
+  it("同步后长期验证失败重新进入短期周期：只有重新首次满足时才写第二个 listSynchronized", () => {
+    const ctx = twoWordCycleToPromotion();
+    const plans = ctx.sessionStore.getSession(ctx.promotion.sessionId)!.words;
+    for (const plan of plans) {
+      ctx.bookLearning.confirmBookTestAnswer({
+        sessionId: ctx.promotion.sessionId, expectedWordId: plan.wordId,
+        initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+      });
+    }
+    expect(ctx.eventStore.listAllEvents().filter((event) => event.eventType === "listSynchronized")).toHaveLength(1);
+    const listId = ctx.promotionTask.listId;
+
+    // TS = 07-19；07-26 长期验证：一词不认识（重置为 0、List 退回短期同步），
+    // 另一词认识（已掌握）。两个答案前同步条件都已满足（非首次），不写第二个事件。
+    ctx.clock.setInstant("2026-07-26T09:00:00Z");
+    const validationTask = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    expect(validationTask.taskType).toBe("长期验证");
+    const validation = ctx.bookLearning.startOrResumeBookTest({ taskId: validationTask.taskId, spaceId: SPACE_ID });
+    const validationPlans = ctx.sessionStore.getSession(validation.sessionId)!.words;
+    ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: validation.sessionId, expectedWordId: validationPlans[0]!.wordId,
+      initialJudgement: TestJudgement.NotRecognized, finalJudgement: TestJudgement.NotRecognized,
+    });
+    ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: validation.sessionId, expectedWordId: validationPlans[1]!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(ctx.eventStore.listAllEvents().filter((event) => event.eventType === "listSynchronized")).toHaveLength(1);
+    expect(ctx.eventStore.listAllEvents().map((event) => event.eventType)).not.toContain("listMastered");
+    expect(replayList(ctx, listId)?.stage).toBe("短期同步");
+
+    // 失败词的新短期周期：07-27 测试 0→1，07-30 晋级 1→2；另一词已掌握不参与。
+    // 07-30 的答案使同步条件"重新首次满足"：写第二个 listSynchronized。
+    ctx.clock.setInstant("2026-07-27T09:00:00Z");
+    const retestTask = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    const retest = ctx.bookLearning.startOrResumeBookTest({ taskId: retestTask.taskId, spaceId: SPACE_ID });
+    const retestPlans = ctx.sessionStore.getSession(retest.sessionId)!.words;
+    expect(retestPlans.map((plan) => plan.wordId)).toEqual([validationPlans[0]!.wordId]);
+    ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: retest.sessionId, expectedWordId: retestPlans[0]!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(ctx.eventStore.listAllEvents().filter((event) => event.eventType === "listSynchronized")).toHaveLength(1);
+
+    ctx.clock.setInstant("2026-07-30T09:00:00Z");
+    const repromotionTask = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    const repromotion = ctx.bookLearning.startOrResumeBookTest({ taskId: repromotionTask.taskId, spaceId: SPACE_ID });
+    const repromotionPlans = ctx.sessionStore.getSession(repromotion.sessionId)!.words;
+    const appendCallsBefore = ctx.eventStore.appendCallCount;
+    ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: repromotion.sessionId, expectedWordId: repromotionPlans[0]!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(ctx.eventStore.appendCallCount).toBe(appendCallsBefore + 1);
+    const syncEvents = ctx.eventStore.listAllEvents().filter((event) => event.eventType === "listSynchronized");
+    expect(syncEvents).toHaveLength(2);
+    expect(syncEvents[1]?.occurredAt).toBe("2026-07-30T09:00:00.000Z");
+    // 重新同步后 List 回到长期验证（TS 取第二个同步事件的答案时刻）。
+    expect(replayList(ctx, listId)?.stage).toBe("长期验证");
+  });
+
+  it("长期验证任务不写 listSynchronized；全部词掌握时 listMastered 与最后一词答案同批写入", () => {
+    const ctx = twoWordCycleToPromotion();
+    const plans = ctx.sessionStore.getSession(ctx.promotion.sessionId)!.words;
+    for (const plan of plans) {
+      ctx.bookLearning.confirmBookTestAnswer({
+        sessionId: ctx.promotion.sessionId, expectedWordId: plan.wordId,
+        initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+      });
+    }
+    // TS = 07-19；07-26 长期验证（TS + 7）测试全部未掌握词。
+    ctx.clock.setInstant("2026-07-26T09:00:00Z");
+    const validationTask = ctx.scheduling.refreshSpaceTasks({ spaceId: SPACE_ID, learningDaySettings: ctx.settings.getLearningDaySettings() }).tasks[0]!;
+    expect(validationTask.taskType).toBe("长期验证");
+    const validation = ctx.bookLearning.startOrResumeBookTest({ taskId: validationTask.taskId, spaceId: SPACE_ID });
+    const validationPlans = ctx.sessionStore.getSession(validation.sessionId)!.words;
+    // 第一词验证认识 → 已掌握；其余词仍未掌握：不写 listMastered，也绝不写
+    // listSynchronized（同步条件在答案前已满足，非首次）。
+    const firstAnswer = ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: validation.sessionId, expectedWordId: validationPlans[0]!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(firstAnswer.currentPosition).toBe(1);
+    let types = ctx.eventStore.listAllEvents().map((event) => event.eventType);
+    expect(types).not.toContain("listMastered");
+    expect(types.filter((type) => type === "listSynchronized")).toHaveLength(1);
+    // 最后一词验证认识 → 全部掌握：listMastered 与该答案同一批写入。
+    const appendCallsBefore = ctx.eventStore.appendCallCount;
+    const secondAnswer = ctx.bookLearning.confirmBookTestAnswer({
+      sessionId: validation.sessionId, expectedWordId: validationPlans[1]!.wordId,
+      initialJudgement: TestJudgement.Recognized, finalJudgement: TestJudgement.Recognized,
+    });
+    expect(secondAnswer.status).toBe(TestSessionExecutionStatus.Completed);
+    expect(ctx.eventStore.appendCallCount).toBe(appendCallsBefore + 1);
+    types = ctx.eventStore.listAllEvents().map((event) => event.eventType);
+    expect(types.filter((type) => type === "listMastered")).toHaveLength(1);
+    expect(types.filter((type) => type === "listSynchronized")).toHaveLength(1);
+    const list = replayList(ctx, ctx.promotionTask.listId);
+    expect(list?.stage).toBe("已掌握");
+    expect(list?.aggregateStatus).toBe("已掌握");
   });
 });

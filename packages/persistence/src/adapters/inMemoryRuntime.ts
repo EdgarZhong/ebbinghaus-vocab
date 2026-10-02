@@ -502,7 +502,9 @@ export class InMemoryTestSessionStore implements TestSessionStore {
       if (
         session.learningMode === "词书模式" &&
         session.listId === listId &&
-        (session.status === "进行中" || session.status === "已暂停" || session.status === "等待纸质复习")
+        // 2026-10-02 起"等待纸质复习"状态随纸质复习概念整体删除：历史残留行视为
+        // 已关闭（词书用例进入测试时会清理残留开放会话），不参与开放匹配。
+        (session.status === "进行中" || session.status === "已暂停")
       ) {
         return { ...session };
       }
