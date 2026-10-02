@@ -9,7 +9,7 @@ V2 将 V1 Python/PySide6 应用迁移为 React + TypeScript + Tauri 2 的 macOS/
 | 交付部分 | 当前状态 |
 | --- | --- |
 | 共享协议、哑服务器、客户端本地库与同步引擎 | Android 与 Mac 在同一 List 交错最终确认并双向收敛；服务端事件、两端本地事件、拉取游标、开放会话和当前页面已逐层核对。词书模式“一端初判、另一端最终确认”通过；常规模式同一路径未测 |
-| macOS 桌面应用 | `/Applications/Ebbinghaus V2.app` 已安装 0.1.1（含测试入口锁死修复），arm64 可执行文件安全哈希算法 256 位（Secure Hash Algorithm 256-bit，SHA-256）为 `8bb15f53ee60693e1762e183e1af3138bedff6a99390eaddfb394df31530611f`。云同步令牌已修复（重启后解密成功）；DeepSeek 密钥在本机可用但无明文备份 |
+| macOS 桌面应用 | `/Applications/Ebbinghaus V2.app` 已安装 **0.1.2**（复习入口统一改造），arm64 可执行文件安全哈希算法 256 位（Secure Hash Algorithm 256-bit，SHA-256）为 `496b88462a4f62c26578b3b53f96153d4c2aa14b38434bcbfbaab9f0d812fd8b`。真实应用验收通过：今日页新计量文案与测试→复习→首过顺序、测试页 4 个 List 任务（逾期/今天到期标识）、复习页 3 List 卡 27 候选词（与副本集成验证一致，List 1 待测词正确排除防泄答案）、展开词卡左英右义无操作。云同步令牌与 DeepSeek 密钥状态沿用 0.1.1 结论 |
 | Android release APK | 最终 arm64 Android 应用安装包（Android Package Kit，APK）已安装，并实测内置云端访问令牌与 DeepSeek 应用程序编程接口（Application Programming Interface，API）密钥可用；中文转写整理、重复词决策、点错入队和云端同步均有真实设备证据。SHA-256 为 `6f8827d296b3aa0188f75fdf6ac36cb6c95222abbdbb58ae21838a2e88ae742d`；使用本机 Android debug 证书，仅供个人内部安装 |
 | 正式生产数据迁移 | 进行中；V1 App 在线备份已定位并完成只读核验，V2 云端与 Mac 客户端测试库快照已归档；来源与软删除处理口径待用户确认，尚未改写任何数据库 |
 | 用户级验收 | Android 最终 APK 的凭据、模型、去重与同步验收通过；Mac 设置和双端词书模式同步通过。尚未完成常规模式交错同步及 macOS 原生重复词弹窗验收 |
