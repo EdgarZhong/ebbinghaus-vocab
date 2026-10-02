@@ -1,123 +1,77 @@
-# Ebbinghaus V2
+<div align="center">
 
-Ebbinghaus V2 是个人自用英语学习/记忆管理客户端的全量技术栈迁移仓库：把 V1（Python/PySide6 桌面应用）迁移为 **React + TypeScript + Tauri 2（macOS 与 Android）客户端 + Node 同步服务器 + 云端权威数据**。macOS 桌面端的用户链路与业务行为以 V1 为基准；V2 保留自己的视觉方案、深色/浅色及跟随系统主题。
+<img src="app/src-tauri/icons/icon.png" width="120" alt="Ebbinghaus 图标" />
 
-V1 仓库位于 `/Users/edgar/code/Ebbinghaus`，只作为行为规格、算法和迁移实现的只读参考；当前发现的 V1 数据库是测试样本，不能直接认定为正式生产迁移源。本仓库不继承其历史技术债。
+# Ebbinghaus
 
-## 产品定位（继承自 V1 的稳定产品事实）
+**我发布的不是一个软件，而是一种背英语单词的方法。**
 
-- 面向约 6000 词规模的纸质考研英语词书；每个 List 固定 60 词，软件只录入首过筛出的重点 Word。
-- 首次运行提供"必考词、常考词、偶考词、日常积累"四个默认 Space；Space 是两种模式共同且可多实例的最外层数据隔离边界，学习模式创建后不可变。
-- 词书模式层级 `Space → Unit → List → Word`，以 List 为纸质复习和工作量单位；常规模式层级 `Space → 条目`，条目级 FSRS 调度。
-- 手录释义是学习主数据；在线词典只是可失败的补充来源，网络失败不得阻塞核心学习流程。
-- 术语与行为细节以 `docs/需求规格.md` 为唯一真理源。
+词书精记 · 朗读驱动 · 数据完全属于你自己
 
-## 最终技术栈（已确认定稿，禁止重新选型）
+</div>
 
-完整决策、理由、禁止事项与逃生路线见 `docs/V2迁移技术决策.md`（唯一真理源）。
+## 为什么做这个
 
-```text
-React + TypeScript + Vite
-           │
-        Tauri 2
-      ┌────┴────┐
-    macOS     Android
-           │
-    Client SQLite（完整本地副本）
-           │
-     Sync Engine（outbox + server_seq 游标）
-           │
-     HTTP Sync API
-           │
- Node + Fastify + SQLite（云端权威数据，哑服务器）
+备战考研英语时我有一个体会：纸质词书的勾画、遮挡、朗读和快速翻页，是任何 App 都替代不了的体验；但纸书永远不知道今天该复习哪一页。Ebbinghaus 不打算取代词书，它只补齐纸书做不到的四件事——记住你筛出的重点词、按记忆规律安排测试、每天早上告诉你今天该碰哪些词、在电脑和手机之间同步进度。
+
+所以这个仓库里，软件只是载体。真正想分享的是下面这套我自己每天在用的「词书精记法」。
+
+## 词书精记法
+
+### 每天的动作
+
+1. **首过**：翻开纸质词书的一个 List（60 词），遮挡释义自测，用笔画出真正不熟的重点词与重点义项——通常远少于 60 个。
+2. **录入**：打开软件，用语音把标记读进去（"distinction，名词，差别区分；名词，荣誉"），大模型自动整理成结构化词条，你核对后一键保存；也可以直接手动填写。
+3. **测试**：软件把今天到期的词推给你。屏幕上只有英文，先努力回忆，再揭示答案，诚实判定"认识 / 不认识"。
+4. **复习**：复习页每天列出"今天该朗读的词"，你翻开词书对应位置出声朗读、巩固。读没读、读几遍，软件不记账——那是你和词书之间的事。
+
+### 记一个词，到底记什么
+
+少记、精记、按考试价值筛选，并在一个词内部把义项组织成结构：
+
+1. **词汇在精不在多。** 一个词通常只掌握 1—3 个词性、2—3 个核心义项；每个词性下面一般只留 1—2 个真正不同的意思，相近释义不重复记。
+2. **按词性复杂度控制记忆量。** 只有一个主要词性的词，记 2—3 个不同义项；两个主要词性的词，合计仍控制在 2—3 个重点义项；三个词性的普通词往往每个词性记一个（3 词性 3 义）；只有少数特别重要的词才提高到 3 词性 6 义，作为重点攻克的一批。
+3. **考试价值高于词典第一义。** 最常见不等于最重要——考试很喜欢考熟词僻义、非第一义、特定词性下的义项。老师笔记里的筛选和排序优先于普通词典顺序：先查老师笔记，没有再自行筛选。
+4. **义项不要孤立背，要归类。** 能找到共同核心含义的，就把派生义串起来；很多词还可以自然地分成"对人"与"对物 / 对事"两类来记。这样一个词就不是几个互不相干的中文解释，而是一棵有联系的义项树。
+5. **固定搭配也属于词汇知识。** 除了意思，还要知道整个短语在句子里的语法类别和句法作用——是动词短语、名词短语还是副词短语，通常作谓语还是状语；必要时再补上接 to do、doing 还是介词宾语。
+
+软件里每个词条正是按「词性 + 释义 + 用法」的结构化义项保存的——它的设计和这套记法是一体的。
+
+### 词书之外：自由积累
+
+日常阅读、做题中遇到的词和短语，随时录进"日常积累"类的自由空间：没有 List 结构，每个条目由 FSRS 间隔重复算法独立排期。词书求"精"，积累求"广"，两者互不干扰。
+
+## 功能一览
+
+- **两种学习模式**：词书模式（Space → Unit → List → Word，严格配合纸质词书）与常规模式（自由条目，FSRS 调度）。
+- **语音录入 + 大模型智能整理**：朗读即录入；整理结果逐字段附原文证据与警告，保存前可自由增删改。采用自带密钥（BYOK）模式，连接你自己的 OpenAI 兼容接口。
+- **今日看板**：每日容量、到期与逾期任务、建议今天首过几个新 List、未来 21 天压力预览。
+- **逐词主动回忆测试**：先回忆再看答案，两步确认，全程可纯键盘操作；中途退出当日可恢复。
+- **复习入口**：只回答"今天该朗读哪些词"，不打卡、不记工作量、不显示逾期。
+- **词汇总表**：搜索与筛选、手录义项与在线词典对照。手录内容永远是主数据，在线词典只是可失败的补充。
+- **离线可用**：全部学习数据保存在本机 SQLite，断网不影响录入、测试和复习。
+- **多设备同步（可选，自托管）**：同步服务器刻意"很笨"——只负责存取事件，不做任何学习计算；你的数据由你自己的服务器保管。
+
+## 平台与构建
+
+官方开发并验证的平台是 **macOS** 与 **Android**。得益于 Tauri 2 的跨平台能力，**Windows、iOS 与 Linux 也可以自行构建**，只是尚未经过官方验证。
+
+```bash
+pnpm install
+
+# 构建 macOS 应用。云同步端点在构建期注入；
+# 不配置 VITE_CLOUD_SYNC_URL 时同步关闭，软件是纯单机应用，功能完整。
+cd app
+VITE_CLOUD_SYNC_URL="https://你的同步服务器域名" pnpm tauri build
 ```
 
-锁定版本：TypeScript 6.0.2；React / React DOM 19.2.8；Vite 8.2.2；Tauri core 2.11.5 / CLI 2.11.4 / API 2.11.1；plugin-sql 2.4.1、plugin-http 2.6.0、plugin-stronghold 2.3.2、plugin-notification 2.4.0；Rust 1.98.1（禁用 1.98.0）；ts-fsrs 5.4.2；Node.js 24.21.0 LTS；Fastify 5.12.3；better-sqlite3 13.0.3；Zod 4.5.4；Vitest 5.0.0；pnpm 12.3.4。依赖使用精确版本并提交 `pnpm-lock.yaml`。
+- 本仓库**不内置任何默认同步服务器**。需要多设备同步时，把 `server/` 目录的同步服务（Node + Fastify + SQLite）部署到你自己的主机，再在构建时注入它的地址。
+- 大模型智能整理是可选的联网辅助：在应用设置页填入你自己的基础地址、模型名称和 API 密钥即可；不配置时手动录入完全可用。
 
-## 架构原则（稳定口径）
+## 技术栈
 
-- **云端数据库是权威副本；客户端 SQLite 是完整本地副本 + 工作数据库；React UI 永远直接访问本地数据**。禁止 `React → HTTP → Server → DB` 的读路径；切换页面先呈现页面骨架，再读取本地视图，同步在后台运行且不阻塞切换。断网只是同步暂停，不是模式切换。
-- **服务器保持"哑"**：只做鉴权、schema 校验、`event_id` 去重、分配 `server_seq`、存储、增量查询、settings 存储和备份；所有业务规则（FSRS、调度、容量、词书、首过）都在客户端。
-- `server_seq` 只是同步游标；领域重放按 `occurredAt → deviceSeq → deviceId/eventId` 排序。
-- React 页面禁止直接 import Tauri API；平台能力经 Ports/Adapters（`BrowserTestAdapter` / `TauriProductionAdapter`）注入，浏览器模式与 Tauri 模式共用同一套业务逻辑。
-- 分层依赖：`ui → application → domain`；`packages/protocol` 由客户端与服务器共享；server 与客户端仅通过 HTTP 协议耦合。
+React + TypeScript + Vite · Tauri 2（Rust）· 本地优先 SQLite（事件溯源）· Node + Fastify + SQLite 同步服务器 · ts-fsrs
 
-## 项目目录结构
+## 说明
 
-> 工程形态为 **pnpm workspace monorepo**。以下列出当前稳定目录与入口。
-
-```text
-Ebbinghaus-v2/
-├── README.md / AGENTS.md / CLAUDE.md   # 三份核心文档
-├── docs/                               # 规格与技术决策（见文档索引）
-├── package.json / pnpm-workspace.yaml  # pnpm workspace 根（依赖精确版本，lock 文件随源提交）
-├── tsconfig.base.json / tsconfig.json  # 共享 TS 基线（NodeNext + 全严格）与根级配置
-├── vitest.config.ts                    # Vitest 根聚合（projects 模式，各包自带配置）
-├── packages/
-│   ├── protocol/                       # 同步协议、事件与内容 schema、Zod 定义（双端共享）
-│   ├── domain/                         # 纯 TS 领域层：状态机、FSRS、容量预测（禁 DOM/Node/Tauri 依赖）
-│   ├── application/                    # 用例编排与端口定义（Repository、SyncEngine、LLM、词典）
-│   ├── persistence/                    # SQLite 仓储、Outbox、SyncEngine 与浏览器运行时
-│   └── migration/                      # V1 在线备份到 V2 客户端库的幂等导入与审计
-├── app/
-│   ├── src/                            # React UI（Vite 浏览器模式可独立运行）
-│   ├── e2e/                            # Playwright 浏览器用户旅程与全窗口截图
-│   ├── native-e2e/                     # WebdriverIO macOS 原生运行时冒烟
-│   └── src-tauri/                      # Tauri 平台壳（macOS / Android）
-├── server/                             # Node + Fastify + better-sqlite3 同步服务器
-└── .archive/                           # 废弃文件归档（不进版本控制）
-```
-
-> workspace 成员声明为 `packages/*`、`server`、`app`。
-> 内部包策略：各包 `exports` 直接指向 `src/*.ts` 源码，不预编译、不引入 bundler，Vitest 与
-> Node 24（type stripping）直接消费 TS 源码；`typecheck` 对各包 tsconfig 逐个 `tsc --noEmit` 检查。
-
-随仓库复制带入的 V1 Python 工程副本（`src/`、`tests/`、`packaging/`、`scripts/`、`pyproject.toml`、`uv.lock`、`img/`）已于 2026-09-19 确认移入 `.archive/`，不参与 V2 工程与版本控制；行为规格、算法参考和迁移源码一律以 V1 仓库（`/Users/edgar/code/Ebbinghaus`）为准。
-
-## 数据边界
-
-- 验收测试库与正式生产库必须区分；正式生产库切换须先识别源库、保留经核验的在线备份并完成数量与完整性核对。当前库的身份和切换进度见 `CLAUDE.md`。
-- V2 桌面客户端 SQLite 位于 macOS 应用数据目录，服务器权威 SQLite 位于 `/opt/ebbinghaus/data`；仓库内不得提交数据库文件、密钥或个人数据。
-- Space、Unit、List、已保存的词条内容、学习事件、全局及各 Space 学习设置是同步业务数据。录入草稿（原始文本与未提交表单）、活动 Space 选择、服务连接配置与密钥、在线词典和容量预测缓存、设备身份、同步游标及进行中测试会话的位置留在本机；已确认的学习结果通过事件同步，进行中测试会话须按远端已确认事件收敛。
-
-## 运行环境与开发命令
-
-已移除词保留内容墓碑与不可变历史，但退出当前词表、调度任务、复习候选、容量预测、List 聚合与开放会话。内容标记和移除事件任一成立均排除；词条删除墓碑落地为软移除，不物理删除已有内容。行为边界见 `docs/需求规格.md` 6.3，真实 SQLite 队列重开与两通道同步回归见 `packages/persistence/tests/repositories.test.ts`、`packages/persistence/tests/sync.integration.test.ts`。
-
-- Node.js 24.21.0 LTS（mise 管理）、pnpm 12.3.4（根 `package.json` 的 `packageManager` 锁定）、Rust 1.98.1（rustup 固定）。
-- 依赖安装：`rtk pnpm install`（镜像源已在 `.npmrc` 固定为 npmmirror；依赖一律精确版本，`pnpm-lock.yaml` 随源码提交）。
-- 测试：`rtk pnpm test`（根 Vitest 以 projects 模式聚合各包 `vitest.config.ts`）。
-- 类型检查：`rtk pnpm typecheck`（根级与各包 tsconfig 逐个 `tsc --noEmit` 检查；新增包时在根 `package.json` 的 typecheck 脚本追加）。
-- Shell 命令统一加 `rtk` 前缀；长输出 Git 命令用 `git --no-pager`。
-- React UI（浏览器模式一等公民）：
-  - 开发服务：`rtk pnpm --filter @ebbinghaus/app dev`（Vite，脱离 Tauri 壳完整运行）；
-  - 构建：`rtk pnpm --filter @ebbinghaus/app build`；
-  - Testing Library：`rtk pnpm test`（与各包一起由根 Vitest 聚合）；
-  - Playwright 浏览器矩阵（桌面、紧凑、WebKit 桌面及手机视口，全窗口截图）：`rtk pnpm --filter @ebbinghaus/app e2e`。
-- macOS 原生自动验收：先在 `app/` 启动 `rtk pnpm dev --host 127.0.0.1`，再在 `app/src-tauri/` 执行 `rtk cargo build --features wdio-test`，最后在 `app/` 执行 `rtk pnpm e2e:native`。`wdio-test` 仅用于测试构建；正式包不启用内嵌 WebDriver。
-- Android 模拟器开发命令：在 `app/` 执行 `rtk bash src-tauri/android-medium-phone.sh`，脚本使用 mise 管理的 JDK 21，在本次进程设置 Android 工具链，构建、安装并启动 `medium_phone` 上的调试包，不修改系统全局 Java 设置。
-- 同步服务器（本地）：`rtk pnpm server:start`（CLI `--db= --token= --port=`，缺省 127.0.0.1:8787）、在线备份 `rtk pnpm server:backup`；部署口径见 `docs/服务器部署留档.md`。
-- 正式 macOS 应用包：`rtk pnpm --filter @ebbinghaus/app tauri build --bundles app`，产物位于 `app/src-tauri/target/release/bundle/macos/Ebbinghaus.app`。仅对外分发需要磁盘映像时显式使用 `--bundles app,dmg`，产物位于相邻 `dmg/` 目录。本机安装路径为 `/Applications/Ebbinghaus V2.app`，与 V1 `/Applications/Ebbinghaus.app` 分开；个人 release 的自动安装、凭据保留、数据备份与恢复要求见 `AGENTS.md`。
-
-## 重要文档索引
-
-| 内容描述 | 文件路径 |
-| --- | --- |
-| 稳定项目定位、架构、目录和入口 | `README.md` |
-| 通用开发规范、协作约束、开发测试闭环 | `AGENTS.md` |
-| 当前阶段目标、任务看板、动态决策 | `CLAUDE.md` |
-| **V2 技术栈迁移最终决策（选型、版本、同步、阶段计划、禁止事项）** | `docs/V2迁移技术决策.md` |
-| 完整产品需求、交互规则、数据边界和验收标准（v1 继承，术语唯一真理源） | `docs/需求规格.md` |
-| 界面信息架构、交互语义与可用性底线（v2 起约束力范围见其第 1 章） | `docs/界面设计规格.md` |
-| 记忆科学依据、调度模型、容量与逾期算法（v2 移植目标） | `docs/复习调度算法.md` |
-| 录入整理故障报告、基础日志设计与整理校验机制整改口径（v1 行为规格参考） | `docs/录入整理故障报告与日志设计.md` |
-| 同步服务器的实际部署、检查与备份操作 | `docs/服务器部署留档.md` |
-| 自主执行轮次记录 | `docs/autonomous-runs/` |
-| 第四轮 Android 双端学习漏验复盘与现场证据 | `docs/autonomous-runs/20260927-1138-第四轮Android用户级验收记录.md` |
-| 逐词测试、重复词交互、设置自动保存与双端同步最终验收 | `docs/autonomous-runs/20260929-逐词测试去重与双端同步验收.md` |
-| Android 模拟器操纵与输入需求 | `docs/Android模拟器验收能力需求.md` |
-
-## 代码规范与开发测试闭环
-
-- 通用代码规范、文件与 Git 安全规则、V2 开发测试 SOP 见 `AGENTS.md`。
-- 当前阶段、任务看板、待确认口径和风险见 `CLAUDE.md`。
+本项目按个人学习工具的标准开发与测试（Vitest / Playwright / 真实设备验收）。词书模式中 `T0 + 1`、`T0 + 4`、7 天等日期参数是可调整的产品参数，用于实现"短期快速记忆 + 长期验证"的工作流，不宣称是普遍记忆定律。
